@@ -5,7 +5,7 @@
 <head>
     <meta charset="utf-8" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
     <meta content="IE=edge" http-equiv="X-UA-Compatible">
-    <title>Mental Health aWHEREness Stories</title>
+    <title>Geog Ride</title>
     <link href="https://unpkg.com/leaflet@0.7.7/dist/leaflet.css" rel="stylesheet">
     <link href="//cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" rel="stylesheet">
     <link href="//code.jquery.com/ui/1.12.1/themes/smoothness/jquery-ui.css" rel="stylesheet">
@@ -69,9 +69,9 @@
 
         <script>
             var config = { //TODO: Change to your username, insert function on Carto, and Carto tablename
-                cartoUsername: "anditabinas",
+                cartoUsername: "eilonwy06",
                 cartoInsertFunction: "insert_crowd_mapping_data",
-                cartoTablename: "mentalhealthstories",
+                cartoTablename: "sample1",
                 mapcenter: [12.85985, 114.03808],
                 drawOptions: {
                     draw: {
@@ -88,7 +88,7 @@
             };
 
             var cartoData = null; //These adds data from Carto using the SQL API, declares variables, and writes the SQL selection query
-            var sqlQuery = "SELECT the_geom, name, notes FROM " + config.cartoTablename;
+            var sqlQuery = "SELECT the_geom, name, story FROM " + config.cartoTablename;
             var map = L.map('map', {
                 center: config.mapcenter,
                 zoom: 5
@@ -117,7 +117,7 @@
                 $.getJSON(getData, function(data) {
                     cartoData = L.geoJson(data, {
                         onEachFeature: function(feature, layer) {
-                            layer.bindPopup('<b>Nickname: <\/b>' + feature.properties.name + '<br>' + '<b>My Story: <\/b>' + feature.properties.notes + '');
+                            layer.bindPopup('<b>Nickname: <\/b>' + feature.properties.name + '<br>' + '<b>My Story: <\/b>' + feature.properties.story + '');
                         }
                     }).addTo(map);
                 });
