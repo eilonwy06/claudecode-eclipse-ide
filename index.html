@@ -178,7 +178,7 @@
 
             function setData() {
       			var enteredNickname = "'" + JSON.stringify(nickname.value.replace("'", "''")) + "'"                          
-      			var enteredNotes = "'" + JSON.stringify(notes.value.replace("'", "''")) + "'";                      
+      			var enteredNotes = "'" + JSON.stringify(story.value.replace("'", "''")) + "'";                      
 
                 drawnItems.eachLayer(function(layer) {
                     var drawing = "'" + JSON.stringify(layer.toGeoJSON().geometry) + "'", //Converts the drawing to a GeoJSON
@@ -206,7 +206,7 @@
                     });
                     var newData = layer.toGeoJSON();
                     newData.properties.name = nickname.value;
-                    newData.properties.notes = notes.value;
+                    newData.properties.story = story.value;
                     cartoData.addData(newData);
                 });
 
