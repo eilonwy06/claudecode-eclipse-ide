@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<!--Initially based on https://github.com/radumas/crowdmap-basic and https://github.com/mjfoster83/web-map-workshop/blob/master/7_advancedMapping_CartoDB/index-completed.html-->
+<html>
+
+<head>
+    <meta charset="utf-8" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
+    <meta content="IE=edge" http-equiv="X-UA-Compatible">
+    <title>Mental Health aWHEREness Stories</title>
+    <link href="https://unpkg.com/leaflet@0.7.7/dist/leaflet.css" rel="stylesheet">
+    <link href="//cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" rel="stylesheet">
+    <link href="//code.jquery.com/ui/1.12.1/themes/smoothness/jquery-ui.css" rel="stylesheet">
+    <link href="css/style.css" rel="stylesheet" type="text/css">
+    <link href="https://rawgit.com/k4r573n/leaflet-control-osm-geocoder/master/Control.OSMGeocoder.css" rel="stylesheet">
+    <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/leaflet.locatecontrol@0.67.0/dist/L.Control.Locate.min.css" rel="stylesheet">
+    <link href="https://rawgit.com/mapshakers/leaflet-control-window/master/src/L.Control.Window.css" rel="stylesheet">
+    <link href='https://api.mapbox.com/mapbox.js/plugins/leaflet-fullscreen/v1.0.1/leaflet.fullscreen.css' rel='stylesheet' />
+    <!--	<link href='https://github.com/anditabinas/mhawhereness/blob/master/leaflet-routing-machine.css' rel='stylesheet' /> -->
+    <!--	<link rel="stylesheet" href="https://github.com/anditabinas/mhawhereness/blob/master/css/MarkerCluster.css" /> -->
+    <!--	<link rel="stylesheet" href="https://github.com/anditabinas/mhawhereness/blob/master/leaflet-easy-button.css" /> -->
+    <!--	<link rel="stylesheet" href="https://github.com/anditabinas/mhawhereness/blob/master/leaflet-tag-filter-button.css" /> -->
+
+</head>
+
+<body>
+
+    <body oncontextmenu="return false">
+        <div id="wrapper">
+            <div id="header">                
+                <h1>Mapping Emotions</h1>
+                <h2>Our stories matter. <p>Let our stories of challenges and triumphs on mental illness become instruments to raise mental health awareness and provide hope and encouragement to others who are struggling with their mental health. Sharing our stories could also help break down the stigma around mental health problems and educate people about mental health. Truthfully, there should be no shame in talking about mental health and our struggles. IT IS important to talk about it and let people know that no matter how young or old, how rich or poor, or WHEREver they are, they are not alone in their battles. <p>We also encourage those who have loved ones who have struggled/still struggling with depression, anxiety, or other mental health problems to share how they have supported these people that they care about during these times. <p>Just a reminder though, please be cautious in sharing your stories if they may be triggering to others. Put trigger warnings if necessary. <p><font color="black">Click the button below to share your story. Then drag the map pin on your location, or zoom in to your location by clicking the hand button on the left, before dragging the map pin to the identified location</h2></font>
+            </div>
+            <div id="controls">
+                <input onclick="startEdits()" type="button" value="Click to share your story.">
+                <input onclick="stopEdits()" type="button" value="Done.">
+            </div>
+            <div id="map"></div>
+            <div id="credits">
+                <p>Github Leaflet Draw Collection Tool &copy;2015, Mike Foster and Raphael Dumas | Mental Health aWHEREness &copy;2019, Sandra Tabinas</p>
+            </div>
+        </div>
+        <div id="dialog" title="Share your story.">
+            <form>
+                <fieldset style="border: none;">
+                    <ul style="list-style-type: none; padding-left: 0px">
+                        <li><label for="nickname">Nickame</label></li>
+                        <li><input id="nickname" name="nickname" placeholder="Your nickname" size="40" type="text" required></li> 
+                        <li><label for="notes">Your Story</label></li>
+                        <li><textarea cols="40" id="notes" name="notes" placeholder="Share your story here." rows="5"></textarea></li>
+                    </ul>
+                    <input style="position:absolute; top:-1000px" tabindex="-1" type="submit">
+                </fieldset>
+            </form>
+        </div>
+        <script src="https://unpkg.com/leaflet@0.7.7/dist/leaflet.js"></script>
+        <script src="//cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.2/jquery.min.js"></script>
+        <script src="https://rawgit.com/k4r573n/leaflet-control-osm-geocoder/master/Control.OSMGeocoder.js"></script>
+        <script src="//code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+        <script src="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css"></script>
+        <script charset="utf-8" src="https://cdn.jsdelivr.net/npm/leaflet.locatecontrol@0.67.0/dist/L.Control.Locate.min.js"></script>
+        <script src="https://rawgit.com/mapshakers/leaflet-control-window/master/src/L.Control.Window.js"></script>
+        <script src="https://github.com/anditabinas/mhawhereness/blob/master/leaflet.markercluster.js"></script>
+        <script src="https://github.com/anditabinas/mhawhereness/blob/master/leaflet-easy-button.js"></script>
+        <script src="https://github.com/anditabinas/mhawhereness/blob/master/leaflet-tag-filter-button.js"></script>
+        <script src='https://api.mapbox.com/mapbox.js/plugins/leaflet-fullscreen/v1.0.1/Leaflet.fullscreen.min.js'></script>
+        <!--	<script src='https://github.com/anditabinas/mhawhereness/blob/master/leaflet-routing-machine.js'></script> -->
+        <script type="text/javascript" src="dist/leaflet-control-credits.js"></script>
+
+        <script>
+            var config = { //TODO: Change to your username, insert function on Carto, and Carto tablename
+                cartoUsername: "anditabinas",
+                cartoInsertFunction: "insert_crowd_mapping_data",
+                cartoTablename: "mentalhealthstories",
+                mapcenter: [12.85985, 114.03808],
+                drawOptions: {
+                    draw: {
+                        polygon: false,
+                        polyline: false,
+                        rectangle: false,
+                        circle: false,
+                        circlemarker: false,
+                        marker: true
+                    },
+                    edit: false,
+                    remove: false
+                }
+            };
+
+            var cartoData = null; //These adds data from Carto using the SQL API, declares variables, and writes the SQL selection query
+            var sqlQuery = "SELECT the_geom, name, notes FROM " + config.cartoTablename;
+            var map = L.map('map', {
+                center: config.mapcenter,
+                zoom: 5
+            }); // Creates the Leaflet map object
+            map.addControl(new L.Control.Fullscreen());
+
+            var Mapbox = L.tileLayer('https://api.mapbox.com/styles/v1/anditabinas/ck03pb9a81b241cmenhhktqto/tiles/256/{z}/{x}/{y}?access_token=pk.eyJ1IjoiYW5kaXRhYmluYXMiLCJhIjoiY2plejI3aHp3MDV3MjMzcW9ydXl2bHNmZiJ9.9h6j7BbkM-PUtK0zaZ1iUg', {
+                attribution: '&copy; <a href="mapbox://styles/anditabinas/ck03pb9a81b241cmenhhktqto">Mapbox<\/a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap<\/a> contributors',
+                maxZoom: 20 //Adds the tilelayer basemap; I used my mapbox style here.
+            });
+            Mapbox.addTo(map);
+
+            var osmGeocoder = new L.Control.OSMGeocoder({
+                position: 'topleft'
+            }); //Adds Search toolbar; OSMGeocoder       
+            map.addControl(osmGeocoder);
+
+            var lc = L.control.locate({ //Adds Locate Control; to locate the user's location on the map
+                position: 'topleft',
+                icon: 'fa fa-hand-o-down'
+            });
+            map.addControl(lc);
+
+            var getData = "https://" + config.cartoUsername + ".carto.com/api/v2/sql?format=GeoJSON&q=" + sqlQuery; //Fetches data input on the carto database
+            function getGeoJSON() {
+                $.getJSON(getData, function(data) {
+                    cartoData = L.geoJson(data, {
+                        onEachFeature: function(feature, layer) {
+                            layer.bindPopup('<b>Nickname: <\/b>' + feature.properties.name + '<br>' + '<b>My Story: <\/b>' + feature.properties.notes + '');
+                        }
+                    }).addTo(map);
+                });
+            }
+            getGeoJSON();
+            var drawnItems = new L.FeatureGroup();
+            var drawControl = new L.Control.Draw(config.drawOptions);
+            var controlOnMap = false;
+
+            function startEdits() {
+                if (controlOnMap === true) {
+                    map.removeControl(drawControl);
+                    controlOnMap = false;
+                }
+                map.addControl(drawControl);
+                controlOnMap = true;
+            }
+
+            function stopEdits() {
+                map.removeControl(drawControl);
+                controlOnMap = false;
+            }
+            map.on(L.Draw.Event.CREATED, function(e) {
+                var layer = e.layer;
+                map.addLayer(drawnItems);
+                drawnItems.addLayer(layer);
+                dialog.dialog("open");
+            });
+
+            var dialog = $("#dialog").dialog({
+                autoOpen: false,
+                height: 450,
+                width: 500,
+                modal: true,
+                position: {
+                    my: "center center",
+                    at: "center center",
+                    of: "#map"
+                },
+                buttons: {
+                    "Share": setData,
+                    Cancel: function() {
+                        dialog.dialog("close");
+                        refreshLayer();
+                    }
+                },
+                close: function() {
+                    form[0].reset();
+                    refreshLayer();
+                    console.log("Dialog closed");
+                }
+            });
+
+            form = dialog.find("form").on("submit", function(event) {
+                event.preventDefault();
+                setData();
+            });
+
+            function setData() {
+      			var enteredNickname = "'" + JSON.stringify(nickname.value.replace("'", "''")) + "'"                          
+      			var enteredNotes = "'" + JSON.stringify(notes.value.replace("'", "''")) + "'";                      
+
+                drawnItems.eachLayer(function(layer) {
+                    var drawing = "'" + JSON.stringify(layer.toGeoJSON().geometry) + "'", //Converts the drawing to a GeoJSON
+                        sql = "SELECT " + config.cartoInsertFunction + "("; //Constructs the SQL Query from the entered parameters on the dialog/form
+                    sql += drawing;
+                    sql += "," + enteredNickname;
+                    sql += "," + enteredNotes;
+                    sql += ");";
+                    console.log(drawing);
+
+                    $.ajax({
+                        type: 'POST',
+                        url: 'https://' + config.cartoUsername + '.carto.com/api/v2/sql', //Sending the data to Carto
+                        crossDomain: true,
+                        data: {
+                            "q": sql
+                        },
+                        dataType: 'json',
+                        success: function(responseData, textStatus, jqXHR) {
+                            console.log("Data saved");
+                        },
+                        error: function(responseData, textStatus, errorThrown) {
+                            console.log("Problem saving the data");
+                        }
+                    });
+                    var newData = layer.toGeoJSON();
+                    newData.properties.name = nickname.value;
+                    newData.properties.notes = notes.value;
+                    cartoData.addData(newData);
+                });
+
+                dialog.dialog("close");
+            }
+
+            function refreshLayer() {
+                console.log("drawnItems has been cleared");
+                map.removeLayer(drawnItems);
+                drawnItems = new L.FeatureGroup();
+            }
+        </script>
+    </body>
+
+</html>
