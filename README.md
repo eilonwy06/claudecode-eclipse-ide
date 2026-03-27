@@ -1,5 +1,7 @@
 # Claude Code for Eclipse IDE
 
+> **Unofficial community port** — This is an independent Eclipse IDE adaptation of the [Claude Code VS Code extension](https://marketplace.visualstudio.com/items?itemName=Anthropic.claude-code), built by [eilonwy06](https://github.com/eilonwy06). It is not affiliated with, endorsed by, or maintained by Anthropic.
+
 An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — Anthropic's AI-powered CLI — directly into your Eclipse development environment.
 
 ## Installation
@@ -15,6 +17,7 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 
 | Project | Description |
 |---|---|
+| `com.anthropic.claudecode.eclipse` | The plugin itself — source code, MCP tools, SSE server, UI views, and chat integration |
 | `com.anthropic.claudecode.eclipse.feature` | Eclipse feature definition — declares the plugin and its metadata |
 | `com.anthropic.claudecode.eclipse.site` | p2 update site — the installable artifacts hosted via GitHub Pages |
 
