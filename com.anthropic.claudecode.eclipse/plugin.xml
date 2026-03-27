@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.4"?>
+<plugin>
+
+   <!-- Claude Code View -->
+   <extension point="org.eclipse.ui.views">
+      <category
+            id="com.anthropic.claudecode.eclipse.category"
+            name="Claude Code"/>
+      <view
+            id="com.anthropic.claudecode.eclipse.ui.ClaudeCodeView"
+            name="Claude Code"
+            icon="icons/claude-16.png"
+            class="com.anthropic.claudecode.eclipse.ui.ClaudeCodeView"
+            category="com.anthropic.claudecode.eclipse.category"
+            allowMultiple="false"
+            restorable="true"/>
+      <view
+            id="com.anthropic.claudecode.eclipse.ui.ClaudeChatView"
+            name="Claude Chat"
+            icon="icons/claude-16.png"
+            class="com.anthropic.claudecode.eclipse.ui.ClaudeChatView"
+            category="com.anthropic.claudecode.eclipse.category"
+            allowMultiple="false"
+            restorable="true"/>
+   </extension>
+
+   <!-- Commands -->
+   <extension point="org.eclipse.ui.commands">
+      <category
+            id="com.anthropic.claudecode.eclipse.commands.category"
+            name="Claude Code"/>
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.toggle"
+            name="Toggle Claude Code"
+            description="Toggle the Claude Code terminal panel"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.sendSelection"
+            name="Send Selection to Claude"
+            description="Send the current editor selection to Claude Code"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.addFile"
+            name="Add File to Claude Context"
+            description="Add the current file to Claude Code context"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.resume"
+            name="Resume Claude Code"
+            description="Resume the last Claude Code session"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.restart"
+            name="Restart Claude Code Server"
+            description="Restart the MCP server"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+   </extension>
+
+   <!-- Command Handlers -->
+   <extension point="org.eclipse.ui.handlers">
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.toggle"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.ToggleClaudeHandler"/>
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.SendSelectionHandler"/>
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.addFile"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.AddFileHandler"/>
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.resume"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.ResumeClaudeHandler"/>
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.restart"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.RestartServerHandler"/>
+   </extension>
+
+   <!-- Key Bindings -->
+   <extension point="org.eclipse.ui.bindings">
+      <key
+            commandId="com.anthropic.claudecode.eclipse.commands.toggle"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="M1+M2+C"/>
+      <key
+            commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="M1+M2+S"/>
+      <key
+            commandId="com.anthropic.claudecode.eclipse.commands.addFile"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="M1+M3+A"/>
+   </extension>
+
+   <!-- Menus and Toolbar -->
+   <extension point="org.eclipse.ui.menus">
+      <!-- Main menu contribution -->
+      <menuContribution locationURI="menu:org.eclipse.ui.main.menu?after=additions">
+         <menu
+               id="com.anthropic.claudecode.eclipse.menu"
+               label="Claude Code"
+               mnemonic="C">
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.toggle"
+                  label="Toggle Claude Code"
+                  mnemonic="T"
+                  style="push"/>
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
+                  label="Send Selection to Claude"
+                  mnemonic="S"
+                  style="push"/>
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.addFile"
+                  label="Add File to Claude Context"
+                  mnemonic="A"
+                  style="push"/>
+            <separator name="com.anthropic.claudecode.eclipse.separator1" visible="true"/>
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.resume"
+                  label="Resume Session"
+                  mnemonic="R"
+                  style="push"/>
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.restart"
+                  label="Restart Server"
+                  style="push"/>
+         </menu>
+      </menuContribution>
+
+      <!-- Editor context menu -->
+      <menuContribution locationURI="popup:#TextEditorContext?after=additions">
+         <menu
+               id="com.anthropic.claudecode.eclipse.editorMenu"
+               label="Claude Code">
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
+                  label="Send Selection to Claude"
+                  style="push"/>
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.addFile"
+                  label="Add File to Claude Context"
+                  style="push"/>
+         </menu>
+      </menuContribution>
+
+      <!-- Toolbar -->
+      <menuContribution locationURI="toolbar:org.eclipse.ui.main.toolbar?after=additions">
+         <toolbar id="com.anthropic.claudecode.eclipse.toolbar">
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.toggle"
+                  icon="icons/claude-16.png"
+                  label="Toggle Claude Code"
+                  style="push"
+                  tooltip="Toggle Claude Code (Ctrl+Shift+C)"/>
+         </toolbar>
+      </menuContribution>
+   </extension>
+
+   <!-- Preferences -->
+   <extension point="org.eclipse.ui.preferencePages">
+      <page
+            id="com.anthropic.claudecode.eclipse.preferences"
+            name="Claude Code"
+            class="com.anthropic.claudecode.eclipse.ui.ClaudePreferencePage"/>
+   </extension>
+
+   <!-- Preference Initializer -->
+   <extension point="org.eclipse.core.runtime.preferences">
+      <initializer class="com.anthropic.claudecode.eclipse.ui.ClaudePreferenceInitializer"/>
+   </extension>
+
+   <!-- Startup hook -->
+   <extension point="org.eclipse.ui.startup">
+      <startup class="com.anthropic.claudecode.eclipse.ClaudeStartup"/>
+   </extension>
+
+</plugin>

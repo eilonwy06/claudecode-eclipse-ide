@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #1e1e1e; --bg-input: #2d2d2d; --bg-user: #2b4a6f; --bg-assistant: #2d2d2d;
+  --bg-code: #1a1a1a; --bg-tool: #2a2a3a; --bg-hover: #3a3a3a;
+  --fg: #d4d4d4; --fg-dim: #888; --fg-code: #ce9178; --fg-tool: #9a86d6;
+  --fg-link: #4fc1ff; --border: #404040; --accent: #6b9eff;
+  --scrollbar: #555; --scrollbar-bg: #1e1e1e;
+}
+html, body { height: 100%; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; }
+
+#app { display: flex; flex-direction: column; height: 100%; }
+
+/* Header */
+#header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+#header .title { font-weight: 600; font-size: 13px; color: var(--fg); }
+#header .status { font-size: 11px; color: var(--fg-dim); }
+#header .actions { display: flex; gap: 6px; }
+#header button { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg-dim); padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+#header button:hover { background: var(--bg-hover); color: var(--fg); }
+
+/* Messages */
+#messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+#messages::-webkit-scrollbar { width: 6px; }
+#messages::-webkit-scrollbar-track { background: var(--scrollbar-bg); }
+#messages::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
+
+.msg { max-width: 90%; padding: 10px 14px; border-radius: 8px; line-height: 1.5; word-wrap: break-word; }
+.msg.user { align-self: flex-end; background: var(--bg-user); border-bottom-right-radius: 2px; }
+.msg.assistant { align-self: flex-start; background: var(--bg-assistant); border: 1px solid var(--border); border-bottom-left-radius: 2px; }
+.msg.system { align-self: center; background: transparent; color: var(--fg-dim); font-size: 11px; font-style: italic; padding: 4px 8px; }
+
+/* Markdown rendering */
+.msg h1, .msg h2, .msg h3 { margin: 8px 0 4px; color: var(--fg); }
+.msg h1 { font-size: 16px; } .msg h2 { font-size: 14px; } .msg h3 { font-size: 13px; font-weight: 600; }
+.msg p { margin: 4px 0; }
+.msg ul, .msg ol { margin: 4px 0 4px 20px; }
+.msg li { margin: 2px 0; }
+.msg strong { font-weight: 600; color: #e0e0e0; }
+.msg em { font-style: italic; }
+.msg a { color: var(--fg-link); text-decoration: none; }
+
+/* Code */
+.msg code { font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; font-size: 12px; background: var(--bg-code); padding: 1px 5px; border-radius: 3px; color: var(--fg-code); }
+.msg pre { margin: 8px 0; border-radius: 6px; overflow: hidden; }
+.msg pre .code-header { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: #181818; font-size: 11px; color: var(--fg-dim); }
+.msg pre .code-header button { background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 11px; }
+.msg pre .code-header button:hover { color: var(--fg); }
+.msg pre code { display: block; padding: 10px 12px; background: var(--bg-code); overflow-x: auto; white-space: pre; color: var(--fg); }
+
+/* Tool indicators */
+.tool-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; margin: 4px 0; background: var(--bg-tool); border-radius: 4px; font-size: 11px; color: var(--fg-tool); }
+.tool-badge .spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--fg-tool); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.tool-badge.done { opacity: 0.6; }
+.tool-badge.done .spinner { display: none; }
+
+/* Streaming cursor */
+.streaming-cursor::after { content: '▌'; animation: blink 0.8s step-end infinite; color: var(--accent); }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Input area */
+#input-area { display: flex; align-items: flex-end; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; gap: 8px; }
+#input-area textarea { flex: 1; background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-family: inherit; font-size: 13px; resize: none; outline: none; min-height: 38px; max-height: 150px; line-height: 1.4; }
+#input-area textarea:focus { border-color: var(--accent); }
+#input-area textarea::placeholder { color: var(--fg-dim); }
+#send-btn { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 13px; font-weight: 600; flex-shrink: 0; height: 38px; }
+#send-btn:hover { opacity: 0.9; }
+#send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Welcome screen */
+#welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; padding: 40px; text-align: center; color: var(--fg-dim); }
+#welcome h2 { color: var(--fg); margin-bottom: 8px; font-size: 16px; }
+#welcome p { font-size: 13px; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <span class="title">Claude Code</span>
+    <span class="status" id="status">Disconnected</span>
+    <div class="actions">
+      <button onclick="clearChat()">Clear</button>
+      <button onclick="newSession()">New Session</button>
+    </div>
+  </div>
+  <div id="messages">
+    <div id="welcome">
+      <h2>Claude Code for Eclipse</h2>
+      <p>Type a message below to start coding with Claude.</p>
+      <p style="margin-top: 8px; font-size: 11px;">Ctrl+Enter to send</p>
+    </div>
+  </div>
+  <div id="input-area">
+    <textarea id="input" placeholder="Ask Claude..." rows="1" autofocus></textarea>
+    <button id="send-btn" onclick="sendMessage()">Send</button>
+  </div>
+</div>
+
+<script>
+const messagesEl = document.getElementById('messages');
+const inputEl = document.getElementById('input');
+const sendBtn = document.getElementById('send-btn');
+const statusEl = document.getElementById('status');
+const welcomeEl = document.getElementById('welcome');
+
+let isStreaming = false;
+let currentAssistantEl = null;
+let currentTextBuffer = '';
+
+// Auto-resize textarea
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 150) + 'px';
+});
+
+// Ctrl+Enter or Enter to send
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    sendMessage();
+  } else if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text || isStreaming) return;
+
+  if (welcomeEl) welcomeEl.remove();
+
+  addMessage('user', text);
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  setStreaming(true);
+
+  // Call Java bridge
+  if (typeof window._sendToJava === 'function') {
+    window._sendToJava(text);
+  }
+}
+
+function addMessage(role, content) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  if (role === 'assistant' || role === 'system') {
+    div.innerHTML = renderMarkdown(content || '');
+  } else {
+    div.textContent = content;
+  }
+  messagesEl.appendChild(div);
+  scrollToBottom();
+  return div;
+}
+
+function startAssistantMessage() {
+  if (welcomeEl) welcomeEl.remove();
+  currentTextBuffer = '';
+  currentAssistantEl = document.createElement('div');
+  currentAssistantEl.className = 'msg assistant streaming-cursor';
+  messagesEl.appendChild(currentAssistantEl);
+  scrollToBottom();
+}
+
+function appendToAssistant(text) {
+  if (!currentAssistantEl) startAssistantMessage();
+  currentTextBuffer += text;
+  currentAssistantEl.innerHTML = renderMarkdown(currentTextBuffer);
+  scrollToBottom();
+}
+
+function finishAssistantMessage() {
+  if (currentAssistantEl) {
+    currentAssistantEl.classList.remove('streaming-cursor');
+    currentAssistantEl.innerHTML = renderMarkdown(currentTextBuffer);
+    currentAssistantEl = null;
+    currentTextBuffer = '';
+  }
+  setStreaming(false);
+}
+
+function addToolIndicator(toolName, isRunning) {
+  if (!currentAssistantEl) startAssistantMessage();
+  const badge = document.createElement('div');
+  badge.className = 'tool-badge' + (isRunning ? '' : ' done');
+  badge.id = 'tool-' + toolName.replace(/[^a-zA-Z0-9]/g, '_');
+  badge.innerHTML = (isRunning ? '<span class="spinner"></span>' : '✓') + ' ' + toolName;
+  currentAssistantEl.appendChild(badge);
+  scrollToBottom();
+}
+
+function updateToolDone(toolName) {
+  const badge = document.getElementById('tool-' + toolName.replace(/[^a-zA-Z0-9]/g, '_'));
+  if (badge) {
+    badge.className = 'tool-badge done';
+    badge.innerHTML = '✓ ' + toolName;
+  }
+}
+
+function addSystemMessage(text) {
+  addMessage('system', text);
+}
+
+function setStreaming(val) {
+  isStreaming = val;
+  sendBtn.disabled = val;
+  inputEl.disabled = val;
+  if (!val) inputEl.focus();
+}
+
+function setStatus(text) {
+  statusEl.textContent = text;
+}
+
+function clearChat() {
+  messagesEl.innerHTML = '';
+  currentAssistantEl = null;
+  currentTextBuffer = '';
+  if (typeof window._newSession === 'function') window._newSession();
+}
+
+function newSession() {
+  clearChat();
+  addSystemMessage('New session started.');
+}
+
+function scrollToBottom() {
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function handleError(msg) {
+  finishAssistantMessage();
+  addMessage('system', '⚠ ' + msg);
+}
+
+// --- Markdown renderer (lightweight) ---
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = text;
+
+  // Code blocks (```lang\n...\n```)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const escaped = escapeHtml(code.trimEnd());
+    const label = lang || 'code';
+    return '<pre><div class="code-header"><span>' + label + '</span><button onclick="copyCode(this)">Copy</button></div><code>' + escaped + '</code></pre>';
+  });
+
+  // Inline code
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+  // Headers
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+  // Bold and italic
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  // Unordered lists
+  html = html.replace(/^[*-] (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+
+  // Ordered lists
+  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+  // Line breaks → paragraphs (but not inside pre/code)
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = html.replace(/\n/g, '<br>');
+
+  // Wrap in paragraph if not already wrapped
+  if (!html.startsWith('<')) html = '<p>' + html + '</p>';
+
+  return html;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function copyCode(btn) {
+  const code = btn.closest('pre').querySelector('code').textContent;
+  navigator.clipboard.writeText(code).then(() => {
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 1500);
+  });
+}
+
+// --- Java bridge receive functions (called from Java via browser.execute) ---
+// These are called by ClaudeChatView.java
+
+window.onStreamStart = function() { startAssistantMessage(); };
+window.onStreamText = function(text) { appendToAssistant(text); };
+window.onStreamEnd = function() { finishAssistantMessage(); };
+window.onToolStart = function(name) { addToolIndicator(name, true); };
+window.onToolEnd = function(name) { updateToolDone(name); };
+window.onSystemMessage = function(msg) { addSystemMessage(msg); };
+window.onStatusUpdate = function(status) { setStatus(status); };
+window.onError = function(msg) { handleError(msg); };
+</script>
+</body>
+</html>

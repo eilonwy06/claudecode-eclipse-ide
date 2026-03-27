@@ -3,8 +3,8 @@ RemoteSystemsTempFiles/
 .metadata/
 *.log
 
-# Build outputs (keep site artifacts for GitHub Pages)
-# com.anthropic.claudecode.eclipse/target/
+# Build outputs
+com.anthropic.claudecode.eclipse/bin/
 
 # OS
 .DS_Store
