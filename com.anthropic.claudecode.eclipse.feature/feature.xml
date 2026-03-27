@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feature
+      id="com.anthropic.claudecode.eclipse.feature"
+      label="Claude Code for Eclipse IDE"
+      version="1.1.0"
+      include-sources="true"
+      provider-name="Anthropic">
+
+   <description url="http://www.example.com/description">
+      [Enter Feature Description here.]
+   </description>
+
+   <copyright url="http://www.example.com/copyright">
+      [Enter Copyright Description here.]
+   </copyright>
+
+   <license url="http://www.example.com/license">
+      [Enter License Description here.]
+   </license>
+
+   <plugin
+         id="com.anthropic.claudecode.eclipse"
+         version="0.0.0"/>
+
+</feature>

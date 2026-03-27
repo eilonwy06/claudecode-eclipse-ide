@@ -1,0 +1,11 @@
+# Eclipse workspace metadata
+RemoteSystemsTempFiles/
+.metadata/
+*.log
+
+# Build outputs (keep site artifacts for GitHub Pages)
+# com.anthropic.claudecode.eclipse/target/
+
+# OS
+.DS_Store
+Thumbs.db
