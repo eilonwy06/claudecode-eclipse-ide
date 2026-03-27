@@ -195,20 +195,8 @@ public class ChatProcessManager {
     }
 
     private void handleAssistantEvent(JsonObject event) {
-        // Complete assistant message (non-streaming) — extract text from content array
-        if (!event.has("message")) return;
-        JsonObject msg = event.getAsJsonObject("message");
-        if (!msg.has("content")) return;
-
-        JsonArray content = msg.getAsJsonArray("content");
-        for (JsonElement block : content) {
-            if (!block.isJsonObject()) continue;
-            JsonObject b = block.getAsJsonObject();
-            String blockType = b.has("type") ? b.get("type").getAsString() : "";
-            if ("text".equals(blockType) && b.has("text")) {
-                emit(onText, b.get("text").getAsString());
-            }
-        }
+        // This is a complete message snapshot — text is already delivered via stream_event/content_block_delta.
+        // Do not emit text here to avoid doubling the response.
     }
 
     private void handleResultEvent(JsonObject event) {
