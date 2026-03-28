@@ -1,5 +1,9 @@
 package com.anthropic.claudecode.eclipse;
 
+import java.io.File;
+import java.net.URL;
+
+import org.eclipse.core.runtime.FileLocator;
 import org.eclipse.core.runtime.ILog;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -25,7 +29,38 @@ public class Activator extends AbstractUIPlugin {
     public void start(BundleContext context) throws Exception {
         super.start(context);
         instance = this;
+        setupPty4jNativePath();
         LOG.info("Claude Code for Eclipse starting...");
+    }
+
+    private void setupPty4jNativePath() {
+        try {
+            URL nativeUrl = getBundle().getEntry("native");
+            if (nativeUrl == null) {
+                LOG.warn("native/ folder not found in plugin — PTY4J will fall back to classpath extraction");
+                return;
+            }
+            String rawPath = FileLocator.toFileURL(nativeUrl).getPath();
+            // Strip leading slash on Windows: /C:/path -> C:/path
+            String cleanPath = rawPath.replaceFirst("^/([A-Za-z]:)", "$1");
+
+            String os   = System.getProperty("os.name", "").toLowerCase();
+            String arch = System.getProperty("os.arch", "").toLowerCase();
+            String sub;
+            if (os.contains("win")) {
+                sub = arch.contains("aarch64") ? "win/aarch64" : "win/x86-64";
+            } else if (os.contains("mac")) {
+                sub = "darwin";
+            } else {
+                sub = "linux/" + (arch.contains("aarch64") ? "aarch64" : "x86-64");
+            }
+
+            File nativeDir = new File(cleanPath, sub);
+            System.setProperty("pty4j.preferred.native.folder", nativeDir.getAbsolutePath());
+            LOG.info("PTY4J native dir: " + nativeDir.getAbsolutePath());
+        } catch (Exception e) {
+            LOG.error("Failed to configure PTY4J native path — will attempt classpath extraction", e);
+        }
     }
 
     @Override

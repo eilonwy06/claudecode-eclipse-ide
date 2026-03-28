@@ -1,6 +1,5 @@
 package com.anthropic.claudecode.eclipse.ui;
 
-import java.io.IOException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -15,10 +14,12 @@ import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
+import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.part.ViewPart;
 
 import com.anthropic.claudecode.eclipse.Activator;
-import com.anthropic.claudecode.eclipse.terminal.ClaudeProcessManager;
+import com.anthropic.claudecode.eclipse.editor.UiHelper;
 
 public class ClaudeCodeView extends ViewPart {
 
@@ -27,7 +28,6 @@ public class ClaudeCodeView extends ViewPart {
     private StyledText logArea;
     private Label statusLabel;
     private Button launchButton;
-    private ClaudeProcessManager processManager;
     private ScheduledExecutorService statusPoller;
 
     @Override
@@ -105,45 +105,23 @@ public class ClaudeCodeView extends ViewPart {
     }
 
     public void startClaude(String... extraArgs) {
-        Activator activator = Activator.getDefault();
-        if (!activator.isServerRunning()) {
-            appendLog("[ERROR] HTTP+SSE server is not running.\n");
-            return;
-        }
-
-        processManager = new ClaudeProcessManager();
-        // Wire status messages from the process manager back to our log area
-        processManager.setStatusCallback(msg ->
-            Display.getDefault().asyncExec(() -> {
-                appendLog(msg);
-                updateStatus();
-            })
-        );
-
         try {
-            processManager.start(
-                    activator.getHttpSseServer().getPort(),
-                    activator.getHttpSseServer().getAuthToken(),
-                    extraArgs
-            );
-        } catch (IOException e) {
-            appendLog("[ERROR] Failed to launch Claude: " + e.getMessage() + "\n");
-            appendLog("Make sure 'claude' is installed. Check Preferences > Claude Code for the path.\n");
-            appendLog("Install: curl -fsSL https://claude.ai/install.sh | bash\n");
-            Activator.logError("Failed to start Claude CLI", e);
-        }
-    }
-
-    public void stopClaude() {
-        if (processManager != null) {
-            processManager.stop();
-            processManager = null;
-            updateStatus();
+            IWorkbenchPage page = UiHelper.getActivePage();
+            if (page == null) {
+                appendLog("[ERROR] No active workbench page.\n");
+                return;
+            }
+            ClaudeCliView cliView = (ClaudeCliView) page.showView(ClaudeCliView.VIEW_ID);
+            if (extraArgs.length > 0) {
+                cliView.launchProcess(extraArgs);
+            }
+        } catch (PartInitException e) {
+            appendLog("[ERROR] Could not open Claude CLI view: " + e.getMessage() + "\n");
+            Activator.logError("Failed to open Claude CLI view", e);
         }
     }
 
     public void restartClaude(String... extraArgs) {
-        stopClaude();
         startClaude(extraArgs);
     }
 
@@ -199,7 +177,6 @@ public class ClaudeCodeView extends ViewPart {
         if (statusPoller != null) {
             statusPoller.shutdownNow();
         }
-        stopClaude();
         super.dispose();
     }
 }

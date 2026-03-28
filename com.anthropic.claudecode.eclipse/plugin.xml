@@ -23,6 +23,14 @@
             category="com.anthropic.claudecode.eclipse.category"
             allowMultiple="false"
             restorable="true"/>
+      <view
+            id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"
+            name="Claude CLI"
+            icon="icons/claude-16.png"
+            class="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"
+            category="com.anthropic.claudecode.eclipse.category"
+            allowMultiple="false"
+            restorable="true"/>
    </extension>
 
    <!-- Commands -->

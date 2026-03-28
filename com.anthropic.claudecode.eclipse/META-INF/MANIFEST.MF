@@ -16,10 +16,13 @@ Require-Bundle: org.eclipse.ui,
  org.eclipse.jface.text,
  org.eclipse.compare,
  org.eclipse.debug.ui,
- org.eclipse.tm.terminal.view.ui,
- org.eclipse.tm.terminal.view.core,
- org.eclipse.tm.terminal.connector.local;resolution:=optional,
- com.google.gson
+ com.google.gson,
+ com.sun.jna,
+ com.sun.jna.platform
+Bundle-ClassPath: .,
+ lib/pty4j-0.12.35.jar,
+ lib/jediterm-pty-2.67.jar,
+ lib/annotations-24.1.0.jar
 Bundle-RequiredExecutionEnvironment: JavaSE-21
 Automatic-Module-Name: com.anthropic.claudecode.eclipse
 Bundle-ActivationPolicy: lazy
