@@ -13,6 +13,71 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 3. Select the **Claude Code for Eclipse IDE** feature and follow the install prompts
 4. Restart Eclipse when prompted
 
+## Prerequisites
+
+- Eclipse IDE (tested with Eclipse 2023-12+)
+- [Claude Code CLI](https://claude.ai/code) installed and available on your PATH (or set path in preferences)
+- A valid Anthropic API key configured via `claude auth` or the `ANTHROPIC_API_KEY` environment variable
+
+## Usage
+
+### Opening the Views
+
+Go to **Window → Show View → Other → Claude Code** and open both:
+- **Claude Code** — terminal launcher and server controls
+- **Claude Chat** — web-based chat interface with markdown rendering
+
+### Getting Started
+
+1. In the **Claude Code** view, click **Launch Claude Terminal** to open Claude in an embedded terminal
+2. Switch to the **Claude Chat** view and type a message, then press **Enter** (or **Ctrl+Enter**) to send
+3. Claude can read your open files, selection, and workspace context automatically via MCP tools
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Shift+C` | Toggle Claude Code view |
+| `Ctrl+Shift+S` | Send current editor selection to Claude |
+| `Ctrl+Alt+A` | Add current file to Claude's context |
+
+These are also available from the **Claude Code** menu in the menu bar and from the right-click context menu in any text editor.
+
+### Chat Controls
+
+- **Clear** — clears the chat display
+- **New Session** — starts a fresh conversation
+- **Resume Session** (Claude Code view) — resumes the previous CLI session with `--resume`
+- **Restart Server** (Claude Code view) — restarts the internal MCP server
+
+### What Claude Can Do in Eclipse
+
+Claude has access to the following MCP tools, which it invokes automatically:
+
+| Tool | Description |
+|---|---|
+| `openFile` | Open a file at a specific line/column with optional text selection |
+| `getOpenEditors` | List all open editor tabs |
+| `getCurrentSelection` | Get the currently selected text and its location |
+| `getLatestSelection` | Get the most recent selection (even after focus change) |
+| `getWorkspaceFolders` | List all open Eclipse projects |
+| `getDiagnostics` | Get errors and warnings from Eclipse's problem markers |
+| `saveDocument` | Save a file |
+| `checkDocumentDirty` | Check if a file has unsaved changes |
+| `openDiff` | Show a diff view comparing proposed vs. current file content |
+| `closeAllDiffTabs` | Close all open diff tabs |
+
+### Configuration
+
+Go to **Window → Preferences → Claude Code** to configure:
+
+| Setting | Default | Description |
+|---|---|---|
+| Start server automatically | On | Auto-start the MCP server when Eclipse launches |
+| Track editor selection | On | Continuously track cursor/selection for Claude context |
+| Claude command | `claude` | Path to the Claude CLI executable |
+| Port range (min/max) | 10000–65535 | Port range for the internal HTTP+SSE server |
+
 ## Project Structure
 
 | Project | Description |
