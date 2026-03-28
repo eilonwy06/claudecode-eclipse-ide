@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feature
+      id="com.anthropic.claudecode.eclipse.feature"
+      label="Claude Code for Eclipse IDE"
+      version="1.1.1"
+      include-sources="true"
+      provider-name="eilonwy06">
+
+   <description url="https://github.com/eilonwy06/claudecode-eclipse-ide">
+      Unofficial community plugin that integrates Claude Code into the Eclipse IDE.
+      Not affiliated with or endorsed by Anthropic.
+   </description>
+
+   <copyright url="https://github.com/eilonwy06/claudecode-eclipse-ide">
+      Copyright 2026 eilonwy06. Not affiliated with Anthropic.
+   </copyright>
+
+   <license url="https://github.com/eilonwy06/claudecode-eclipse-ide/blob/master/LICENSE">
+      MIT License. This is an unofficial, community-made plugin and is not affiliated
+      with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.
+   </license>
+
+   <plugin
+         id="com.anthropic.claudecode.eclipse"
+         version="1.1.1.202603281009"/>
+
+</feature>
