@@ -23,15 +23,18 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 
 ### Opening the Views
 
-Go to **Window → Show View → Other → Claude Code** and open both:
-- **Claude Code** — terminal launcher and server controls
+Go to **Window → Show View → Other → Claude Code** and open the views you want:
+- **Claude Code** — server status, launch/resume/restart controls
+- **Claude CLI** — dedicated interactive terminal with full PTY support (ANSI colors, readline)
 - **Claude Chat** — web-based chat interface with markdown rendering
 
 ### Getting Started
 
-1. In the **Claude Code** view, click **Launch Claude Terminal** to open Claude in an embedded terminal
-2. Switch to the **Claude Chat** view and type a message, then press **Enter** (or **Ctrl+Enter**) to send
+1. In the **Claude Code** view, click **Launch Claude Terminal** — this opens the **Claude CLI** view and starts Claude automatically
+2. Type directly in the **Claude CLI** terminal, or switch to **Claude Chat** for a richer markdown interface
 3. Claude can read your open files, selection, and workspace context automatically via MCP tools
+
+> **Note:** The Claude CLI view uses [PTY4J](https://github.com/JetBrains/pty4j) + [JediTerm](https://github.com/JetBrains/jediterm) for a fully interactive terminal — no TM Terminal required.
 
 ### Keyboard Shortcuts
 

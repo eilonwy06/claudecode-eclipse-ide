@@ -96,7 +96,7 @@ public class ClaudeCodeView extends ViewPart {
             appendLog("HTTP+SSE server listening on 127.0.0.1:" + port + "\n");
             appendLog("Auth token: " + token.substring(0, 8) + "...\n");
             appendLog("Lock file: ~/.claude/ide/" + port + ".lock\n\n");
-            appendLog("Click 'Launch Claude Terminal' to open Claude in Eclipse's embedded Terminal view.\n");
+            appendLog("Click 'Launch Claude Terminal' to open the dedicated Claude CLI view.\n");
             appendLog("Claude will auto-connect to Eclipse via the HTTP+SSE server.\n\n");
         }
 
