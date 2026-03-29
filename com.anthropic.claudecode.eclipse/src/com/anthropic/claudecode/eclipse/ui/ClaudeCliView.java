@@ -125,6 +125,7 @@ public class ClaudeCliView extends ViewPart {
 
         // Clear terminal display
         safeExecute("term.clear()");
+        safeExecute("term.write('Starting Claude CLI...\\r\\n')");
 
         // Ensure server is running
         Activator activator = Activator.getDefault();
@@ -150,21 +151,20 @@ public class ClaudeCliView extends ViewPart {
         String workingDir = ResourcesPlugin.getWorkspace().getRoot()
                 .getLocation().toOSString();
 
-        // On Windows, wrap .cmd/.bat in cmd.exe so winpty has a real exe entry point
+        // On Windows always wrap in cmd.exe — winpty requires a real PE executable
+        // as the entry point. cmd.exe then finds claude / claude.cmd via PATH.
         List<String> cmdList = new ArrayList<>();
         String os = System.getProperty("os.name", "").toLowerCase();
         if (os.contains("win")) {
-            String lower = claudeCmd.toLowerCase();
-            if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
-                cmdList.add("cmd.exe");
-                cmdList.add("/q");
-                cmdList.add("/c");
-            }
+            cmdList.add("cmd.exe");
+            cmdList.add("/c");
         }
         cmdList.add(claudeCmd);
         for (String arg : extraArgs) {
             cmdList.add(arg);
         }
+
+        safeExecute("term.write('Command: " + escapeJs(String.join(" ", cmdList)) + "\\r\\n')");
 
         try {
             ptyProcess = new PtyProcessBuilder(cmdList.toArray(new String[0]))
@@ -178,8 +178,8 @@ public class ClaudeCliView extends ViewPart {
 
             ptyStdin = ptyProcess.getOutputStream();
             startReaderThread();
-        } catch (IOException e) {
-            String msg = "Failed to start Claude CLI: " + e.getMessage() + "\\r\\n"
+        } catch (Throwable e) {
+            String msg = "Error (" + e.getClass().getSimpleName() + "): " + e.getMessage() + "\\r\\n"
                     + "Check Preferences > Claude Code for the correct path.\\r\\n";
             safeExecute("term.write('" + escapeJs(msg) + "')");
             Activator.logError("Failed to start Claude CLI process", e);
