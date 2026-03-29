@@ -40,9 +40,9 @@ public class Activator extends AbstractUIPlugin {
                 LOG.warn("native/ folder not found in plugin — PTY4J will fall back to classpath extraction");
                 return;
             }
-            String rawPath = FileLocator.toFileURL(nativeUrl).getPath();
-            // Strip leading slash on Windows: /C:/path -> C:/path
-            String cleanPath = rawPath.replaceFirst("^/([A-Za-z]:)", "$1");
+            // Use toURI() so percent-encoded characters (e.g. spaces as %20) are decoded
+            // correctly into a real filesystem path — new File(getPath()) does NOT decode them.
+            File nativeBase = new File(FileLocator.toFileURL(nativeUrl).toURI());
 
             String os   = System.getProperty("os.name", "").toLowerCase();
             String arch = System.getProperty("os.arch", "").toLowerCase();
@@ -55,7 +55,7 @@ public class Activator extends AbstractUIPlugin {
                 sub = "linux/" + (arch.contains("aarch64") ? "aarch64" : "x86-64");
             }
 
-            File nativeDir = new File(cleanPath, sub);
+            File nativeDir = new File(nativeBase, sub);
             System.setProperty("pty4j.preferred.native.folder", nativeDir.getAbsolutePath());
             LOG.info("PTY4J native dir: " + nativeDir.getAbsolutePath());
         } catch (Exception e) {
