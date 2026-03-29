@@ -186,7 +186,12 @@ public class ClaudeCliView extends ViewPart {
                 public void completed(ProgressEvent event) {
                     browser.removeProgressListener(this);
                     launch(extraArgs);
-                    focus();
+                    // Delay focus so SWT finishes settling the new tab's layout
+                    // and focus chain before we request it — fixes the intermittent
+                    // "can't type" issue on Windows WebView2.
+                    Display.getCurrent().timerExec(200, () -> {
+                        if (!disposed && !viewDisposed) focus();
+                    });
                 }
             });
 
@@ -328,7 +333,7 @@ public class ClaudeCliView extends ViewPart {
             + "term.loadAddon(fitAddon);\n"
             + "term.open(document.getElementById('terminal'));\n"
             + "fitAddon.fit();\n"
-            + "term.focus();\n"
+            + "setTimeout(function() { term.focus(); }, 0);\n"
             // Batch output per animation frame so rapid ANSI sequences
             // (cursor-move + rewrite) are processed together before repaint,
             // giving smooth streaming instead of flickering/regenerating lines.
