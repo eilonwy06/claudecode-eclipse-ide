@@ -112,9 +112,7 @@ public class ClaudeCodeView extends ViewPart {
                 return;
             }
             ClaudeCliView cliView = (ClaudeCliView) page.showView(ClaudeCliView.VIEW_ID);
-            if (extraArgs.length > 0) {
-                cliView.launchProcess(extraArgs);
-            }
+            cliView.launchProcess(extraArgs);
         } catch (PartInitException e) {
             appendLog("[ERROR] Could not open Claude CLI view: " + e.getMessage() + "\n");
             Activator.logError("Failed to open Claude CLI view", e);
