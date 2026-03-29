@@ -4,7 +4,15 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [1.2.0] — 2026-03-29 *(current)*
+## [1.2.1] — 2026-03-29 *(current)*
+
+### Fixed
+- New and reopened terminal tabs now reliably receive keyboard input — focus is requested after a short delay to let SWT finish settling the tab's focus chain, eliminating the intermittent "can't type" issue on Windows WebView2
+- Terminal output now batches writes per animation frame (`requestAnimationFrame`), so Claude's streaming ANSI sequences are processed together before each repaint — eliminates the flickering/regenerating-lines effect
+
+---
+
+## [1.2.0] — 2026-03-29
 
 ### Added
 - Dedicated **Claude CLI** view with full PTY support (ANSI colors, cursor movement, readline)
