@@ -137,6 +137,10 @@ git push
 
 GitHub Pages will redeploy within ~1 minute and the new version will be available to install.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
+
 ## Contributing
 
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
