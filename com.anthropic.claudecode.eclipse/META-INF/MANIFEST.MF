@@ -21,6 +21,7 @@ Bundle-ClassPath: .,
  lib/pty4j-0.12.35.jar,
  lib/jna-5.17.0.jar,
  lib/jna-platform-5.17.0.jar,
+ lib/slf4j-api-1.7.36.jar,
  lib/annotations-24.1.0.jar
 Bundle-RequiredExecutionEnvironment: JavaSE-21
 Automatic-Module-Name: com.anthropic.claudecode.eclipse
