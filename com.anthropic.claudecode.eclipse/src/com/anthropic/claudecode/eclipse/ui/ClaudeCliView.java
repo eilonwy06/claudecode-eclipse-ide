@@ -186,6 +186,7 @@ public class ClaudeCliView extends ViewPart {
                 public void completed(ProgressEvent event) {
                     browser.removeProgressListener(this);
                     launch(extraArgs);
+                    focus();
                 }
             });
 
@@ -270,7 +271,10 @@ public class ClaudeCliView extends ViewPart {
         }
 
         void focus() {
-            if (browser != null && !browser.isDisposed()) browser.setFocus();
+            if (browser != null && !browser.isDisposed()) {
+                browser.setFocus();
+                browser.execute("if (typeof term !== 'undefined') term.focus();");
+            }
         }
 
         void dispose() {
