@@ -9,7 +9,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 
 import org.eclipse.core.resources.ResourcesPlugin;
@@ -37,7 +36,6 @@ public class ClaudeCliView extends ViewPart {
     public static final String VIEW_ID = "com.anthropic.claudecode.eclipse.ui.ClaudeCliView";
 
     private Frame awtFrame;
-    private JPanel terminalPanel;
     private JediTermWidget terminal;
     private PtyProcess ptyProcess;
     private volatile boolean viewDisposed = false;
@@ -63,14 +61,14 @@ public class ClaudeCliView extends ViewPart {
     }
 
     private void initTerminalUI() {
-        terminalPanel = new JPanel(new BorderLayout());
-        awtFrame.add(terminalPanel);
+        // For embedded SWT_AWT frames: set layout directly on the frame,
+        // do NOT call pack() or setVisible() — the SWT composite controls sizing.
+        awtFrame.setLayout(new BorderLayout());
 
         terminal = new JediTermWidget(80, 24, new ClaudeTerminalSettings());
-        terminalPanel.add(terminal.getComponent(), BorderLayout.CENTER);
+        awtFrame.add(terminal.getComponent(), BorderLayout.CENTER);
 
-        awtFrame.pack();
-        awtFrame.setVisible(true);
+        awtFrame.validate();
 
         // Auto-start Claude on first open
         doLaunchProcess(new String[0]);
@@ -93,14 +91,14 @@ public class ClaudeCliView extends ViewPart {
             ptyProcess = null;
         }
 
-        // Recreate the widget for a clean state
-        if (terminalPanel != null && terminal != null) {
+        // Recreate the widget for a clean state on restart
+        if (awtFrame != null && terminal != null) {
             terminal.close();
-            terminalPanel.remove(terminal.getComponent());
+            awtFrame.remove(terminal.getComponent());
             terminal = new JediTermWidget(80, 24, new ClaudeTerminalSettings());
-            terminalPanel.add(terminal.getComponent(), BorderLayout.CENTER);
-            terminalPanel.revalidate();
-            terminalPanel.repaint();
+            awtFrame.add(terminal.getComponent(), BorderLayout.CENTER);
+            awtFrame.validate();
+            awtFrame.repaint();
         }
 
         if (terminal == null) return;
