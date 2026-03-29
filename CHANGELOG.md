@@ -64,7 +64,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [0.0.1-alpha] — 2025-05-23
+## [0.1.1-beta] — 2025-05-23
 
 ### Added
 - Proof-of-concept agentic plugin — initial exploration of embedding Claude Code into an Eclipse IDE plugin
+
+---
+
+## [0.0.1-alpha] — 2020-06-23
+
+### Added
+- Initial components as proof-of-concept for an agentic, AI-powered plugin
