@@ -26,6 +26,7 @@ public class Activator extends AbstractUIPlugin {
         super.start(context);
         instance = this;
         LOG.info("Claude Code for Eclipse starting...");
+    }
 
     @Override
     public void stop(BundleContext context) throws Exception {
