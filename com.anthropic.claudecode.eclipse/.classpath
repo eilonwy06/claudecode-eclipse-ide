@@ -4,7 +4,6 @@
 	<classpathentry kind="con" path="org.eclipse.pde.core.requiredPlugins"/>
 	<classpathentry kind="src" path="src"/>
 	<classpathentry kind="lib" path="lib/pty4j-0.12.35.jar"/>
-	<classpathentry kind="lib" path="lib/jediterm-pty-2.67.jar"/>
 	<classpathentry kind="lib" path="lib/annotations-24.1.0.jar"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>

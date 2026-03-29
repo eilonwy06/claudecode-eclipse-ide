@@ -21,7 +21,6 @@ Require-Bundle: org.eclipse.ui,
  com.sun.jna.platform
 Bundle-ClassPath: .,
  lib/pty4j-0.12.35.jar,
- lib/jediterm-pty-2.67.jar,
  lib/annotations-24.1.0.jar
 Bundle-RequiredExecutionEnvironment: JavaSE-21
 Automatic-Module-Name: com.anthropic.claudecode.eclipse
