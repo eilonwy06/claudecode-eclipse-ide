@@ -263,6 +263,12 @@ public class ClaudeCliView extends ViewPart {
             readerThread.start();
         }
 
+        private void safeExecute(String js) {
+            Display.getDefault().asyncExec(() -> {
+                if (browser != null && !browser.isDisposed()) browser.execute(js);
+            });
+        }
+
         void focus() {
             if (browser != null && !browser.isDisposed()) browser.setFocus();
         }
