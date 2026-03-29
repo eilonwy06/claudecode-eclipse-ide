@@ -16,8 +16,44 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 ## Prerequisites
 
 - Eclipse IDE (tested with Eclipse 2023-12+)
-- [Claude Code CLI](https://claude.ai/code) installed and available on your PATH (or set path in preferences)
-- A valid Anthropic API key configured via `claude auth` or the `ANTHROPIC_API_KEY` environment variable
+- Java 17 or later (Java 21 recommended)
+- [Claude Code CLI](https://claude.ai/code) installed and available on your PATH
+- A valid Anthropic API key
+
+### Setting Up Claude Code CLI
+
+1. **Install Node.js** (v18 or later) from [nodejs.org](https://nodejs.org) if you don't have it
+2. **Install Claude Code CLI** globally via npm:
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+3. **Verify the install** — open a terminal and run:
+   ```bash
+   claude --version
+   ```
+   You should see a version number. If the command is not found, ensure your npm global bin directory is on your PATH.
+
+### Setting Up Your Anthropic API Key
+
+Claude Code CLI requires an Anthropic API key to function. You have two options:
+
+**Option A — Interactive login (recommended):**
+```bash
+claude auth
+```
+Follow the prompts to log in. Your credentials are stored securely and reused automatically.
+
+**Option B — Environment variable:**
+
+Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
+
+- **Windows:** In System Properties → Environment Variables, add `ANTHROPIC_API_KEY` = `sk-ant-...`
+- **macOS/Linux:** Add to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.):
+  ```bash
+  export ANTHROPIC_API_KEY="sk-ant-..."
+  ```
+
+> You can get an API key from [console.anthropic.com](https://console.anthropic.com).
 
 ## Usage
 
@@ -34,7 +70,7 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 2. Type directly in the **Claude CLI** terminal, or switch to **Claude Chat** for a richer markdown interface
 3. Claude can read your open files, selection, and workspace context automatically via MCP tools
 
-> **Note:** The Claude CLI view uses [PTY4J](https://github.com/JetBrains/pty4j) + [JediTerm](https://github.com/JetBrains/jediterm) for a fully interactive terminal — no TM Terminal required.
+> **Note:** The Claude CLI view uses [PTY4J](https://github.com/JetBrains/pty4j) + [xterm.js](https://xtermjs.org) rendered via the system browser (Edge/WebView2 on Windows, WebKit on macOS/Linux) — no TM Terminal required.
 
 ### Keyboard Shortcuts
 
