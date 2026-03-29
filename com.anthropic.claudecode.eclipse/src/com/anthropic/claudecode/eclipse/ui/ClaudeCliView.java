@@ -21,6 +21,7 @@ import org.eclipse.swt.browser.Browser;
 import org.eclipse.swt.browser.BrowserFunction;
 import org.eclipse.swt.browser.ProgressAdapter;
 import org.eclipse.swt.browser.ProgressEvent;
+import org.eclipse.swt.browser.ProgressListener;
 import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
@@ -46,7 +47,6 @@ public class ClaudeCliView extends ViewPart {
         return t;
     });
     private volatile boolean viewDisposed = false;
-    private volatile boolean terminalReady = false;
     private String[] pendingArgs = null;
 
     @Override
@@ -86,17 +86,17 @@ public class ClaudeCliView extends ViewPart {
             }
         };
 
-        // JS → Java: xterm.js finished loading, ready to receive output
-        new BrowserFunction(browser, "terminalReady") {
+        // ProgressListener fires after the page is fully loaded and
+        // BrowserFunctions are injected into window — safe to start the PTY here.
+        browser.addProgressListener(new ProgressAdapter() {
             @Override
-            public Object function(Object[] args) {
-                terminalReady = true;
-                String[] args2 = pendingArgs != null ? pendingArgs : new String[0];
+            public void completed(ProgressEvent event) {
+                browser.removeProgressListener(this); // only fire once
+                String[] args = pendingArgs != null ? pendingArgs : new String[0];
                 pendingArgs = null;
-                doLaunchProcess(args2);
-                return null;
+                doLaunchProcess(args);
             }
-        };
+        });
 
         browser.setText(buildHtml());
     }
@@ -106,11 +106,7 @@ public class ClaudeCliView extends ViewPart {
      * Safe to call from the SWT UI thread.
      */
     public void launchProcess(String... extraArgs) {
-        if (terminalReady) {
-            doLaunchProcess(extraArgs);
-        } else {
-            pendingArgs = extraArgs;
-        }
+        doLaunchProcess(extraArgs);
     }
 
     private void doLaunchProcess(String[] extraArgs) {
@@ -290,9 +286,6 @@ public class ClaudeCliView extends ViewPart {
             + "  fitAddon.fit();\n"
             + "  if (window.notifyResize) window.notifyResize(term.cols, term.rows);\n"
             + "});\n"
-            + "\n"
-            + "// Signal Java that the terminal is ready\n"
-            + "if (window.terminalReady) window.terminalReady();\n"
             + "</script>\n"
             + "</body></html>\n";
     }
