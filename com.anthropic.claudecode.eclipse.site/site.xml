@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <site>
-   <feature url="features/com.anthropic.claudecode.eclipse.feature_2.0.0.jar" id="com.anthropic.claudecode.eclipse.feature" version="2.0.0"/>
+   <feature url="features/com.anthropic.claudecode.eclipse.feature_2.0.0.jar" id="com.anthropic.claudecode.eclipse.feature" version="2.0.0">
+      <category name="com.anthropic.claudecode.eclipse.category"/>
+   </feature>
+   <category-def name="com.anthropic.claudecode.eclipse.category" label="Claude Code for Eclipse IDE">
+      <description>
+         Unofficial community plugin integrating Claude Code AI assistant into Eclipse IDE.
+         Not affiliated with or endorsed by Anthropic.
+      </description>
+   </category-def>
 </site>
