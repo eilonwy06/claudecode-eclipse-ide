@@ -1,0 +1,480 @@
+//! Embeds a real Windows console window inside an SWT Composite.
+//!
+//! Spawns a child process with CREATE_NEW_CONSOLE, finds the console
+//! window via AttachConsole/GetConsoleWindow, and reparents it into
+//! the given parent HWND.  Keyboard input works natively — no WebView2,
+//! no xterm.js, no focus hacks.
+//!
+//! Two key Win32 details that make this work:
+//!   1. AttachThreadInput — links Eclipse's SWT UI thread with conhost.exe's
+//!      UI thread so cross-process SetFocus actually works.
+//!   2. Job Object with KILL_ON_JOB_CLOSE — kills the entire process tree
+//!      (cmd.exe → node.exe → …) when the session is closed, so SSE
+//!      connections are properly cleaned up.
+
+use std::sync::Mutex;
+
+// ---------------------------------------------------------------------------
+// Win32 FFI
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+mod win32 {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    #[repr(C)]
+    pub struct STARTUPINFOW {
+        pub cb: u32,
+        pub reserved: *mut u16,
+        pub desktop: *mut u16,
+        pub title: *mut u16,
+        pub x: u32,
+        pub y: u32,
+        pub x_size: u32,
+        pub y_size: u32,
+        pub x_count_chars: u32,
+        pub y_count_chars: u32,
+        pub fill_attribute: u32,
+        pub flags: u32,
+        pub show_window: u16,
+        pub cb_reserved2: u16,
+        pub reserved2: *mut u8,
+        pub std_input: isize,
+        pub std_output: isize,
+        pub std_error: isize,
+    }
+
+    #[repr(C)]
+    pub struct PROCESS_INFORMATION {
+        pub process: isize,
+        pub thread: isize,
+        pub process_id: u32,
+        pub thread_id: u32,
+    }
+
+    // Job Object structures
+    #[repr(C)]
+    pub struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+        pub basic: JOBOBJECT_BASIC_LIMIT_INFORMATION,
+        pub io_info: IO_COUNTERS,
+        pub process_memory_limit: usize,
+        pub job_memory_limit: usize,
+        pub peak_process_memory_used: usize,
+        pub peak_job_memory_used: usize,
+    }
+
+    #[repr(C)]
+    pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+        pub per_process_user_time_limit: i64,
+        pub per_job_user_time_limit: i64,
+        pub limit_flags: u32,
+        pub minimum_working_set_size: usize,
+        pub maximum_working_set_size: usize,
+        pub active_process_limit: u32,
+        pub affinity: usize,
+        pub priority_class: u32,
+        pub scheduling_class: u32,
+    }
+
+    #[repr(C)]
+    pub struct IO_COUNTERS {
+        pub read_operations: u64,
+        pub write_operations: u64,
+        pub other_operations: u64,
+        pub read_transfer: u64,
+        pub write_transfer: u64,
+        pub other_transfer: u64,
+    }
+
+    pub const CREATE_NEW_CONSOLE: u32 = 0x00000010;
+    pub const CREATE_UNICODE_ENVIRONMENT: u32 = 0x00000400;
+    pub const CREATE_SUSPENDED: u32 = 0x00000004;
+    pub const STARTF_USESHOWWINDOW: u32 = 0x00000001;
+    pub const SW_HIDE: u16 = 0;
+    pub const SW_SHOW: i32 = 5;
+    pub const GWL_STYLE: i32 = -16;
+    pub const WS_CHILD: u32 = 0x40000000;
+    pub const WS_CAPTION: u32 = 0x00C00000;
+    pub const WS_THICKFRAME: u32 = 0x00040000;
+    pub const WS_POPUP: u32 = 0x80000000;
+    pub const SWP_FRAMECHANGED: u32 = 0x0020;
+    pub const SWP_NOZORDER: u32 = 0x0004;
+    pub const SWP_NOMOVE: u32 = 0x0002;
+    pub const SWP_NOSIZE: u32 = 0x0001;
+    pub const HWND_TOP: isize = 0;
+    pub const ATTACH_PARENT_PROCESS: u32 = 0xFFFFFFFF;
+
+    // Job Object constants
+    pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x00002000;
+    pub const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
+
+    pub const WM_LBUTTONDOWN: u32 = 0x0201;
+    pub const WM_LBUTTONUP: u32 = 0x0202;
+    pub const MK_LBUTTON: usize = 0x0001;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        pub fn CreateProcessW(
+            app: *const u16, cmd: *mut u16,
+            pa: *mut u8, ta: *mut u8,
+            inherit: i32, flags: u32,
+            env: *const u16, cwd: *const u16,
+            si: *const STARTUPINFOW, pi: *mut PROCESS_INFORMATION,
+        ) -> i32;
+        pub fn ResumeThread(h: isize) -> u32;
+        pub fn TerminateProcess(h: isize, code: u32) -> i32;
+        pub fn CloseHandle(h: isize) -> i32;
+        pub fn FreeConsole() -> i32;
+        pub fn AttachConsole(pid: u32) -> i32;
+        pub fn GetConsoleWindow() -> isize;
+        pub fn GetCurrentThreadId() -> u32;
+
+        // Job Object
+        pub fn CreateJobObjectW(sa: *mut u8, name: *const u16) -> isize;
+        pub fn SetInformationJobObject(
+            job: isize, class: u32,
+            info: *const u8, len: u32,
+        ) -> i32;
+        pub fn AssignProcessToJobObject(job: isize, process: isize) -> i32;
+    }
+
+    #[repr(C)]
+    pub struct GUITHREADINFO {
+        pub cb_size: u32,
+        pub flags: u32,
+        pub hwnd_active: isize,
+        pub hwnd_focus: isize,
+        pub hwnd_capture: isize,
+        pub hwnd_menu_owner: isize,
+        pub hwnd_move_size: isize,
+        pub hwnd_caret: isize,
+        pub rc_caret_left: i32,
+        pub rc_caret_top: i32,
+        pub rc_caret_right: i32,
+        pub rc_caret_bottom: i32,
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        pub fn SetParent(child: isize, parent: isize) -> isize;
+        pub fn GetWindowLongW(h: isize, idx: i32) -> i32;
+        pub fn SetWindowLongW(h: isize, idx: i32, val: i32) -> i32;
+        pub fn SetWindowPos(h: isize, after: isize, x: i32, y: i32, w: i32, h2: i32, flags: u32) -> i32;
+        pub fn MoveWindow(h: isize, x: i32, y: i32, w: i32, h2: i32, repaint: i32) -> i32;
+        pub fn ShowWindow(h: isize, cmd: i32) -> i32;
+        pub fn SetFocus(h: isize) -> isize;
+        pub fn SetForegroundWindow(h: isize) -> i32;
+        pub fn IsWindow(h: isize) -> i32;
+        pub fn GetWindowThreadProcessId(h: isize, pid: *mut u32) -> u32;
+        pub fn AttachThreadInput(attach: u32, to: u32, yes: i32) -> i32;
+        pub fn PostMessageW(h: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
+        pub fn GetGUIThreadInfo(thread_id: u32, info: *mut GUITHREADINFO) -> i32;
+    }
+
+    pub fn to_wide(s: &str) -> Vec<u16> {
+        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    pub fn build_command_line(cmd: &str, args: &[String]) -> Vec<u16> {
+        let mut s = String::new();
+        if cmd.contains(' ') {
+            s.push('"'); s.push_str(cmd); s.push('"');
+        } else {
+            s.push_str(cmd);
+        }
+        for arg in args {
+            s.push(' ');
+            if arg.contains(' ') || arg.contains('"') {
+                s.push('"');
+                s.push_str(&arg.replace('"', "\\\""));
+                s.push('"');
+            } else {
+                s.push_str(arg);
+            }
+        }
+        to_wide(&s)
+    }
+
+    pub fn build_env_block(extra: &[(String, String)]) -> Vec<u16> {
+        let mut env: std::collections::HashMap<String, String> = std::env::vars().collect();
+        for (k, v) in extra {
+            env.insert(k.clone(), v.clone());
+        }
+        let mut block: Vec<u16> = Vec::new();
+        for (k, v) in &env {
+            let entry = format!("{}={}", k, v);
+            block.extend(OsStr::new(&entry).encode_wide());
+            block.push(0);
+        }
+        block.push(0);
+        block
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ConsoleSession
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+static CONSOLE_LOCK: Mutex<()> = Mutex::new(());
+
+pub struct ConsoleSession {
+    #[cfg(windows)]
+    process_handle: isize,
+    #[cfg(windows)]
+    thread_handle: isize,
+    #[cfg(windows)]
+    job_handle: isize,
+    #[cfg(windows)]
+    child_pid: u32,
+    #[cfg(windows)]
+    console_hwnd: isize,
+    /// conhost.exe's UI thread ID — needed for AttachThreadInput.
+    #[cfg(windows)]
+    console_thread_id: u32,
+    /// Eclipse SWT UI thread ID that called try_embed.
+    #[cfg(windows)]
+    swt_thread_id: u32,
+    /// Whether we've attached the thread input queues.
+    #[cfg(windows)]
+    threads_attached: bool,
+}
+
+impl ConsoleSession {
+    /// Spawns a child process with its own console window (hidden).
+    /// The process is assigned to a Job Object so the entire tree is
+    /// killed when the session is destroyed.
+    #[cfg(windows)]
+    pub fn create(
+        cmd: &str,
+        args: &[String],
+        extra_env: &[(String, String)],
+        cwd: &str,
+    ) -> Option<Self> {
+        use win32::*;
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+            if job == 0 { return None; }
+
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.basic.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                job,
+                JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+                &info as *const _ as *const u8,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+
+            let mut cmdline = build_command_line(cmd, args);
+            let cwd_w = to_wide(cwd);
+            let env_block = build_env_block(extra_env);
+
+            let mut si: STARTUPINFOW = std::mem::zeroed();
+            si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+            si.flags = STARTF_USESHOWWINDOW;
+            si.show_window = SW_HIDE;
+
+            let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
+
+            if CreateProcessW(
+                std::ptr::null(), cmdline.as_mut_ptr(),
+                std::ptr::null_mut(), std::ptr::null_mut(),
+                0, CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
+                env_block.as_ptr(), cwd_w.as_ptr(),
+                &si, &mut pi,
+            ) == 0 {
+                CloseHandle(job);
+                return None;
+            }
+
+            AssignProcessToJobObject(job, pi.process);
+            ResumeThread(pi.thread);
+
+            Some(ConsoleSession {
+                process_handle: pi.process,
+                thread_handle: pi.thread,
+                job_handle: job,
+                child_pid: pi.process_id,
+                console_hwnd: 0,
+                console_thread_id: 0,
+                swt_thread_id: 0,
+                threads_attached: false,
+            })
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn try_embed(&mut self, parent_hwnd: isize, width: i32, height: i32) -> bool {
+        use win32::*;
+        if self.console_hwnd != 0 { return true; }
+
+        let _lock = CONSOLE_LOCK.lock().unwrap();
+        unsafe {
+            let original = GetConsoleWindow();
+            FreeConsole();
+
+            let mut found = 0isize;
+            if AttachConsole(self.child_pid) != 0 {
+                found = GetConsoleWindow();
+                FreeConsole();
+            }
+
+            if original != 0 {
+                AttachConsole(ATTACH_PARENT_PROCESS);
+            }
+
+            if found == 0 { return false; }
+
+            SetParent(found, parent_hwnd);
+
+            let style = GetWindowLongW(found, GWL_STYLE) as u32;
+            let new_style = (style & !(WS_CAPTION | WS_THICKFRAME | WS_POPUP)) | WS_CHILD;
+            SetWindowLongW(found, GWL_STYLE, new_style as i32);
+            SetWindowPos(found, 0, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOZORDER);
+            MoveWindow(found, 0, 0, width, height, 1);
+            ShowWindow(found, SW_SHOW);
+
+            self.console_hwnd = found;
+
+            let console_tid = GetWindowThreadProcessId(found, std::ptr::null_mut());
+            let swt_tid = GetCurrentThreadId();
+            if console_tid != 0 && console_tid != swt_tid {
+                AttachThreadInput(swt_tid, console_tid, 1);
+                self.console_thread_id = console_tid;
+                self.swt_thread_id = swt_tid;
+                self.threads_attached = true;
+            }
+
+            SetFocus(found);
+
+            true
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn resize(&self, width: i32, height: i32) {
+        if self.console_hwnd == 0 { return; }
+        unsafe {
+            if win32::IsWindow(self.console_hwnd) != 0 {
+                win32::MoveWindow(self.console_hwnd, 0, 0, width, height, 1);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn set_focus(&self) {
+        if self.console_hwnd == 0 { return; }
+        unsafe {
+            if win32::IsWindow(self.console_hwnd) == 0 { return; }
+
+            // Re-attach thread input queues every time.
+            if self.console_thread_id != 0 && self.swt_thread_id != 0 {
+                win32::AttachThreadInput(self.swt_thread_id, self.console_thread_id, 0);
+                win32::AttachThreadInput(self.swt_thread_id, self.console_thread_id, 1);
+            }
+
+            win32::SetWindowPos(
+                self.console_hwnd, win32::HWND_TOP,
+                0, 0, 0, 0,
+                win32::SWP_NOMOVE | win32::SWP_NOSIZE,
+            );
+            win32::SetForegroundWindow(self.console_hwnd);
+            win32::SetFocus(self.console_hwnd);
+
+            let lparam: isize = 5 | (5 << 16);
+            win32::PostMessageW(
+                self.console_hwnd,
+                win32::WM_LBUTTONDOWN,
+                win32::MK_LBUTTON,
+                lparam,
+            );
+            win32::PostMessageW(
+                self.console_hwnd,
+                win32::WM_LBUTTONUP,
+                0,
+                lparam,
+            );
+        }
+    }
+
+    /// Returns true if the console HWND currently has Win32 keyboard focus
+    /// in its thread.  Used by Java to detect when the user clicked on the
+    /// console so Eclipse can programmatically activate the view.
+    #[cfg(windows)]
+    pub fn is_focused(&self) -> bool {
+        if self.console_hwnd == 0 || self.console_thread_id == 0 { return false; }
+        unsafe {
+            let mut info: win32::GUITHREADINFO = std::mem::zeroed();
+            info.cb_size = std::mem::size_of::<win32::GUITHREADINFO>() as u32;
+            if win32::GetGUIThreadInfo(self.console_thread_id, &mut info) != 0 {
+                info.hwnd_focus == self.console_hwnd
+            } else {
+                false
+            }
+        }
+    }
+
+    /// Posts a Win32 message to the console HWND.  Used by Java to forward
+    /// keyboard events (WM_CHAR, WM_KEYDOWN, WM_KEYUP, etc.) when the
+    /// console doesn't have real Win32 keyboard focus.
+    #[cfg(windows)]
+    pub fn post_message(&self, msg: u32, wparam: usize, lparam: isize) {
+        if self.console_hwnd == 0 { return; }
+        unsafe {
+            if win32::IsWindow(self.console_hwnd) != 0 {
+                win32::PostMessageW(self.console_hwnd, msg, wparam, lparam);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn kill(&mut self) {
+        unsafe {
+            if self.threads_attached {
+                win32::AttachThreadInput(
+                    self.swt_thread_id, self.console_thread_id, 0,
+                );
+                self.threads_attached = false;
+            }
+
+            if self.job_handle != 0 {
+                win32::CloseHandle(self.job_handle);
+                self.job_handle = 0;
+            }
+
+            if self.process_handle != 0 {
+                win32::TerminateProcess(self.process_handle, 1);
+                win32::CloseHandle(self.process_handle);
+                self.process_handle = 0;
+            }
+            if self.thread_handle != 0 {
+                win32::CloseHandle(self.thread_handle);
+                self.thread_handle = 0;
+            }
+        }
+    }
+
+    // ── Non-Windows stubs ────────────────────────────────────────────────
+
+    #[cfg(not(windows))]
+    pub fn create(_: &str, _: &[String], _: &[(String, String)], _: &str) -> Option<Self> { None }
+    #[cfg(not(windows))]
+    pub fn try_embed(&mut self, _: isize, _: i32, _: i32) -> bool { false }
+    #[cfg(not(windows))]
+    pub fn resize(&self, _: i32, _: i32) {}
+    #[cfg(not(windows))]
+    pub fn set_focus(&self) {}
+    #[cfg(not(windows))]
+    pub fn is_focused(&self) -> bool { false }
+    #[cfg(not(windows))]
+    pub fn post_message(&self, _msg: u32, _wparam: usize, _lparam: isize) {}
+    #[cfg(not(windows))]
+    pub fn kill(&mut self) {}
+}
+
+impl Drop for ConsoleSession {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}

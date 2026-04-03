@@ -15,6 +15,7 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.part.ViewPart;
 
 import com.anthropic.claudecode.eclipse.Activator;
+import com.anthropic.claudecode.eclipse.NativeCore;
 import com.anthropic.claudecode.eclipse.chat.ChatProcessManager;
 
 public class ClaudeChatView extends ViewPart {
@@ -22,20 +23,37 @@ public class ClaudeChatView extends ViewPart {
     public static final String VIEW_ID = "com.anthropic.claudecode.eclipse.ui.ClaudeChatView";
 
     private Browser browser;
+    private long browserHwnd = 0;
     private ChatProcessManager processManager;
     private boolean pageLoaded = false;
+
+    // Strong references — prevents GC from unregistering the BrowserFunctions.
+    @SuppressWarnings("unused")
+    private BrowserFunction sendToJavaFn;
+    @SuppressWarnings("unused")
+    private BrowserFunction newSessionFn;
 
     @Override
     public void createPartControl(Composite parent) {
         parent.setLayout(new FillLayout());
         browser = new Browser(parent, SWT.NONE);
 
+        // Extract HWND for keyboard activation.
+        try {
+            java.lang.reflect.Field f =
+                org.eclipse.swt.widgets.Control.class.getDeclaredField("handle");
+            f.setAccessible(true);
+            Object val = f.get(browser);
+            if (val instanceof Long)    browserHwnd = (Long) val;
+            else if (val instanceof Integer) browserHwnd = (long)(int)(Integer) val;
+        } catch (Exception ignored) {}
+
         processManager = new ChatProcessManager();
         wireProcessCallbacks();
 
-        // Register JS→Java bridge function
-        new SendMessageFunction(browser, "_sendToJava");
-        new NewSessionFunction(browser, "_newSession");
+        // Register JS→Java bridge functions — stored in fields to prevent GC.
+        sendToJavaFn = new SendMessageFunction(browser, "_sendToJava");
+        newSessionFn = new NewSessionFunction(browser, "_newSession");
 
         // Load the chat HTML once browser is ready
         browser.addProgressListener(new ProgressAdapter() {
@@ -50,6 +68,10 @@ public class ClaudeChatView extends ViewPart {
                     updateStatus("MCP server on port " + Activator.getDefault().getHttpSseServer().getPort());
                 } else {
                     updateStatus("Ready");
+                }
+                // Activate WebView2 keyboard input — same issue as CLI terminal.
+                for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
+                    Display.getCurrent().timerExec(ms, () -> activateInput());
                 }
             }
         });
@@ -120,8 +142,14 @@ public class ClaudeChatView extends ViewPart {
 
     @Override
     public void setFocus() {
-        if (browser != null && !browser.isDisposed()) {
-            browser.setFocus();
+        activateInput();
+    }
+
+    private void activateInput() {
+        if (browser == null || browser.isDisposed()) return;
+        browser.forceFocus();
+        if (browserHwnd != 0) {
+            NativeCore.browserActivateInput(browserHwnd);
         }
     }
 

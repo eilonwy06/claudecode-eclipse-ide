@@ -2,7 +2,7 @@ Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
 Bundle-Name: Claude Code for Eclipse
 Bundle-SymbolicName: com.anthropic.claudecode.eclipse;singleton:=true
-Bundle-Version: 1.2.1.qualifier
+Bundle-Version: 2.0.0.qualifier
 Bundle-Activator: com.anthropic.claudecode.eclipse.Activator
 Bundle-Vendor: eilonwy06
 Require-Bundle: org.eclipse.ui,
@@ -17,12 +17,13 @@ Require-Bundle: org.eclipse.ui,
  org.eclipse.compare,
  org.eclipse.debug.ui,
  com.google.gson
-Bundle-ClassPath: .,
- lib/pty4j-0.12.35.jar,
- lib/jna-5.17.0.jar,
- lib/jna-platform-5.17.0.jar,
- lib/slf4j-api-1.7.36.jar,
- lib/annotations-24.1.0.jar
+Bundle-ClassPath: .
+Bundle-NativeCode: native/windows/x86_64/claude_eclipse_core.dll;\
+  osname=Win32;processor=x86-64,\
+  native/linux/x86_64/libclaude_eclipse_core.so;\
+  osname=Linux;processor=x86-64,\
+  native/macos/x86_64/libclaude_eclipse_core.dylib;\
+  osname=MacOS X;processor=x86-64
 Bundle-RequiredExecutionEnvironment: JavaSE-21
 Automatic-Module-Name: com.anthropic.claudecode.eclipse
 Bundle-ActivationPolicy: lazy

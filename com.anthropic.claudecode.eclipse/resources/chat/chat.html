@@ -223,6 +223,7 @@ function clearChat() {
   messagesEl.innerHTML = '';
   currentAssistantEl = null;
   currentTextBuffer = '';
+  setStreaming(false);
   if (typeof window._newSession === 'function') window._newSession();
 }
 

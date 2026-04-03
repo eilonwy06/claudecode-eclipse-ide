@@ -29,6 +29,7 @@ public class ClaudeCodeView extends ViewPart {
     private Label statusLabel;
     private Button launchButton;
     private ScheduledExecutorService statusPoller;
+    private volatile boolean launching = false;
 
     @Override
     public void createPartControl(Composite parent) {
@@ -82,7 +83,7 @@ public class ClaudeCodeView extends ViewPart {
             monoFont.dispose();
         });
 
-        appendLog("Claude Code for Eclipse v1.0.0\n");
+        appendLog("Claude Code for Eclipse v2.0.0\n");
         appendLog("─────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {
@@ -105,6 +106,8 @@ public class ClaudeCodeView extends ViewPart {
     }
 
     public void startClaude(String... extraArgs) {
+        if (launching) return;
+        launching = true;
         try {
             IWorkbenchPage page = UiHelper.getActivePage();
             if (page == null) {
@@ -116,6 +119,8 @@ public class ClaudeCodeView extends ViewPart {
         } catch (PartInitException e) {
             appendLog("[ERROR] Could not open Claude CLI view: " + e.getMessage() + "\n");
             Activator.logError("Failed to open Claude CLI view", e);
+        } finally {
+            Display.getCurrent().timerExec(500, () -> launching = false);
         }
     }
 

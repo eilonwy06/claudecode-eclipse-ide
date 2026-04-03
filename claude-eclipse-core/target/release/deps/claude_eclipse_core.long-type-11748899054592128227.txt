@@ -1,0 +1,2 @@
+fn(axum::extract::State<Arc<AppState>>, Query<SessionQuery>, axum::body::Bytes) -> impl futures_util::Future<Output = Response<Body>> {messages_handler}
+fn(axum::extract::State<Arc<AppState>>, Query<SessionQuery>, axum::body::Bytes) -> impl futures_util::Future<Output = Response<Body>> {messages_handler}: Handler<_, _>

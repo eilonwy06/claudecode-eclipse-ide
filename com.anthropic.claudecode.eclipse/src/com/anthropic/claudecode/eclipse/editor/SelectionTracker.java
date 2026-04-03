@@ -1,15 +1,9 @@
 package com.anthropic.claudecode.eclipse.editor;
 
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.jface.text.ITextSelection;
 import org.eclipse.jface.viewers.ISelection;
-import org.eclipse.jface.viewers.ISelectionChangedListener;
-import org.eclipse.jface.viewers.SelectionChangedEvent;
 import org.eclipse.ui.IEditorInput;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IPartListener2;
@@ -27,13 +21,16 @@ import com.google.gson.JsonObject;
 
 public class SelectionTracker {
 
-    private static final long DEBOUNCE_MS = 50;
+    /**
+     * Snapshot of the most recent selection — stored so the getLatestSelection
+     * MCP tool can retrieve it on demand without needing Gson in the hot path.
+     */
+    private record SelectionData(String filePath, String text,
+                                  int startLine, int endLine, boolean isEmpty) {}
 
-    private final AtomicReference<JsonObject> latestSelection = new AtomicReference<>();
+    private final AtomicReference<SelectionData> latestSelection = new AtomicReference<>();
 
     private HttpSseServer server;
-    private ScheduledExecutorService scheduler;
-    private ScheduledFuture<?> pendingBroadcast;
     private ISelectionListener selectionListener;
     private IPartListener2 partListener;
     private volatile boolean active = false;
@@ -42,30 +39,28 @@ public class SelectionTracker {
         if (active) return;
         this.server = server;
         this.active = true;
-
-        scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "claude-selection-tracker");
-            t.setDaemon(true);
-            return t;
-        });
-
         UiHelper.asyncExec(this::registerListeners);
     }
 
     public void stop() {
         if (!active) return;
         active = false;
-
         UiHelper.asyncExec(this::unregisterListeners);
-
-        if (scheduler != null) {
-            scheduler.shutdownNow();
-            scheduler = null;
-        }
     }
 
+    /** Returns the latest selection as a JsonObject for the getLatestSelection MCP tool. */
     public JsonObject getLatestSelection() {
-        return latestSelection.get();
+        SelectionData d = latestSelection.get();
+        if (d == null) return null;
+        JsonObject sel = new JsonObject();
+        sel.addProperty("filePath", d.filePath());
+        sel.addProperty("text", d.text());
+        sel.addProperty("startLine", d.startLine());
+        sel.addProperty("endLine", d.endLine());
+        sel.addProperty("startColumn", 0);
+        sel.addProperty("endColumn", 0);
+        sel.addProperty("isEmpty", d.isEmpty());
+        return sel;
     }
 
     private void registerListeners() {
@@ -117,37 +112,18 @@ public class SelectionTracker {
         String filePath = getFilePath(input);
         if (filePath == null) return;
 
-        JsonObject selData = new JsonObject();
-        selData.addProperty("filePath", filePath);
-        selData.addProperty("text", textSelection.getText());
-        selData.addProperty("startLine", textSelection.getStartLine() + 1);
-        selData.addProperty("endLine", textSelection.getEndLine() + 1);
-        selData.addProperty("startColumn", 0);
-        selData.addProperty("endColumn", 0);
-        selData.addProperty("isEmpty", textSelection.isEmpty());
+        int startLine = textSelection.getStartLine() + 1;
+        int endLine   = textSelection.getEndLine()   + 1;
+        boolean empty = textSelection.isEmpty();
+        String  text  = textSelection.getText();
 
-        latestSelection.set(selData);
-        debouncedBroadcast(selData);
-    }
+        // Store for getLatestSelection() tool queries.
+        latestSelection.set(new SelectionData(filePath, text, startLine, endLine, empty));
 
-    private void debouncedBroadcast(JsonObject selData) {
-        if (scheduler == null || scheduler.isShutdown()) return;
-
-        if (pendingBroadcast != null && !pendingBroadcast.isDone()) {
-            pendingBroadcast.cancel(false);
+        // Debounce (50 ms) and broadcast happen entirely in Rust.
+        if (server != null) {
+            server.notifySelection(filePath, text, startLine, endLine, empty);
         }
-
-        pendingBroadcast = scheduler.schedule(() -> {
-            if (active && server != null && server.hasConnectedClients()) {
-                JsonObject notification = new JsonObject();
-                notification.addProperty("jsonrpc", "2.0");
-                notification.addProperty("method", "notifications/selectionChanged");
-                JsonObject params = new JsonObject();
-                params.add("selection", selData);
-                notification.add("params", params);
-                server.broadcast(notification.toString());
-            }
-        }, DEBOUNCE_MS, TimeUnit.MILLISECONDS);
     }
 
     private String getFilePath(IEditorInput input) {

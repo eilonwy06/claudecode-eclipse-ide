@@ -8,8 +8,8 @@ import org.osgi.framework.BundleContext;
 
 import com.anthropic.claudecode.eclipse.editor.SelectionTracker;
 import com.anthropic.claudecode.eclipse.mcp.McpToolRegistry;
-import com.anthropic.claudecode.eclipse.server.LockFileManager;
 import com.anthropic.claudecode.eclipse.server.HttpSseServer;
+import com.anthropic.claudecode.eclipse.server.LockFileManager;
 
 public class Activator extends AbstractUIPlugin {
 

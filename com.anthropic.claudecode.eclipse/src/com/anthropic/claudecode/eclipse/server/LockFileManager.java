@@ -1,32 +1,26 @@
 package com.anthropic.claudecode.eclipse.server;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 
 import com.anthropic.claudecode.eclipse.Activator;
-import com.anthropic.claudecode.eclipse.Constants;
+import com.anthropic.claudecode.eclipse.NativeCore;
 import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
 
+/**
+ * Thin Java wrapper over the Rust lock-file logic.
+ *
+ * Java is still responsible for querying the Eclipse workspace to collect
+ * project paths; Rust handles the actual file I/O.
+ */
 public class LockFileManager {
-
-    private Path lockFilePath;
 
     public void writeLockFile(int port, String authToken) {
         try {
-            Path ideDir = getLockFileDirectory();
-            Files.createDirectories(ideDir);
-
-            lockFilePath = ideDir.resolve(port + ".lock");
-
             String workspaceRoot = ResourcesPlugin.getWorkspace().getRoot()
                     .getLocation().toOSString();
 
-            // Collect workspace root + all open project paths
+            // Collect open project paths (same as original implementation).
             JsonArray projectPaths = new JsonArray();
             projectPaths.add(workspaceRoot);
             for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects()) {
@@ -35,41 +29,17 @@ public class LockFileManager {
                 }
             }
 
-            JsonObject lock = new JsonObject();
-            lock.addProperty("port", port);
-            lock.addProperty("authToken", authToken);
-            lock.addProperty("version", Constants.LOCK_FILE_VERSION);
-            lock.addProperty("ideName", Constants.IDE_NAME);
-            lock.addProperty("pid", ProcessHandle.current().pid());
-            lock.addProperty("workspaceFolder", workspaceRoot);
-            lock.add("workspaceFolders", projectPaths);
-
-            Files.writeString(lockFilePath, lock.toString());
-            Activator.log("Lock file written: " + lockFilePath
-                    + " (workspace: " + workspaceRoot
-                    + ", projects: " + projectPaths.size() + ")");
-        } catch (IOException e) {
+            NativeCore.lockFileWrite(port, authToken, workspaceRoot, projectPaths.toString());
+            Activator.log("Lock file written (Rust) for port " + port
+                    + " workspace=" + workspaceRoot
+                    + " projects=" + projectPaths.size());
+        } catch (Exception e) {
             Activator.logError("Failed to write lock file", e);
         }
     }
 
     public void removeLockFile() {
-        if (lockFilePath != null) {
-            try {
-                Files.deleteIfExists(lockFilePath);
-                Activator.log("Lock file removed: " + lockFilePath);
-            } catch (IOException e) {
-                Activator.logError("Failed to remove lock file", e);
-            }
-            lockFilePath = null;
-        }
-    }
-
-    private Path getLockFileDirectory() {
-        String configDir = System.getenv("CLAUDE_CONFIG_DIR");
-        if (configDir != null && !configDir.isBlank()) {
-            return Path.of(configDir, "ide");
-        }
-        return Path.of(System.getProperty("user.home"), ".claude", "ide");
+        NativeCore.lockFileRemove();
+        Activator.log("Lock file removed (Rust)");
     }
 }

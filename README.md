@@ -61,7 +61,7 @@ Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
 
 Go to **Window → Show View → Other → Claude Code** and open the views you want:
 - **Claude Code** — server status, launch/resume/restart controls
-- **Claude CLI** — dedicated interactive terminal with full PTY support (ANSI colors, readline)
+- **Claude CLI** — dedicated interactive terminal with native embedded console (ANSI colors, readline, mouse support)
 - **Claude Chat** — web-based chat interface with markdown rendering
 
 ### Getting Started
@@ -70,7 +70,7 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 2. Type directly in the **Claude CLI** terminal, or switch to **Claude Chat** for a richer markdown interface
 3. Claude can read your open files, selection, and workspace context automatically via MCP tools
 
-> **Note:** The Claude CLI view uses [PTY4J](https://github.com/JetBrains/pty4j) + [xterm.js](https://xtermjs.org) rendered via the system browser (Edge/WebView2 on Windows, WebKit on macOS/Linux) — no TM Terminal required.
+> **Note:** The Claude CLI view embeds a native Windows console (conhost) directly into the Eclipse view — no WebView2, xterm.js, or TM Terminal required. Right-click paste is supported (Ctrl+V is not currently available).
 
 ### Keyboard Shortcuts
 

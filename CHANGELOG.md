@@ -4,7 +4,23 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [1.2.1] — 2026-03-29 *(current)*
+## [2.0.0] — 2026-04-03 *(current)*
+
+### Changed
+- **Native embedded console** — Claude CLI now runs in a real embedded Windows console (conhost) reparented directly into the Eclipse view, replacing the previous PTY + xterm.js + WebView2 approach
+- Eliminates all WebView2-related focus, rendering, and scrollback issues
+- Native ANSI color rendering, mouse support, and scrollback handled by Windows itself
+
+### Fixed
+- **Single-click focus restore** — clicking on the Claude CLI console area now immediately activates the Eclipse view and restores keyboard focus (previously required double-click)
+- Tab highlight persists when switching between Claude CLI session tabs
+
+### Known Issues
+- Ctrl+V paste does not work — use right-click paste as a workaround
+
+---
+
+## [1.2.1] — 2026-03-29
 
 ### Fixed
 - New and reopened terminal tabs now reliably receive keyboard input — focus is requested after a short delay to let SWT finish settling the tab's focus chain, eliminating the intermittent "can't type" issue on Windows WebView2
@@ -68,7 +84,7 @@ All notable changes to Claude Code for Eclipse are documented here.
 ### Added
 - First functional release — call the Claude API from inside Eclipse IDE
 - Basic Claude Code view with server status and launch controls
-- HTTP+SSE server for IDE↔Claude communication
+- HTTP+SSE server for IDE-Claude communication
 
 ---
 
