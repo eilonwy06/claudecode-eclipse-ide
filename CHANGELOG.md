@@ -4,7 +4,17 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.0.0] — 2026-04-03 *(current)*
+## [2.0.1] — 2026-04-04 *(current)*
+
+### Fixed
+- **Chat special characters** — messages containing `"`, `\`, `/`, `'` no longer trigger "not recognized as an internal or external command" errors; removed manual `cmd.exe /c` wrapping in favor of Rust 1.77+ native `.cmd` handling
+- **Terminal AutoRun interference** — added `/D` flag to suppress Windows Registry AutoRun commands that could fail on paths with spaces
+- **Focus stealing across views** — clicking on Terminal, Console, or other views in the same view group as Claude CLI no longer snaps back to Claude CLI; overlay now only appears when the view is visible but not active
+- **Tab switching focus** — switching between Claude CLI session tabs (e.g. Claude 1 → Claude 2) now properly transfers keyboard focus to the new console; ghost overlays from other tabs are cleaned up on switch
+
+---
+
+## [2.0.0] — 2026-04-03
 
 ### Changed
 - **Native embedded console** — Claude CLI now runs in a real embedded Windows console (conhost) reparented directly into the Eclipse view, replacing the previous PTY + xterm.js + WebView2 approach

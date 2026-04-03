@@ -87,7 +87,18 @@ public class ClaudeCliView extends ViewPart {
             if (item != null) {
                 TerminalSession session = (TerminalSession) item.getData();
                 if (session != null) {
+                    // Hide overlays for all OTHER sessions — prevents ghost
+                    // overlays from blocking input on the newly selected tab.
+                    for (CTabItem other : tabFolder.getItems()) {
+                        if (other != item) {
+                            TerminalSession otherSession = (TerminalSession) other.getData();
+                            if (otherSession != null) otherSession.hideOverlay();
+                        }
+                    }
+                    // Activate view (needed if switching tabs via keyboard while
+                    // another view is active), then directly focus the console.
                     getSite().getPage().activate(ClaudeCliView.this);
+                    session.focus();
                 }
             }
         }));
@@ -109,7 +120,12 @@ public class ClaudeCliView extends ViewPart {
             });
         }
 
-        // Timer: show/hide overlay based on whether the console has focus.
+        // Timer: show/hide overlay based on whether this view is visible
+        // but not active.  The overlay catches clicks on the embedded console
+        // so Eclipse can activate ClaudeCliView; once active, hide it so the
+        // console receives real input.  Critically, the overlay must be hidden
+        // whenever another view occupies the same view group area — otherwise
+        // the floating Shell steals clicks from Terminal/Console/etc.
         final Runnable[] checker = new Runnable[1];
         checker[0] = () -> {
             if (viewDisposed) return;
@@ -117,8 +133,10 @@ public class ClaudeCliView extends ViewPart {
             if (item != null && !item.isDisposed()) {
                 TerminalSession session = (TerminalSession) item.getData();
                 if (session != null && session.embedded) {
-                    boolean swtHasFocus = display.getFocusControl() != null;
-                    if (swtHasFocus) {
+                    IWorkbenchPage page = getSite().getPage();
+                    boolean isActivePart = page.getActivePart() == ClaudeCliView.this;
+                    boolean isViewVisible = page.isPartVisible(ClaudeCliView.this);
+                    if (isViewVisible && !isActivePart) {
                         session.showOverlay();
                     } else {
                         session.hideOverlay();
@@ -239,6 +257,7 @@ public class ClaudeCliView extends ViewPart {
             List<String> argList = new ArrayList<>();
             if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
                 execCmd = "cmd.exe";
+                argList.add("/D");
                 argList.add("/c");
                 argList.add(claudeCmd);
             } else {

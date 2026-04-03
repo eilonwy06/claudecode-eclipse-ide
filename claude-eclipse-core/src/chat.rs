@@ -167,18 +167,12 @@ fn run_turn(
         cmd_args.push("-c".into());
     }
 
-    // On Windows, claude is typically a .cmd file which cannot be launched
-    // directly via CreateProcess — it must go through cmd.exe /c.
-    // /D disables AutoRun commands from the registry, which can fail on
-    // paths with spaces (e.g. C:\Users\Windows 10\...) and produce
-    // spurious "not recognized as an internal or external command" errors.
-    #[cfg(windows)]
-    let (exe, shell_args): (&str, Vec<&str>) = ("cmd.exe", vec!["/D", "/c", claude_cmd]);
-    #[cfg(not(windows))]
-    let (exe, shell_args): (&str, Vec<&str>) = (claude_cmd, vec![]);
-
-    let mut cmd = Command::new(exe);
-    for sa in &shell_args { cmd.arg(sa); }
+    // Rust 1.77+ properly handles .cmd/.bat files on Windows: it resolves
+    // the full path, quotes it correctly (even with spaces), and escapes
+    // special characters in arguments for cmd.exe.  No manual cmd.exe /c
+    // wrapping needed — that actually broke special chars like " \ / '
+    // because cmd.exe re-interprets the command line.
+    let mut cmd = Command::new(claude_cmd);
     cmd.args(&cmd_args)
         .current_dir(workspace_root)
         .stdin(Stdio::null())
