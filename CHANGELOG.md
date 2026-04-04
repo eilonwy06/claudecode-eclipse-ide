@@ -4,7 +4,18 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.0.1] — 2026-04-04 *(current)*
+## [2.1.0] — 2026-04-04 *(current)*
+
+### Added
+- **Linux support** — Claude CLI view now works on Linux using the native Rust PTY system with an SWT StyledText terminal renderer; full ANSI color, keyboard input, scrollback, and resize support
+- Linux native library (`libclaude_eclipse_core.so`) bundled for x86_64
+
+### Changed
+- Claude CLI view now detects the platform at startup: Windows uses the embedded conhost approach, Linux/macOS uses PTY + StyledText rendering
+
+---
+
+## [2.0.1] — 2026-04-04
 
 ### Fixed
 - **Chat special characters** — messages containing `"`, `\`, `/`, `'` no longer trigger "not recognized as an internal or external command" errors; removed manual `cmd.exe /c` wrapping in favor of Rust 1.77+ native `.cmd` handling

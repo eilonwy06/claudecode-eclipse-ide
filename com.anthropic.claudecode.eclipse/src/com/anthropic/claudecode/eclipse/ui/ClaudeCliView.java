@@ -9,10 +9,14 @@ import org.eclipse.swt.custom.CTabFolder;
 import org.eclipse.swt.custom.CTabFolder2Adapter;
 import org.eclipse.swt.custom.CTabFolderEvent;
 import org.eclipse.swt.custom.CTabItem;
+import org.eclipse.swt.custom.StyleRange;
+import org.eclipse.swt.custom.StyledText;
 import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.dnd.Clipboard;
 import org.eclipse.swt.dnd.TextTransfer;
 import org.eclipse.swt.graphics.Color;
+import org.eclipse.swt.graphics.Font;
+import org.eclipse.swt.graphics.GC;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.layout.GridData;
@@ -32,10 +36,17 @@ import org.eclipse.ui.part.ViewPart;
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.Constants;
 import com.anthropic.claudecode.eclipse.NativeCore;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 public class ClaudeCliView extends ViewPart {
 
     public static final String VIEW_ID = "com.anthropic.claudecode.eclipse.ui.ClaudeCliView";
+
+    private static final boolean IS_WINDOWS =
+            System.getProperty("os.name", "").toLowerCase().contains("win");
 
     private static final int BG_R = 0x12, BG_G = 0x13, BG_B = 0x14; // #121314
 
@@ -203,12 +214,28 @@ public class ClaudeCliView extends ViewPart {
 
         private final CTabItem tabItem;
         private final Composite consoleHost;
-        private long consoleHandle = 0;
         private volatile boolean disposed = false;
+
+        // ── Windows: embedded conhost ───────────────────────────────────
+        private long consoleHandle = 0;
         private boolean embedded = false;
         private int embedRetries = 0;
         private static final int MAX_EMBED_RETRIES = 30;
         private Shell overlay;
+
+        // ── Non-Windows: PTY + StyledText terminal renderer ────────────
+        private long ptyHandle = 0;
+        private StyledText termText;
+        private Font termFont;
+        private List<String> scrollbackLines = new ArrayList<>();
+        /** Visible screen rows from the last onScreenUpdate. */
+        private int screenRows = 24;
+        /** Whether the terminal is in alternate-screen mode (vi, less, etc.). */
+        private boolean altScreen = false;
+        /** Mouse protocol mode reported by the PTY — 0 = none. */
+        private int mouseMode = 0;
+        /** Mouse protocol encoding — 0 = default, 2 = SGR. */
+        private int mouseEnc = 0;
 
         TerminalSession(CTabItem tabItem, Composite parent, String[] extraArgs) {
             this.tabItem = tabItem;
@@ -218,25 +245,287 @@ public class ClaudeCliView extends ViewPart {
             consoleHost.setBackground(bgColor);
             consoleHost.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
 
-            // Resize the embedded console when the host composite resizes.
-            consoleHost.addListener(SWT.Resize, e -> {
-                if (consoleHandle != 0 && embedded) {
-                    var size = consoleHost.getSize();
-                    if (size.x > 0 && size.y > 0) {
-                        NativeCore.consoleResize(consoleHandle, size.x, size.y);
+            if (IS_WINDOWS) {
+                // Resize the embedded console when the host composite resizes.
+                consoleHost.addListener(SWT.Resize, e -> {
+                    if (consoleHandle != 0 && embedded) {
+                        var size = consoleHost.getSize();
+                        if (size.x > 0 && size.y > 0) {
+                            NativeCore.consoleResize(consoleHandle, size.x, size.y);
+                        }
                     }
-                }
-            });
-
-            // Any interaction with the host composite → focus the console.
-            consoleHost.addListener(SWT.FocusIn, e -> focus());
-            consoleHost.addListener(SWT.MouseDown, e -> focus());
+                });
+                consoleHost.addListener(SWT.FocusIn, e -> focus());
+                consoleHost.addListener(SWT.MouseDown, e -> focus());
+            } else {
+                initPtyTerminal();
+            }
 
             // Defer launch so the widget has its final layout size.
             Display.getCurrent().asyncExec(() -> {
                 if (!disposed && !viewDisposed) launch(extraArgs);
             });
         }
+
+        // ── PTY terminal setup (Linux/macOS) ────────────────────────────
+
+        private void initPtyTerminal() {
+            consoleHost.setLayout(new FillLayout());
+
+            termText = new StyledText(consoleHost, SWT.MULTI | SWT.V_SCROLL);
+            termText.setBackground(bgColor);
+            Color fgColor = new Color(consoleHost.getDisplay(), 229, 229, 229);
+            termText.setForeground(fgColor);
+            fgColor.dispose();
+
+            // Monospace font — try several common names.
+            termFont = new Font(consoleHost.getDisplay(), "Monospace", 10, SWT.NORMAL);
+            termText.setFont(termFont);
+            termText.setWordWrap(false);
+            termText.setAlwaysShowScrollBars(false);
+            termText.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
+            termText.setCaret(null); // hide SWT caret; the PTY renderer shows its own
+
+            // Forward keyboard input to the PTY.
+            termText.addListener(SWT.KeyDown, e -> {
+                if (ptyHandle == 0) return;
+                String seq = keyEventToTerminal(e);
+                if (seq != null) {
+                    NativeCore.ptyWriteInput(ptyHandle, seq);
+                }
+                e.doit = false; // prevent StyledText from interpreting the key
+            });
+
+            // Handle resize: recalculate cols/rows and notify PTY.
+            consoleHost.addListener(SWT.Resize, e -> {
+                if (ptyHandle == 0) return;
+                int[] cr = calcColsRows();
+                if (cr[0] > 0 && cr[1] > 0) {
+                    NativeCore.ptyResize(ptyHandle, cr[0], cr[1]);
+                }
+            });
+
+            // Mouse wheel → scroll in alternate screen via escape sequences,
+            // normal scroll via StyledText's built-in scrollbar.
+            termText.addListener(SWT.MouseVerticalWheel, e -> {
+                if (ptyHandle == 0 || mouseMode == 0) return;
+                // In mouse-reporting mode, send scroll up/down escape sequences.
+                int lines = e.count > 0 ? 3 : -3;
+                int btn = lines > 0 ? 64 : 65; // 64 = scroll up, 65 = scroll down
+                int count = Math.abs(lines);
+                for (int i = 0; i < count; i++) {
+                    if (mouseEnc == 2) { // SGR encoding
+                        String seq = String.format("\033[<%d;%d;%dM", btn, 1, 1);
+                        NativeCore.ptyWriteInput(ptyHandle, seq);
+                    } else { // Default encoding
+                        char cb = (char) (btn + 32);
+                        char cx = (char) (1 + 32);
+                        char cy = (char) (1 + 32);
+                        String seq = "\033[M" + cb + cx + cy;
+                        NativeCore.ptyWriteInput(ptyHandle, seq);
+                    }
+                }
+                e.doit = false;
+            });
+        }
+
+        /** Calculates terminal columns and rows from the StyledText widget size. */
+        private int[] calcColsRows() {
+            if (termText == null || termText.isDisposed()) return new int[]{80, 24};
+            GC gc = new GC(termText);
+            gc.setFont(termText.getFont());
+            int charW = (int) gc.getFontMetrics().getAverageCharacterWidth();
+            int charH = gc.getFontMetrics().getHeight();
+            gc.dispose();
+            Point size = consoleHost.getSize();
+            int cols = Math.max(1, size.x / Math.max(charW, 1));
+            int rows = Math.max(1, size.y / Math.max(charH, 1));
+            return new int[]{cols, rows};
+        }
+
+        /** Translates an SWT key event into a terminal input string. */
+        private String keyEventToTerminal(org.eclipse.swt.widgets.Event e) {
+            // Ctrl+key combinations
+            if ((e.stateMask & SWT.CTRL) != 0 && e.keyCode >= 'a' && e.keyCode <= 'z') {
+                return String.valueOf((char) (e.keyCode - 'a' + 1));
+            }
+            // Ctrl+Shift+key (uppercase)
+            if ((e.stateMask & SWT.CTRL) != 0 && e.keyCode >= 'A' && e.keyCode <= 'Z') {
+                return String.valueOf((char) (e.keyCode - 'A' + 1));
+            }
+
+            switch (e.keyCode) {
+                case SWT.ARROW_UP:    return "\033[A";
+                case SWT.ARROW_DOWN:  return "\033[B";
+                case SWT.ARROW_RIGHT: return "\033[C";
+                case SWT.ARROW_LEFT:  return "\033[D";
+                case SWT.HOME:        return "\033[H";
+                case SWT.END:         return "\033[F";
+                case SWT.INSERT:      return "\033[2~";
+                case SWT.DEL:         return "\033[3~";
+                case SWT.PAGE_UP:     return "\033[5~";
+                case SWT.PAGE_DOWN:   return "\033[6~";
+                case SWT.F1:  return "\033OP";
+                case SWT.F2:  return "\033OQ";
+                case SWT.F3:  return "\033OR";
+                case SWT.F4:  return "\033OS";
+                case SWT.F5:  return "\033[15~";
+                case SWT.F6:  return "\033[17~";
+                case SWT.F7:  return "\033[18~";
+                case SWT.F8:  return "\033[19~";
+                case SWT.F9:  return "\033[20~";
+                case SWT.F10: return "\033[21~";
+                case SWT.F11: return "\033[23~";
+                case SWT.F12: return "\033[24~";
+                case SWT.BS:  return "\177";
+                case SWT.ESC: return "\033";
+                case SWT.TAB:
+                    if ((e.stateMask & SWT.SHIFT) != 0) return "\033[Z";
+                    return "\t";
+                case SWT.CR:
+                case SWT.LF:
+                    return "\r";
+                default:
+                    if (e.character != 0 && e.character != SWT.DEL) {
+                        return String.valueOf(e.character);
+                    }
+                    return null;
+            }
+        }
+
+        /** Called from the Rust PTY reader thread via JNI callback. */
+        private void onScreenUpdate(String screenJson) {
+            Display display = Display.getDefault();
+            if (display.isDisposed()) return;
+            display.asyncExec(() -> {
+                if (disposed || termText == null || termText.isDisposed()) return;
+                renderScreen(screenJson);
+            });
+        }
+
+        /** Called from the Rust PTY reader thread when the process exits. */
+        private void onPtyExit() {
+            Display display = Display.getDefault();
+            if (display.isDisposed()) return;
+            display.asyncExec(() -> {
+                if (disposed || termText == null || termText.isDisposed()) return;
+                termText.append("\r\n[Process exited]\r\n");
+                termText.setTopIndex(termText.getLineCount() - 1);
+            });
+        }
+
+        /** Parses the screen JSON from vterm and renders into the StyledText. */
+        private void renderScreen(String screenJson) {
+            JsonObject root;
+            try {
+                root = JsonParser.parseString(screenJson).getAsJsonObject();
+            } catch (Exception ex) {
+                return;
+            }
+
+            int rows = root.get("rows").getAsInt();
+            int cols = root.get("cols").getAsInt();
+            int cy = root.get("cy").getAsInt();
+            int cx = root.get("cx").getAsInt();
+            boolean cursorVisible = root.get("cv").getAsBoolean();
+            this.altScreen = root.has("alt") && root.get("alt").getAsInt() == 1;
+            this.mouseMode = root.has("mm") ? root.get("mm").getAsInt() : 0;
+            this.mouseEnc = root.has("me") ? root.get("me").getAsInt() : 0;
+            this.screenRows = rows;
+
+            // Accumulate new scrollback lines.
+            if (root.has("nsb")) {
+                JsonArray nsb = root.getAsJsonArray("nsb");
+                for (JsonElement el : nsb) {
+                    scrollbackLines.add(el.getAsString());
+                }
+            }
+
+            // Build the full text content: scrollback + visible screen.
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < scrollbackLines.size(); i++) {
+                sb.append(scrollbackLines.get(i));
+                sb.append('\n');
+            }
+
+            JsonArray lines = root.getAsJsonArray("lines");
+            List<StyleRange> styles = new ArrayList<>();
+            int scrollbackOffset = sb.length();
+
+            for (int r = 0; r < lines.size(); r++) {
+                JsonObject line = lines.get(r).getAsJsonObject();
+                String text = line.get("t").getAsString();
+                int lineStart = sb.length();
+                sb.append(text);
+                if (r < lines.size() - 1) sb.append('\n');
+
+                // Apply style spans.
+                JsonArray spans = line.getAsJsonArray("s");
+                if (spans != null) {
+                    for (JsonElement spanEl : spans) {
+                        JsonObject span = spanEl.getAsJsonObject();
+                        int offset = span.get("o").getAsInt();
+                        int len = span.get("l").getAsInt();
+
+                        StyleRange style = new StyleRange();
+                        style.start = lineStart + offset;
+                        style.length = Math.min(len, sb.length() - style.start);
+                        if (style.length <= 0) continue;
+
+                        if (span.has("fg")) {
+                            JsonArray fg = span.getAsJsonArray("fg");
+                            style.foreground = new Color(termText.getDisplay(),
+                                    fg.get(0).getAsInt(), fg.get(1).getAsInt(), fg.get(2).getAsInt());
+                        }
+                        if (span.has("bg")) {
+                            JsonArray bg = span.getAsJsonArray("bg");
+                            style.background = new Color(termText.getDisplay(),
+                                    bg.get(0).getAsInt(), bg.get(1).getAsInt(), bg.get(2).getAsInt());
+                        }
+
+                        int fontStyle = SWT.NORMAL;
+                        if (span.has("b") && span.get("b").getAsInt() == 1) fontStyle |= SWT.BOLD;
+                        if (span.has("i") && span.get("i").getAsInt() == 1) fontStyle |= SWT.ITALIC;
+                        style.fontStyle = fontStyle;
+
+                        if (span.has("u") && span.get("u").getAsInt() == 1) {
+                            style.underline = true;
+                        }
+
+                        // Inverse: swap fg/bg.
+                        if (span.has("v") && span.get("v").getAsInt() == 1) {
+                            Color tmp = style.foreground;
+                            style.foreground = style.background;
+                            style.background = tmp;
+                            if (style.foreground == null)
+                                style.foreground = new Color(termText.getDisplay(), BG_R, BG_G, BG_B);
+                            if (style.background == null)
+                                style.background = new Color(termText.getDisplay(), 229, 229, 229);
+                        }
+
+                        styles.add(style);
+                    }
+                }
+            }
+
+            String fullText = sb.toString();
+            termText.setText(fullText);
+
+            // Apply styles.
+            for (StyleRange style : styles) {
+                termText.setStyleRange(style);
+            }
+
+            // Auto-scroll to show the cursor line.
+            int cursorLine = scrollbackLines.size() + cy;
+            int totalLines = termText.getLineCount();
+            if (cursorLine >= 0 && cursorLine < totalLines) {
+                // Show the cursor line near the bottom of the visible area.
+                termText.setTopIndex(Math.max(0, cursorLine - (screenRows - 1)));
+            }
+        }
+
+        // ── Shared launch logic ─────────────────────────────────────────
 
         private void launch(String[] extraArgs) {
             if (disposed || viewDisposed) return;
@@ -255,7 +544,7 @@ public class ClaudeCliView extends ViewPart {
 
             String execCmd;
             List<String> argList = new ArrayList<>();
-            if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
+            if (IS_WINDOWS) {
                 execCmd = "cmd.exe";
                 argList.add("/D");
                 argList.add("/c");
@@ -273,12 +562,21 @@ public class ClaudeCliView extends ViewPart {
             String argsJson     = toJsonStringArray(argList);
             String extraEnvJson = toJsonPairArray(envPairs);
 
+            if (IS_WINDOWS) {
+                launchConsole(execCmd, argsJson, extraEnvJson, workingDir);
+            } else {
+                launchPty(execCmd, argsJson, extraEnvJson, workingDir);
+            }
+        }
+
+        // ── Windows console launch ──────────────────────────────────────
+
+        private void launchConsole(String execCmd, String argsJson, String extraEnvJson, String workingDir) {
             consoleHandle = NativeCore.consoleCreate(execCmd, argsJson, extraEnvJson, workingDir);
             if (consoleHandle == 0) {
                 Activator.logError("consoleCreate failed", null);
                 return;
             }
-
             tryEmbed();
         }
 
@@ -302,7 +600,34 @@ public class ClaudeCliView extends ViewPart {
             }
         }
 
+        // ── Non-Windows PTY launch ──────────────────────────────────────
+
+        private void launchPty(String execCmd, String argsJson, String extraEnvJson, String workingDir) {
+            ptyHandle = NativeCore.ptyCreate();
+            if (ptyHandle == 0) {
+                Activator.logError("ptyCreate failed", null);
+                return;
+            }
+
+            NativeCore.ptyRegisterCallbacks(ptyHandle, new NativeCore.PtyCallbacks() {
+                @Override
+                public void onScreenUpdate(String screenJson) {
+                    TerminalSession.this.onScreenUpdate(screenJson);
+                }
+                @Override
+                public void onExit() {
+                    TerminalSession.this.onPtyExit();
+                }
+            });
+
+            int[] cr = calcColsRows();
+            NativeCore.ptyStart(ptyHandle, execCmd, argsJson, extraEnvJson, workingDir, cr[0], cr[1]);
+        }
+
+        // ── Overlay (Windows only) ──────────────────────────────────────
+
         void showOverlay() {
+            if (!IS_WINDOWS) return;
             if (disposed || consoleHost.isDisposed()) return;
             if (overlay == null || overlay.isDisposed()) {
                 overlay = new Shell(consoleHost.getShell(), SWT.NO_TRIM | SWT.TOOL);
@@ -328,27 +653,46 @@ public class ClaudeCliView extends ViewPart {
             }
         }
 
+        // ── Paste ───────────────────────────────────────────────────────
+
         void paste() {
-            if (disposed || consoleHandle == 0 || !embedded) return;
             Clipboard cb = new Clipboard(Display.getCurrent());
             try {
                 String text = (String) cb.getContents(TextTransfer.getInstance());
-                if (text != null) {
+                if (text == null) return;
+
+                if (IS_WINDOWS) {
+                    if (disposed || consoleHandle == 0 || !embedded) return;
                     for (int i = 0; i < text.length(); i++) {
                         char c = text.charAt(i);
-                        if (c == '\n') c = '\r'; // console expects CR for Enter
+                        if (c == '\n') c = '\r';
                         NativeCore.consolePostMessage(consoleHandle, 0x0102, c, 0); // WM_CHAR
                     }
+                } else {
+                    if (disposed || ptyHandle == 0) return;
+                    // Replace \n with \r for the terminal.
+                    NativeCore.ptyWriteInput(ptyHandle, text.replace('\n', '\r'));
                 }
             } finally {
                 cb.dispose();
             }
         }
 
+        // ── Focus ───────────────────────────────────────────────────────
+
         void focus() {
-            if (disposed || consoleHandle == 0 || !embedded) return;
-            NativeCore.consoleFocus(consoleHandle);
+            if (disposed) return;
+            if (IS_WINDOWS) {
+                if (consoleHandle == 0 || !embedded) return;
+                NativeCore.consoleFocus(consoleHandle);
+            } else {
+                if (termText != null && !termText.isDisposed()) {
+                    termText.setFocus();
+                }
+            }
         }
+
+        // ── Dispose ─────────────────────────────────────────────────────
 
         void dispose() {
             disposed = true;
@@ -359,6 +703,14 @@ public class ClaudeCliView extends ViewPart {
             if (consoleHandle != 0) {
                 NativeCore.consoleDestroy(consoleHandle);
                 consoleHandle = 0;
+            }
+            if (ptyHandle != 0) {
+                NativeCore.ptyDestroy(ptyHandle);
+                ptyHandle = 0;
+            }
+            if (termFont != null && !termFont.isDisposed()) {
+                termFont.dispose();
+                termFont = null;
             }
         }
     }
