@@ -16,9 +16,11 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 ## Prerequisites
 
 - Eclipse IDE (tested with Eclipse 2023-12+)
-- Java 17 or later (Java 21 recommended)
+- Java 21 or later
 - [Claude Code CLI](https://claude.ai/code) installed and available on your PATH
 - A valid Anthropic API key
+- **Windows:** x86_64
+- **Linux:** x86_64
 
 ### Setting Up Claude Code CLI
 
@@ -61,7 +63,7 @@ Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
 
 Go to **Window → Show View → Other → Claude Code** and open the views you want:
 - **Claude Code** — server status, launch/resume/restart controls
-- **Claude CLI** — dedicated interactive terminal with native embedded console (ANSI colors, readline, mouse support)
+- **Claude CLI** — dedicated interactive terminal with native embedded console (Windows: conhost, Linux: PTY + StyledText with full ANSI color support)
 - **Claude Chat** — web-based chat interface with markdown rendering
 
 ### Getting Started
@@ -70,7 +72,9 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 2. Type directly in the **Claude CLI** terminal, or switch to **Claude Chat** for a richer markdown interface
 3. Claude can read your open files, selection, and workspace context automatically via MCP tools
 
-> **Note:** The Claude CLI view embeds a native Windows console (conhost) directly into the Eclipse view — no WebView2, xterm.js, or TM Terminal required. Right-click paste is supported (Ctrl+V is not currently available).
+> **Note (Windows):** The Claude CLI view embeds a native Windows console (conhost) directly into the Eclipse view — no WebView2, xterm.js, or TM Terminal required. Right-click paste is supported (Ctrl+V is not currently available).
+
+> **Note (Linux):** The Claude CLI view uses a native Rust PTY rendered in an SWT StyledText widget with full ANSI color, keyboard input, scrollback, and resize support.
 
 ### Keyboard Shortcuts
 
@@ -117,13 +121,43 @@ Go to **Window → Preferences → Claude Code** to configure:
 | Claude command | `claude` | Path to the Claude CLI executable |
 | Port range (min/max) | 10000–65535 | Port range for the internal HTTP+SSE server |
 
+## Architecture
+
+The plugin follows a **Rust-first** approach: all heavy logic (HTTP/SSE server, MCP protocol, chat process management, PTY handling, console embedding) lives in a native Rust library loaded via JNI. Java is a thin glue layer responsible only for Eclipse/SWT API calls.
+
+```
+Claude CLI  <--NDJSON-->  Rust (chat.rs)  --JNI callbacks-->  Java (ClaudeChatView)
+                          Rust (mcp.rs)   --JNI tool call-->  Java (McpToolRegistry)
+                          Rust (server.rs) --SSE-->           Claude CLI
+```
+
 ## Project Structure
 
 | Project | Description |
 |---|---|
-| `com.anthropic.claudecode.eclipse` | The plugin itself — source code, MCP tools, SSE server, UI views, and chat integration |
+| `claude-eclipse-core` | Rust native library — HTTP+SSE server, MCP/JSON-RPC protocol, chat process manager, PTY, console embedding. Built as a cdylib (`claude_eclipse_core.dll` / `libclaude_eclipse_core.so`) |
+| `com.anthropic.claudecode.eclipse` | Eclipse plugin — UI views, MCP tool implementations, JNI bridge, chat HTML/JS |
 | `com.anthropic.claudecode.eclipse.feature` | Eclipse feature definition — declares the plugin and its metadata |
 | `com.anthropic.claudecode.eclipse.site` | p2 update site — the installable artifacts hosted via GitHub Pages |
+
+### Building the Native Library
+
+The Rust library must be compiled for each target platform:
+
+**Windows (native build):**
+```bash
+cd claude-eclipse-core
+cargo build --release
+cp target/release/claude_eclipse_core.dll ../com.anthropic.claudecode.eclipse/native/windows/x86_64/
+```
+
+**Linux (via Docker):**
+```bash
+docker run --rm -v "$(pwd):/src" rust:latest bash -c \
+  "cd /src/claude-eclipse-core && cargo build --release"
+cp claude-eclipse-core/target/release/libclaude_eclipse_core.so \
+   com.anthropic.claudecode.eclipse/native/linux/x86_64/
+```
 
 ## Updating the Plugin
 
