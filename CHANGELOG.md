@@ -10,9 +10,6 @@ All notable changes to Claude Code for Eclipse are documented here.
 - **macOS bare `claude` command** — Eclipse.app launched from Finder only inherits a minimal PATH, so a bare `claude` in preferences previously failed with "spawn failed … not found on PATH"; the Rust core now captures the user's login-shell PATH on first use (via `$SHELL -l -i -c`, 5-second timeout, cached for the session) and injects it into both the chat and PTY child processes, so `claude` installed under Homebrew/nvm/asdf resolves without pasting an absolute path
 - Users who already configured an absolute path (e.g. from `which claude`) continue to work unchanged — the captured PATH is only used to resolve the command
 
-### Changed
-- Bumped plugin UI version string to `v2.2.2`
-
 ---
 
 ## [2.2.1] — 2026-04-17
