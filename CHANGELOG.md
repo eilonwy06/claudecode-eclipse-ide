@@ -4,7 +4,17 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.2.0] — 2026-04-17 *(current)*
+## [2.2.1] — 2026-04-17 *(current)*
+
+### Added
+- **macOS support** — prebuilt native libraries (`libclaude_eclipse_core.dylib`) ship for both Apple Silicon (`aarch64`) and Intel (`x86_64`); Mac users on the PTY + StyledText terminal path now work identically to Linux
+
+### Changed
+- PTY terminal font selection is now platform-aware: `Menlo` on macOS, `Monospace` on Linux — prevents SWT falling back to a proportional font on Mac
+
+---
+
+## [2.2.0] — 2026-04-17
 
 ### Added
 - **Inline diff accept/reject** — `openDiff` MCP tool now opens a native Eclipse compare editor where proposed changes can be merged into the current file; CLI "Yes" auto-applies and closes the diff, closing the tab rejects it, and Ctrl+S on an unmerged diff also rejects (detected via document-level interaction tracking)

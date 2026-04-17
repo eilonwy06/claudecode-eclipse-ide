@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <site>
-   <feature url="features/com.anthropic.claudecode.eclipse.feature_2.2.0.jar"
-            id="com.anthropic.claudecode.eclipse.feature"
-            version="2.2.0">
+   <feature id="com.anthropic.claudecode.eclipse.feature">
       <category name="com.anthropic.claudecode.eclipse.category"/>
    </feature>
    <category-def name="com.anthropic.claudecode.eclipse.category" label="Claude Code for Eclipse IDE">

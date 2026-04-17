@@ -21,6 +21,7 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 - A valid Anthropic API key
 - **Windows:** x86_64
 - **Linux:** x86_64
+- **macOS:** aarch64 (Apple Silicon) and x86_64 (Intel)
 
 ### Setting Up Claude Code CLI
 
@@ -63,7 +64,7 @@ Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
 
 Go to **Window → Show View → Other → Claude Code** and open the views you want:
 - **Claude Code** — server status, launch/resume/restart controls
-- **Claude CLI** — dedicated interactive terminal with native embedded console (Windows: conhost, Linux: PTY + StyledText with full ANSI color support)
+- **Claude CLI** — dedicated interactive terminal with native embedded console (Windows: conhost, Linux/macOS: PTY + StyledText with full ANSI color support)
 - **Claude Chat** — web-based chat interface with markdown rendering
 
 ### Getting Started
@@ -74,7 +75,7 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 
 > **Note (Windows):** The Claude CLI view embeds a native Windows console (conhost) directly into the Eclipse view — no WebView2, xterm.js, or TM Terminal required. Right-click paste is supported (Ctrl+V is not currently available).
 
-> **Note (Linux):** The Claude CLI view uses a native Rust PTY rendered in an SWT StyledText widget with full ANSI color, keyboard input, scrollback, and resize support.
+> **Note (Linux/macOS):** The Claude CLI view uses a native Rust PTY rendered in an SWT StyledText widget with full ANSI color, keyboard input, scrollback, and resize support. The monospace font defaults to `Monospace` on Linux and `Menlo` on macOS.
 
 ### Keyboard Shortcuts
 
@@ -135,7 +136,7 @@ Claude CLI  <--NDJSON-->  Rust (chat.rs)  --JNI callbacks-->  Java (ClaudeChatVi
 
 | Project | Description |
 |---|---|
-| `claude-eclipse-core` | Rust native library — HTTP+SSE server, MCP/JSON-RPC protocol, chat process manager, PTY, console embedding. Built as a cdylib (`claude_eclipse_core.dll` / `libclaude_eclipse_core.so`) |
+| `claude-eclipse-core` | Rust native library — HTTP+SSE server, MCP/JSON-RPC protocol, chat process manager, PTY, console embedding. Built as a cdylib (`claude_eclipse_core.dll` / `libclaude_eclipse_core.so` / `libclaude_eclipse_core.dylib`) |
 | `com.anthropic.claudecode.eclipse` | Eclipse plugin — UI views, MCP tool implementations, JNI bridge, chat HTML/JS |
 | `com.anthropic.claudecode.eclipse.feature` | Eclipse feature definition — declares the plugin and its metadata |
 | `com.anthropic.claudecode.eclipse.site` | p2 update site — the installable artifacts hosted via GitHub Pages |
@@ -158,6 +159,19 @@ docker run --rm -v "$(pwd):/src" rust:latest bash -c \
 cp claude-eclipse-core/target/release/libclaude_eclipse_core.so \
    com.anthropic.claudecode.eclipse/native/linux/x86_64/
 ```
+
+**macOS (native build — must be built on a Mac):**
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cd claude-eclipse-core
+cargo build --release --target aarch64-apple-darwin
+cargo build --release --target x86_64-apple-darwin
+cp target/aarch64-apple-darwin/release/libclaude_eclipse_core.dylib \
+   ../com.anthropic.claudecode.eclipse/native/macos/aarch64/
+cp target/x86_64-apple-darwin/release/libclaude_eclipse_core.dylib \
+   ../com.anthropic.claudecode.eclipse/native/macos/x86_64/
+```
+> Cross-compiling to macOS from Windows/Linux requires Apple's SDK and is not supported — build on a Mac.
 
 ## Updating the Plugin
 

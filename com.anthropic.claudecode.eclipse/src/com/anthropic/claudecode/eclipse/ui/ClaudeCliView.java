@@ -47,6 +47,11 @@ public class ClaudeCliView extends ViewPart {
 
     private static final boolean IS_WINDOWS =
             System.getProperty("os.name", "").toLowerCase().contains("win");
+    private static final boolean IS_MAC =
+            System.getProperty("os.name", "").toLowerCase().contains("mac");
+
+    /** Monospace font name for the PTY renderer (Linux/macOS path only). */
+    private static final String PTY_FONT_NAME = IS_MAC ? "Menlo" : "Monospace";
 
     private static final int BG_R = 0x12, BG_G = 0x13, BG_B = 0x14; // #121314
 
@@ -287,7 +292,7 @@ public class ClaudeCliView extends ViewPart {
             termText.setForeground(cachedColor(229, 229, 229));
 
             // Monospace font — try several common names.
-            termFont = new Font(consoleHost.getDisplay(), "Monospace", 10, SWT.NORMAL);
+            termFont = new Font(consoleHost.getDisplay(), PTY_FONT_NAME, 10, SWT.NORMAL);
             termText.setFont(termFont);
             termText.setWordWrap(false);
             termText.setAlwaysShowScrollBars(false);
