@@ -228,6 +228,13 @@ public class ClaudeCliView extends ViewPart {
         private StyledText termText;
         private Font termFont;
         private List<String> scrollbackLines = new ArrayList<>();
+        /**
+         * Color cache for the PTY terminal (Linux/macOS only).
+         * Colors are keyed by packed RGB (r<<16|g<<8|b) and reused across renders.
+         * SWT's StyledTextRenderer stores Color references from StyleRange objects,
+         * so Colors must stay alive for the entire session — never disposed mid-session.
+         */
+        private final java.util.Map<Integer, Color> termColors = new java.util.HashMap<>();
         /** Visible screen rows from the last onScreenUpdate. */
         private int screenRows = 24;
         /** Whether the terminal is in alternate-screen mode (vi, less, etc.). */
@@ -274,9 +281,10 @@ public class ClaudeCliView extends ViewPart {
 
             termText = new StyledText(consoleHost, SWT.MULTI | SWT.V_SCROLL);
             termText.setBackground(bgColor);
-            Color fgColor = new Color(consoleHost.getDisplay(), 229, 229, 229);
-            termText.setForeground(fgColor);
-            fgColor.dispose();
+            // Use cachedColor so the Color object stays alive for the session.
+            // StyledTextRenderer stores the Color reference internally; disposing it
+            // immediately (as was done before) causes a GC.setForeground crash on GTK.
+            termText.setForeground(cachedColor(229, 229, 229));
 
             // Monospace font — try several common names.
             termFont = new Font(consoleHost.getDisplay(), "Monospace", 10, SWT.NORMAL);
@@ -327,6 +335,18 @@ public class ClaudeCliView extends ViewPart {
                 }
                 e.doit = false;
             });
+        }
+
+        /**
+         * Returns a cached SWT Color for the given RGB values (Linux/macOS PTY path only).
+         * Colors are created once per RGB value and reused across all renders in this session.
+         * This avoids SWT OS resource leaks and ensures the Color objects stay alive
+         * for as long as any StyleRange referencing them is applied to the StyledText.
+         */
+        private Color cachedColor(int r, int g, int b) {
+            int key = (r << 16) | (g << 8) | b;
+            return termColors.computeIfAbsent(key,
+                    k -> new Color(termText.getDisplay(), r, g, b));
         }
 
         /** Calculates terminal columns and rows from the StyledText widget size. */
@@ -474,12 +494,12 @@ public class ClaudeCliView extends ViewPart {
 
                         if (span.has("fg")) {
                             JsonArray fg = span.getAsJsonArray("fg");
-                            style.foreground = new Color(termText.getDisplay(),
+                            style.foreground = cachedColor(
                                     fg.get(0).getAsInt(), fg.get(1).getAsInt(), fg.get(2).getAsInt());
                         }
                         if (span.has("bg")) {
                             JsonArray bg = span.getAsJsonArray("bg");
-                            style.background = new Color(termText.getDisplay(),
+                            style.background = cachedColor(
                                     bg.get(0).getAsInt(), bg.get(1).getAsInt(), bg.get(2).getAsInt());
                         }
 
@@ -498,9 +518,9 @@ public class ClaudeCliView extends ViewPart {
                             style.foreground = style.background;
                             style.background = tmp;
                             if (style.foreground == null)
-                                style.foreground = new Color(termText.getDisplay(), BG_R, BG_G, BG_B);
+                                style.foreground = cachedColor(BG_R, BG_G, BG_B);
                             if (style.background == null)
-                                style.background = new Color(termText.getDisplay(), 229, 229, 229);
+                                style.background = cachedColor(229, 229, 229);
                         }
 
                         styles.add(style);
@@ -712,6 +732,11 @@ public class ClaudeCliView extends ViewPart {
                 termFont.dispose();
                 termFont = null;
             }
+            // Dispose cached PTY terminal colors (Linux/macOS only — no-op on Windows).
+            for (Color c : termColors.values()) {
+                if (!c.isDisposed()) c.dispose();
+            }
+            termColors.clear();
         }
     }
 

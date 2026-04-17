@@ -18,7 +18,54 @@ public final class NativeCore {
     private NativeCore() {}
 
     static {
-        System.loadLibrary("claude_eclipse_core");
+        loadNativeLibrary();
+    }
+
+    /**
+     * Loads the native library.  Tries OSGi's Bundle-NativeCode resolution first
+     * (which requires java.library.path to be set correctly), then falls back to
+     * extracting the library from the bundle's classpath resources to a temp file.
+     * The fallback is the reliable path on Linux/macOS where Bundle-NativeCode
+     * resolution may fail when the class is initialized on a non-OSGi worker thread.
+     */
+    private static void loadNativeLibrary() {
+        try {
+            System.loadLibrary("claude_eclipse_core");
+            return;
+        } catch (UnsatisfiedLinkError ignored) {}
+
+        String resourcePath = nativeResourcePath();
+        if (resourcePath == null) {
+            throw new UnsatisfiedLinkError(
+                "Unsupported platform for native library: "
+                + System.getProperty("os.name") + "/" + System.getProperty("os.arch"));
+        }
+        try (java.io.InputStream in = NativeCore.class.getResourceAsStream(resourcePath)) {
+            if (in == null) {
+                throw new UnsatisfiedLinkError(
+                    "Native library not found in bundle resources: " + resourcePath);
+            }
+            String suffix = resourcePath.substring(resourcePath.lastIndexOf('.'));
+            java.nio.file.Path tmp =
+                java.nio.file.Files.createTempFile("claude_eclipse_core", suffix);
+            tmp.toFile().deleteOnExit();
+            java.nio.file.Files.copy(in, tmp,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            System.load(tmp.toAbsolutePath().toString());
+        } catch (java.io.IOException e) {
+            throw new UnsatisfiedLinkError(
+                "Failed to extract native library from bundle: " + e.getMessage());
+        }
+    }
+
+    private static String nativeResourcePath() {
+        String os   = System.getProperty("os.name",  "").toLowerCase(java.util.Locale.ROOT);
+        String arch = System.getProperty("os.arch",  "").toLowerCase(java.util.Locale.ROOT);
+        String dir  = (arch.equals("aarch64") || arch.equals("arm64")) ? "aarch64" : "x86_64";
+        if (os.contains("win"))   return "/native/windows/" + dir + "/claude_eclipse_core.dll";
+        if (os.contains("linux")) return "/native/linux/"   + dir + "/libclaude_eclipse_core.so";
+        if (os.contains("mac"))   return "/native/macos/"   + dir + "/libclaude_eclipse_core.dylib";
+        return null;
     }
 
     // ── Server lifecycle ──────────────────────────────────────────────────────

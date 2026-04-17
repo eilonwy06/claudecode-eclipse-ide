@@ -46,7 +46,7 @@ async fn handle_request(
     let id = msg.get("id").cloned();
 
     match method {
-        "initialize" => handle_initialize(sender, id),
+        "initialize" => handle_initialize(Arc::clone(&state), sender, id),
         "initialized" => {} // notification, no response
         "tools/list" => handle_tools_list(sender, id),
         "tools/call" => handle_tools_call(state, sender, id, &msg).await,
@@ -68,7 +68,7 @@ async fn handle_request(
 // initialize
 // ---------------------------------------------------------------------------
 
-fn handle_initialize(sender: UnboundedSender<SseEvent>, id: Option<Value>) {
+fn handle_initialize(state: Arc<AppState>, sender: UnboundedSender<SseEvent>, id: Option<Value>) {
     let id = match id {
         Some(id) => id,
         None => return,
@@ -79,6 +79,18 @@ fn handle_initialize(sender: UnboundedSender<SseEvent>, id: Option<Value>) {
         "serverInfo": { "name": "claude-code-eclipse", "version": "1.0.0" }
     });
     send_result(&sender, &id, result);
+
+    // A new MCP client just connected — close any Eclipse diff tabs that were
+    // left open from a previous session (same as what happens when the user
+    // types a new command and Claude calls closeAllDiffTabs at the turn start).
+    let guard = state.tool_callback.lock().unwrap();
+    if let Some(cb) = guard.as_ref() {
+        let java_vm  = Arc::clone(&cb.java_vm);
+        let callback = Arc::clone(&cb.callback);
+        std::thread::spawn(move || {
+            call_java_tool(&java_vm, &callback, "closeAllDiffTabs", "{}");
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +187,28 @@ fn handle_tools_list(sender: UnboundedSender<SseEvent>, id: Option<Value>) {
             "name": "closeAllDiffTabs",
             "description": "Close all open diff/compare editor tabs in Eclipse.",
             "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "acceptDiff",
+            "description": "Accept the proposed changes from a diff view, writing them to disk and closing the diff tab.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file_path": { "type": "string", "description": "Absolute path of the file whose diff to accept" }
+                },
+                "required": ["file_path"]
+            }
+        },
+        {
+            "name": "rejectDiff",
+            "description": "Reject the proposed changes from a diff view, closing the diff tab without writing.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file_path": { "type": "string", "description": "Absolute path of the file whose diff to reject" }
+                },
+                "required": ["file_path"]
+            }
         }
     ]);
     send_result(&sender, &id, json!({ "tools": tools }));
@@ -240,7 +274,7 @@ async fn handle_tools_call(
 
 /// Attaches the current thread to the JVM, calls `callback.executeEclipseTool(name, argsJson)`,
 /// and returns the JSON string result.
-fn call_java_tool(
+pub fn call_java_tool(
     java_vm: &jni::JavaVM,
     callback: &jni::objects::GlobalRef,
     tool_name: &str,

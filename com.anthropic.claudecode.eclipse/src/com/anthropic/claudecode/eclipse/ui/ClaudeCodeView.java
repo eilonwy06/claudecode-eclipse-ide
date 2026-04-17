@@ -83,7 +83,7 @@ public class ClaudeCodeView extends ViewPart {
             monoFont.dispose();
         });
 
-        appendLog("Claude Code for Eclipse v2.1.0\n");
+        appendLog("Claude Code for Eclipse v2.2.0\n");
         appendLog("─────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {

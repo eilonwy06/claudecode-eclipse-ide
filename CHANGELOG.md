@@ -4,7 +4,19 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.1.0] — 2026-04-04 *(current)*
+## [2.2.0] — 2026-04-17 *(current)*
+
+### Added
+- **Inline diff accept/reject** — `openDiff` MCP tool now opens a native Eclipse compare editor where proposed changes can be merged into the current file; CLI "Yes" auto-applies and closes the diff, closing the tab rejects it, and Ctrl+S on an unmerged diff also rejects (detected via document-level interaction tracking)
+- New MCP tools: `acceptDiff`, `rejectDiff`, `getDiffStatus`
+- Pending diffs automatically close when the MCP client connects or disconnects, preventing stale compare tabs across sessions
+
+### Changed
+- Refactored Rust core with a dedicated `session` module to coordinate MCP client lifecycle with the diff registry
+
+---
+
+## [2.1.0] — 2026-04-04
 
 ### Added
 - **Linux support** — Claude CLI view now works on Linux using the native Rust PTY system with an SWT StyledText terminal renderer; full ANSI color, keyboard input, scrollback, and resize support

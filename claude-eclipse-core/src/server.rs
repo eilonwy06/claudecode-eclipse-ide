@@ -382,6 +382,18 @@ struct ClientGuard {
 impl Drop for ClientGuard {
     fn drop(&mut self) {
         self.state.clients.lock().unwrap().remove(&self.session_id);
+
+        // Close any pending Eclipse diff tabs when this MCP client disconnects.
+        // Spawn a plain OS thread so JNI can safely attach — drop() is synchronous
+        // and may not execute inside a Tokio task.
+        let guard = self.state.tool_callback.lock().unwrap();
+        if let Some(cb) = guard.as_ref() {
+            let java_vm  = Arc::clone(&cb.java_vm);
+            let callback = Arc::clone(&cb.callback);
+            std::thread::spawn(move || {
+                crate::mcp::call_java_tool(&java_vm, &callback, "closeAllDiffTabs", "{}");
+            });
+        }
     }
 }
 
