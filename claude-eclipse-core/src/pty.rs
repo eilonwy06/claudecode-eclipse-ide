@@ -80,6 +80,12 @@ impl PtySession {
         builder.cwd(&cwd);
         for (k, v) in extra_env { builder.env(k, v); }
 
+        // macOS: inherit the login shell's PATH so bare commands like `claude`
+        // resolve when Eclipse was launched from Finder.  See shell_env.rs.
+        if let Some(p) = crate::shell_env::login_shell_path() {
+            builder.env("PATH", p);
+        }
+
         let child = match pair.slave.spawn_command(builder) {
             Ok(c)  => c,
             Err(e) => { self.write_error(&format!("spawn failed: {}", e)); return; }

@@ -4,6 +4,7 @@ mod lock_file;
 mod mcp;
 mod pty;
 mod server;
+mod shell_env;
 mod vterm;
 
 use chat::ChatManager;

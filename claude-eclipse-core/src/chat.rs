@@ -183,6 +183,14 @@ fn run_turn(
     #[cfg(windows)]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
+    // macOS: Eclipse.app launched from Finder has a minimal PATH and can't
+    // find `claude` installed under Homebrew/nvm/etc.  Inject the PATH from
+    // the user's login shell so bare commands resolve.  Absolute paths are
+    // unaffected — the kernel skips PATH lookup when the command contains /.
+    if let Some(p) = crate::shell_env::login_shell_path() {
+        cmd.env("PATH", p);
+    }
+
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
         // Connect Claude to this instance's MCP server.
         cmd.env("CLAUDE_IDE_PORT", mcp_port.to_string())
