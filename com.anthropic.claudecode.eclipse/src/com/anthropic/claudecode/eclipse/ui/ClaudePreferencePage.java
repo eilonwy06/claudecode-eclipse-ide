@@ -35,6 +35,11 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 "Claude command:",
                 getFieldEditorParent()));
 
+        addField(new StringFieldEditor(
+                Constants.PREF_CLAUDE_ARGS,
+                "Arguments:",
+                getFieldEditorParent()));
+
         IntegerFieldEditor portMin = new IntegerFieldEditor(
                 Constants.PREF_PORT_MIN,
                 "Port range (min):",

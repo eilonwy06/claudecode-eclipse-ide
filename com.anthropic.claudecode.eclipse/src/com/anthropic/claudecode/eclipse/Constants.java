@@ -14,6 +14,7 @@ public final class Constants {
     public static final String PREF_PORT_MIN = "portMin";
     public static final String PREF_PORT_MAX = "portMax";
     public static final String PREF_CLAUDE_CMD = "claudeCommand";
+    public static final String PREF_CLAUDE_ARGS = "claudeArguments";
     public static final String PREF_LOG_LEVEL = "logLevel";
     public static final String PREF_TRACK_SELECTION = "trackSelection";
     public static final String PREF_TERMINAL_POSITION = "terminalPosition";

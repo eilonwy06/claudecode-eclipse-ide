@@ -120,6 +120,7 @@ Go to **Window → Preferences → Claude Code** to configure:
 | Start server automatically | On | Auto-start the MCP server when Eclipse launches |
 | Track editor selection | On | Continuously track cursor/selection for Claude context |
 | Claude command | `claude` | Path to the Claude CLI executable |
+| Arguments | *(empty)* | Additional CLI arguments (e.g., `--model claude-opus-4-7-20260418`) |
 | Port range (min/max) | 10000–65535 | Port range for the internal HTTP+SSE server |
 
 ## Architecture

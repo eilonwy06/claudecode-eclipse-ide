@@ -564,6 +564,8 @@ public class ClaudeCliView extends ViewPart {
             String claudeCmd = activator.getPreferenceStore().getString(Constants.PREF_CLAUDE_CMD);
             if (claudeCmd == null || claudeCmd.isBlank()) claudeCmd = Constants.DEFAULT_CLAUDE_CMD;
 
+            String claudeArgs = activator.getPreferenceStore().getString(Constants.PREF_CLAUDE_ARGS);
+
             String workingDir = ResourcesPlugin.getWorkspace().getRoot()
                     .getLocation().toOSString();
 
@@ -576,6 +578,11 @@ public class ClaudeCliView extends ViewPart {
                 argList.add(claudeCmd);
             } else {
                 execCmd = claudeCmd;
+            }
+            if (claudeArgs != null && !claudeArgs.isBlank()) {
+                for (String arg : claudeArgs.trim().split("\\s+")) {
+                    argList.add(arg);
+                }
             }
             for (String a : extraArgs) argList.add(a);
 

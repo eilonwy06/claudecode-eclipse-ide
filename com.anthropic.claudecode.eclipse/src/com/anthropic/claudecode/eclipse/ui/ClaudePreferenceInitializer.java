@@ -15,6 +15,7 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         store.setDefault(Constants.PREF_PORT_MIN, Constants.PORT_RANGE_MIN);
         store.setDefault(Constants.PREF_PORT_MAX, Constants.PORT_RANGE_MAX);
         store.setDefault(Constants.PREF_CLAUDE_CMD, Constants.DEFAULT_CLAUDE_CMD);
+        store.setDefault(Constants.PREF_CLAUDE_ARGS, "");
         store.setDefault(Constants.PREF_LOG_LEVEL, "info");
         store.setDefault(Constants.PREF_TRACK_SELECTION, true);
         store.setDefault(Constants.PREF_TERMINAL_POSITION, "bottom");
