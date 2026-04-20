@@ -183,4 +183,11 @@
       <startup class="com.anthropic.claudecode.eclipse.ClaudeStartup"/>
    </extension>
 
+   <!-- Register Claude CLI as a Show In target -->
+   <extension point="org.eclipse.ui.perspectiveExtensions">
+      <perspectiveExtension targetID="*">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+   </extension>
+
 </plugin>

@@ -73,6 +73,10 @@ public final class NativeCore {
     /** Allocates a new Server. Returns an opaque native handle. */
     public static native long serverCreate(int portMin, int portMax);
 
+    /** Allocates a new Server with preferred port and auth token for restart. */
+    public static native long serverCreateWithConfig(int portMin, int portMax,
+                                                      int preferredPort, String authToken);
+
     /** Starts the server. Returns the bound port, or 0 on failure. */
     public static native int serverStart(long handle);
 
@@ -263,6 +267,19 @@ public final class NativeCore {
      * No-op on non-Windows platforms.
      */
     public static native void browserActivateInput(long hwnd);
+
+    public static native boolean bridgeConnect(int port);
+    public static native void bridgeDisconnect();
+    public static native boolean bridgeIsConnected();
+    public static native boolean bridgeSend(String data);
+
+    // ── Proxy configuration ──────────────────────────────────────────────────
+
+    /**
+     * Sets proxy overrides from Eclipse preferences.
+     * Pass null or empty string to clear an override (fall back to env/shell).
+     */
+    public static native void setProxyOverrides(String httpProxy, String httpsProxy, String noProxy);
 
     /** Callbacks fired from Rust reader thread. */
     public interface PtyCallbacks {

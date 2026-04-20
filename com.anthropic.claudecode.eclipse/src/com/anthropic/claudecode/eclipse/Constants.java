@@ -18,6 +18,12 @@ public final class Constants {
     public static final String PREF_LOG_LEVEL = "logLevel";
     public static final String PREF_TRACK_SELECTION = "trackSelection";
     public static final String PREF_TERMINAL_POSITION = "terminalPosition";
+    public static final String PREF_AUTO_LAUNCH_CLI = "autoLaunchCli";
+    public static final String PREF_DEBUG_MODE = "debugMode";
+
+    public static final String PREF_HTTP_PROXY = "httpProxy";
+    public static final String PREF_HTTPS_PROXY = "httpsProxy";
+    public static final String PREF_NO_PROXY = "noProxy";
 
     public static final String DEFAULT_CLAUDE_CMD = "claude";
 

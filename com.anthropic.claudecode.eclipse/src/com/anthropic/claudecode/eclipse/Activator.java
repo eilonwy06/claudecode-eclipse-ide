@@ -37,6 +37,10 @@ public class Activator extends AbstractUIPlugin {
     }
 
     public void initialize() {
+        initializeWithConfig(0, null);
+    }
+
+    private void initializeWithConfig(int preferredPort, String authToken) {
         if (httpSseServer != null && httpSseServer.isRunning()) {
             return;
         }
@@ -46,15 +50,22 @@ public class Activator extends AbstractUIPlugin {
         selectionTracker = new SelectionTracker();
 
         IPreferenceStore prefs = getPreferenceStore();
+
+        NativeCore.setProxyOverrides(
+            prefs.getString(Constants.PREF_HTTP_PROXY),
+            prefs.getString(Constants.PREF_HTTPS_PROXY),
+            prefs.getString(Constants.PREF_NO_PROXY)
+        );
+
         int portMin = prefs.getInt(Constants.PREF_PORT_MIN);
         int portMax = prefs.getInt(Constants.PREF_PORT_MAX);
 
-        httpSseServer = new HttpSseServer(toolRegistry, portMin, portMax);
+        httpSseServer = new HttpSseServer(toolRegistry, portMin, portMax, preferredPort, authToken);
         httpSseServer.start();
 
         int port = httpSseServer.getPort();
-        String authToken = httpSseServer.getAuthToken();
-        lockFileManager.writeLockFile(port, authToken);
+        String token = httpSseServer.getAuthToken();
+        lockFileManager.writeLockFile(port, token);
 
         if (prefs.getBoolean(Constants.PREF_TRACK_SELECTION)) {
             selectionTracker.start(httpSseServer);
@@ -80,8 +91,16 @@ public class Activator extends AbstractUIPlugin {
     }
 
     public void restart() {
+        int portToRestore = 0;
+        String tokenToRestore = null;
+
+        if (httpSseServer != null && httpSseServer.isRunning()) {
+            portToRestore = httpSseServer.getPort();
+            tokenToRestore = httpSseServer.getAuthToken();
+        }
+
         shutdown();
-        initialize();
+        initializeWithConfig(portToRestore, tokenToRestore);
     }
 
     public boolean isServerRunning() {

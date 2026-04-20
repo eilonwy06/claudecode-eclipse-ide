@@ -4,10 +4,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.StyledText;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Font;
+import org.eclipse.swt.graphics.GC;
+import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
@@ -19,71 +22,50 @@ import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.part.ViewPart;
 
 import com.anthropic.claudecode.eclipse.Activator;
+import com.anthropic.claudecode.eclipse.Constants;
+import com.anthropic.claudecode.eclipse.NativeCore;
+import com.anthropic.claudecode.eclipse.bridge.PhpBridge;
 import com.anthropic.claudecode.eclipse.editor.UiHelper;
 
 public class ClaudeCodeView extends ViewPart {
 
     public static final String VIEW_ID = "com.anthropic.claudecode.eclipse.ui.ClaudeCodeView";
 
+    private static final int INDICATOR_SIZE = 12;
+
     private StyledText logArea;
-    private Label statusLabel;
+    private Label serverIndicator;
+    private Label serverLabel;
+    private Label bridgeIndicator;
+    private Label bridgeLabel;
     private Button launchButton;
     private ScheduledExecutorService statusPoller;
     private volatile boolean launching = false;
+    private PhpBridge phpBridge;
+
+    private Image greenLight;
+    private Image yellowLight;
+    private Image redLight;
+
+    private enum Status { GREEN, YELLOW, RED }
 
     @Override
     public void createPartControl(Composite parent) {
+        Display display = parent.getDisplay();
+        createIndicatorImages(display);
+
         Composite container = new Composite(parent, SWT.NONE);
         GridLayout layout = new GridLayout(1, false);
-        layout.marginWidth = 8;
-        layout.marginHeight = 8;
-        layout.verticalSpacing = 6;
+        layout.marginWidth = 10;
+        layout.marginHeight = 10;
+        layout.verticalSpacing = 8;
         container.setLayout(layout);
 
-        // Status bar
-        statusLabel = new Label(container, SWT.NONE);
-        statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        createStatusBar(container);
+        createButtonRow(container);
+        createLogArea(container, display);
 
-        // Button row
-        Composite buttonRow = new Composite(container, SWT.NONE);
-        buttonRow.setLayout(new GridLayout(3, false));
-        buttonRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-
-        launchButton = new Button(buttonRow, SWT.PUSH);
-        launchButton.setText("Launch Claude Terminal");
-        launchButton.addListener(SWT.Selection, e -> startClaude());
-
-        Button restartBtn = new Button(buttonRow, SWT.PUSH);
-        restartBtn.setText("Restart Server");
-        restartBtn.addListener(SWT.Selection, e -> {
-            Activator.getDefault().restart();
-            appendLog("Server restarted.\n");
-            updateStatus();
-        });
-
-        Button resumeBtn = new Button(buttonRow, SWT.PUSH);
-        resumeBtn.setText("Resume Session");
-        resumeBtn.addListener(SWT.Selection, e -> restartClaude("--resume"));
-
-        // Log area
-        logArea = new StyledText(container, SWT.MULTI | SWT.V_SCROLL | SWT.H_SCROLL | SWT.READ_ONLY);
-        logArea.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
-        logArea.setWordWrap(true);
-
-        Display display = parent.getDisplay();
-        Color bgColor = new Color(display, 30, 30, 30);
-        Color fgColor = new Color(display, 220, 220, 220);
-        Font monoFont = new Font(display, "Consolas", 10, SWT.NORMAL);
-        logArea.setBackground(bgColor);
-        logArea.setForeground(fgColor);
-        logArea.setFont(monoFont);
-        logArea.addDisposeListener(e -> {
-            bgColor.dispose();
-            fgColor.dispose();
-            monoFont.dispose();
-        });
-
-        appendLog("Claude Code for Eclipse v2.2.2\n");
+        appendLog("Claude Code for Eclipse v2.5.0\n");
         appendLog("─────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {
@@ -97,12 +79,135 @@ public class ClaudeCodeView extends ViewPart {
             appendLog("HTTP+SSE server listening on 127.0.0.1:" + port + "\n");
             appendLog("Auth token: " + token.substring(0, 8) + "...\n");
             appendLog("Lock file: ~/.claude/ide/" + port + ".lock\n\n");
-            appendLog("Click 'Launch Claude Terminal' to open the dedicated Claude CLI view.\n");
-            appendLog("Claude will auto-connect to Eclipse via the HTTP+SSE server.\n\n");
+            appendLog("Click 'Launch Claude Terminal' to open the Claude CLI.\n\n");
         }
 
+        startPhpBridge();
         updateStatus();
         startStatusPoller();
+
+        if (isAutoLaunchEnabled()) {
+            Display.getCurrent().asyncExec(this::startClaude);
+        }
+    }
+
+    private void createIndicatorImages(Display display) {
+        greenLight = createBoxImage(display,
+            new Color(display, 76, 175, 80),
+            new Color(display, 56, 142, 60));
+        yellowLight = createBoxImage(display,
+            new Color(display, 255, 193, 7),
+            new Color(display, 245, 160, 0));
+        redLight = createBoxImage(display,
+            new Color(display, 244, 67, 54),
+            new Color(display, 198, 40, 40));
+    }
+
+    private Image createBoxImage(Display display, Color fill, Color border) {
+        Image img = new Image(display, INDICATOR_SIZE, INDICATOR_SIZE);
+        GC gc = new GC(img);
+        gc.setBackground(fill);
+        gc.fillRectangle(1, 1, INDICATOR_SIZE - 2, INDICATOR_SIZE - 2);
+        gc.setForeground(border);
+        gc.drawRectangle(0, 0, INDICATOR_SIZE - 1, INDICATOR_SIZE - 1);
+        gc.dispose();
+        fill.dispose();
+        border.dispose();
+        return img;
+    }
+
+    private void createStatusBar(Composite parent) {
+        Composite statusBar = new Composite(parent, SWT.NONE);
+        GridLayout layout = new GridLayout(6, false);
+        layout.marginWidth = 0;
+        layout.marginHeight = 4;
+        layout.horizontalSpacing = 6;
+        statusBar.setLayout(layout);
+        statusBar.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        serverIndicator = new Label(statusBar, SWT.NONE);
+        serverIndicator.setImage(redLight);
+
+        serverLabel = new Label(statusBar, SWT.NONE);
+        serverLabel.setText("Server: --");
+        serverLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+
+        Label sep1 = new Label(statusBar, SWT.SEPARATOR | SWT.VERTICAL);
+        GridData sepData = new GridData(SWT.CENTER, SWT.FILL, false, false);
+        sepData.heightHint = 16;
+        sep1.setLayoutData(sepData);
+
+        bridgeIndicator = new Label(statusBar, SWT.NONE);
+        bridgeIndicator.setImage(redLight);
+
+        bridgeLabel = new Label(statusBar, SWT.NONE);
+        bridgeLabel.setText("Bridge: --");
+        bridgeLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+
+        Label spacer = new Label(statusBar, SWT.NONE);
+        spacer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+    }
+
+    private void createButtonRow(Composite parent) {
+        Composite buttonRow = new Composite(parent, SWT.NONE);
+        GridLayout layout = new GridLayout(3, true);
+        layout.marginWidth = 0;
+        layout.horizontalSpacing = 8;
+        buttonRow.setLayout(layout);
+        buttonRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        launchButton = new Button(buttonRow, SWT.PUSH);
+        launchButton.setText("Launch Terminal");
+        launchButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        launchButton.addListener(SWT.Selection, e -> startClaude());
+
+        Button restartBtn = new Button(buttonRow, SWT.PUSH);
+        restartBtn.setText("Restart Server");
+        restartBtn.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        restartBtn.addListener(SWT.Selection, e -> restartServer());
+
+        Button resumeBtn = new Button(buttonRow, SWT.PUSH);
+        resumeBtn.setText("Resume Session");
+        resumeBtn.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        resumeBtn.addListener(SWT.Selection, e -> restartClaude("--resume"));
+    }
+
+    private void createLogArea(Composite parent, Display display) {
+        logArea = new StyledText(parent, SWT.MULTI | SWT.V_SCROLL | SWT.H_SCROLL | SWT.READ_ONLY | SWT.BORDER);
+        logArea.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        logArea.setWordWrap(true);
+
+        Color bgColor = new Color(display, 30, 30, 30);
+        Color fgColor = new Color(display, 220, 220, 220);
+        Font monoFont = new Font(display, "Consolas", 10, SWT.NORMAL);
+        logArea.setBackground(bgColor);
+        logArea.setForeground(fgColor);
+        logArea.setFont(monoFont);
+        logArea.setLeftMargin(8);
+        logArea.setTopMargin(8);
+        logArea.addDisposeListener(e -> {
+            bgColor.dispose();
+            fgColor.dispose();
+            monoFont.dispose();
+        });
+    }
+
+    private void restartServer() {
+        setServerStatus(Status.YELLOW, "Restarting...");
+        setBridgeStatus(Status.YELLOW, "Reconnecting...");
+        Display.getCurrent().update();
+
+        Display.getCurrent().asyncExec(() -> {
+            Activator.getDefault().restart();
+            appendLog("Server restarted.\n");
+
+            if (phpBridge != null) {
+                NativeCore.bridgeDisconnect();
+                phpBridge.stop();
+            }
+            startPhpBridge();
+            updateStatus();
+        });
     }
 
     public void startClaude(String... extraArgs) {
@@ -128,6 +233,44 @@ public class ClaudeCodeView extends ViewPart {
         startClaude(extraArgs);
     }
 
+    private void startPhpBridge() {
+        phpBridge = new PhpBridge();
+        boolean started = phpBridge.start(data -> {
+            if (isDebugMode()) {
+                String msg = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+                Display.getDefault().asyncExec(() -> appendLog("[BRIDGE] " + msg));
+            }
+        });
+
+        if (started) {
+            if (isDebugMode()) {
+                appendLog("PHP bridge started on port " + phpBridge.getPortA() + "\n");
+            }
+            boolean connected = NativeCore.bridgeConnect(phpBridge.getPortA());
+            if (isDebugMode()) {
+                if (connected) {
+                    appendLog("Rust connected to PHP bridge.\n\n");
+                } else {
+                    appendLog("[WARN] Rust failed to connect to PHP bridge.\n\n");
+                }
+            }
+        } else {
+            if (isDebugMode()) {
+                appendLog("[WARN] PHP bridge failed to start.\n\n");
+            }
+        }
+    }
+
+    private boolean isDebugMode() {
+        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
+        return store.getBoolean(Constants.PREF_DEBUG_MODE);
+    }
+
+    private boolean isAutoLaunchEnabled() {
+        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
+        return store.getBoolean(Constants.PREF_AUTO_LAUNCH_CLI);
+    }
+
     private void appendLog(String text) {
         if (logArea != null && !logArea.isDisposed()) {
             logArea.append(text);
@@ -135,26 +278,47 @@ public class ClaudeCodeView extends ViewPart {
         }
     }
 
+    private void setServerStatus(Status status, String text) {
+        if (serverIndicator == null || serverIndicator.isDisposed()) return;
+        serverIndicator.setImage(getStatusImage(status));
+        serverLabel.setText("Server: " + text);
+    }
+
+    private void setBridgeStatus(Status status, String text) {
+        if (bridgeIndicator == null || bridgeIndicator.isDisposed()) return;
+        bridgeIndicator.setImage(getStatusImage(status));
+        bridgeLabel.setText("Bridge: " + text);
+    }
+
+    private Image getStatusImage(Status status) {
+        switch (status) {
+            case GREEN: return greenLight;
+            case YELLOW: return yellowLight;
+            default: return redLight;
+        }
+    }
+
     private void updateStatus() {
-        if (statusLabel == null || statusLabel.isDisposed()) return;
+        if (serverLabel == null || serverLabel.isDisposed()) return;
 
         Activator activator = Activator.getDefault();
-        StringBuilder status = new StringBuilder();
 
         if (activator.isServerRunning()) {
-            var server = activator.getHttpSseServer();
-            status.append("Server: port ").append(server.getPort());
-            int clients = server.getClientCount();
-            status.append("  |  Clients: ").append(clients);
-            if (clients > 0) {
-                status.append(" (connected)");
-            }
+            int port = activator.getHttpSseServer().getPort();
+            setServerStatus(Status.GREEN, "Port " + port);
         } else {
-            status.append("Server: stopped");
+            setServerStatus(Status.RED, "Stopped");
         }
 
-        statusLabel.setText(status.toString());
-        statusLabel.getParent().layout(true);
+        if (phpBridge != null && phpBridge.isRunning()) {
+            if (NativeCore.bridgeIsConnected()) {
+                setBridgeStatus(Status.GREEN, "Connected");
+            } else {
+                setBridgeStatus(Status.YELLOW, "Running");
+            }
+        } else {
+            setBridgeStatus(Status.RED, "Off");
+        }
     }
 
     private void startStatusPoller() {
@@ -180,6 +344,13 @@ public class ClaudeCodeView extends ViewPart {
         if (statusPoller != null) {
             statusPoller.shutdownNow();
         }
+        if (phpBridge != null) {
+            NativeCore.bridgeDisconnect();
+            phpBridge.stop();
+        }
+        if (greenLight != null && !greenLight.isDisposed()) greenLight.dispose();
+        if (yellowLight != null && !yellowLight.isDisposed()) yellowLight.dispose();
+        if (redLight != null && !redLight.isDisposed()) redLight.dispose();
         super.dispose();
     }
 }

@@ -3,7 +3,13 @@ package com.anthropic.claudecode.eclipse.ui;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.eclipse.core.resources.IContainer;
+import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.IAdaptable;
+import org.eclipse.jface.viewers.ISelection;
+import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.CTabFolder;
 import org.eclipse.swt.custom.CTabFolder2Adapter;
@@ -31,6 +37,8 @@ import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.core.commands.ExecutionException;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.handlers.IHandlerService;
+import org.eclipse.ui.part.IShowInTarget;
+import org.eclipse.ui.part.ShowInContext;
 import org.eclipse.ui.part.ViewPart;
 
 import com.anthropic.claudecode.eclipse.Activator;
@@ -41,7 +49,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
-public class ClaudeCliView extends ViewPart {
+public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
     public static final String VIEW_ID = "com.anthropic.claudecode.eclipse.ui.ClaudeCliView";
 
@@ -87,7 +95,7 @@ public class ClaudeCliView extends ViewPart {
         ToolItem newBtn = new ToolItem(toolbar, SWT.PUSH);
         newBtn.setText("+");
         newBtn.setToolTipText("New Claude CLI Session");
-        newBtn.addListener(SWT.Selection, e -> openNewSession());
+        newBtn.addListener(SWT.Selection, e -> openNewSession(null, null));
         tabFolder.setTopRight(toolbar);
 
         tabFolder.addCTabFolder2Listener(new CTabFolder2Adapter() {
@@ -164,13 +172,17 @@ public class ClaudeCliView extends ViewPart {
         display.timerExec(100, checker[0]);
     }
 
-    private void openNewSession(String... extraArgs) {
+    private void openNewSession(String cwd, String scopeLabel, String... extraArgs) {
         if (launching) return;
         launching = true;
         try {
             sessionCounter++;
             CTabItem tabItem = new CTabItem(tabFolder, SWT.CLOSE);
-            tabItem.setText("Claude " + sessionCounter);
+            if (scopeLabel != null && !scopeLabel.isEmpty()) {
+                tabItem.setText("Claude (" + scopeLabel + ")");
+            } else {
+                tabItem.setText("Claude " + sessionCounter);
+            }
 
             Composite content = new Composite(tabFolder, SWT.NONE);
             content.setLayout(new FillLayout());
@@ -178,7 +190,7 @@ public class ClaudeCliView extends ViewPart {
             content.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
             tabItem.setControl(content);
 
-            TerminalSession session = new TerminalSession(tabItem, content, extraArgs);
+            TerminalSession session = new TerminalSession(tabItem, content, cwd, extraArgs);
             tabItem.setData(session);
             tabFolder.setSelection(tabItem);
         } finally {
@@ -187,7 +199,11 @@ public class ClaudeCliView extends ViewPart {
     }
 
     public void launchProcess(String... extraArgs) {
-        openNewSession(extraArgs);
+        openNewSession(null, null, extraArgs);
+    }
+
+    public void launchProcessInDirectory(String cwd, String scopeLabel, String... extraArgs) {
+        openNewSession(cwd, scopeLabel, extraArgs);
     }
 
     @Override
@@ -197,6 +213,61 @@ public class ClaudeCliView extends ViewPart {
         if (item != null) {
             TerminalSession session = (TerminalSession) item.getData();
             if (session != null) session.focus();
+        }
+    }
+
+    @Override
+    public boolean show(ShowInContext context) {
+        if (context == null) return false;
+
+        ISelection selection = context.getSelection();
+        if (!(selection instanceof IStructuredSelection)) return false;
+
+        IStructuredSelection structured = (IStructuredSelection) selection;
+        Object element = structured.getFirstElement();
+        if (element == null) return false;
+
+        IResource resource = null;
+        if (element instanceof IResource) {
+            resource = (IResource) element;
+        } else if (element instanceof IAdaptable) {
+            resource = ((IAdaptable) element).getAdapter(IResource.class);
+        }
+
+        if (resource == null) return false;
+
+        String cwd;
+        String scopeLabel;
+
+        if (resource instanceof IFile) {
+            IContainer parent = resource.getParent();
+            cwd = parent.getLocation().toOSString();
+            scopeLabel = parent.getName();
+        } else if (resource instanceof IContainer) {
+            cwd = resource.getLocation().toOSString();
+            scopeLabel = resource.getName();
+        } else {
+            return false;
+        }
+
+        openNewSession(cwd, scopeLabel);
+        return true;
+    }
+
+    public void restartAllSessions() {
+        if (tabFolder == null || tabFolder.isDisposed()) return;
+        int count = tabFolder.getItemCount();
+        if (count == 0) return;
+
+        for (CTabItem item : tabFolder.getItems()) {
+            TerminalSession session = (TerminalSession) item.getData();
+            if (session != null) session.dispose();
+            item.dispose();
+        }
+        sessionCounter = 0;
+
+        for (int i = 0; i < count; i++) {
+            openNewSession(null, null);
         }
     }
 
@@ -219,6 +290,7 @@ public class ClaudeCliView extends ViewPart {
 
         private final CTabItem tabItem;
         private final Composite consoleHost;
+        private final String customCwd;
         private volatile boolean disposed = false;
 
         // ── Windows: embedded conhost ───────────────────────────────────
@@ -249,8 +321,9 @@ public class ClaudeCliView extends ViewPart {
         /** Mouse protocol encoding — 0 = default, 2 = SGR. */
         private int mouseEnc = 0;
 
-        TerminalSession(CTabItem tabItem, Composite parent, String[] extraArgs) {
+        TerminalSession(CTabItem tabItem, Composite parent, String cwd, String[] extraArgs) {
             this.tabItem = tabItem;
+            this.customCwd = cwd;
 
             // Plain SWT Composite — its Win32 HWND becomes the parent for conhost.
             consoleHost = new Composite(parent, SWT.NO_BACKGROUND);
@@ -566,8 +639,13 @@ public class ClaudeCliView extends ViewPart {
 
             String claudeArgs = activator.getPreferenceStore().getString(Constants.PREF_CLAUDE_ARGS);
 
-            String workingDir = ResourcesPlugin.getWorkspace().getRoot()
-                    .getLocation().toOSString();
+            String workingDir;
+            if (customCwd != null && !customCwd.isEmpty()) {
+                workingDir = customCwd;
+            } else {
+                workingDir = ResourcesPlugin.getWorkspace().getRoot()
+                        .getLocation().toOSString();
+            }
 
             String execCmd;
             List<String> argList = new ArrayList<>();

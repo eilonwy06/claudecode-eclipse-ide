@@ -19,10 +19,17 @@ public class HttpSseServer {
     private volatile boolean running;
 
     public HttpSseServer(McpToolRegistry toolRegistry, int portMin, int portMax) {
-        this.handle = NativeCore.serverCreate(portMin, portMax);
+        this(toolRegistry, portMin, portMax, 0, null);
+    }
 
-        // Wire the Java tool-callback bridge into the native server.
-        // Every MCP tools/call request will invoke NativeToolBridge.executeEclipseTool.
+    public HttpSseServer(McpToolRegistry toolRegistry, int portMin, int portMax,
+                         int preferredPort, String authToken) {
+        if (preferredPort > 0 && authToken != null) {
+            this.handle = NativeCore.serverCreateWithConfig(portMin, portMax, preferredPort, authToken);
+        } else {
+            this.handle = NativeCore.serverCreate(portMin, portMax);
+        }
+
         NativeCore.registerToolCallback(handle, new NativeToolBridge(toolRegistry));
     }
 
