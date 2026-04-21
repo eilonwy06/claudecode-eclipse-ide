@@ -46,8 +46,9 @@ public class ClaudeCodeView extends ViewPart {
     private Image greenLight;
     private Image yellowLight;
     private Image redLight;
+    private Image blueLight;
 
-    private enum Status { GREEN, YELLOW, RED }
+    private enum Status { GREEN, YELLOW, RED, BLUE }
 
     @Override
     public void createPartControl(Composite parent) {
@@ -79,10 +80,16 @@ public class ClaudeCodeView extends ViewPart {
             appendLog("HTTP+SSE server listening on 127.0.0.1:" + port + "\n");
             appendLog("Auth token: " + token.substring(0, 8) + "...\n");
             appendLog("Lock file: ~/.claude/ide/" + port + ".lock\n\n");
-            appendLog("Click 'Launch Claude Terminal' to open the Claude CLI.\n\n");
         }
 
         startPhpBridge();
+
+        // Show macOS override message if applicable
+        if (phpBridge != null && phpBridge.isOverridden()) {
+            appendLog("macOS detected, direct protocol active.\n\n");
+        }
+        appendLog("Click 'Launch Claude Terminal' to open the Claude CLI.\n\n");
+
         updateStatus();
         startStatusPoller();
 
@@ -101,6 +108,9 @@ public class ClaudeCodeView extends ViewPart {
         redLight = createBoxImage(display,
             new Color(display, 244, 67, 54),
             new Color(display, 198, 40, 40));
+        blueLight = createBoxImage(display,
+            new Color(display, 33, 150, 243),
+            new Color(display, 25, 118, 210));
     }
 
     private Image createBoxImage(Display display, Color fill, Color border) {
@@ -294,6 +304,7 @@ public class ClaudeCodeView extends ViewPart {
         switch (status) {
             case GREEN: return greenLight;
             case YELLOW: return yellowLight;
+            case BLUE: return blueLight;
             default: return redLight;
         }
     }
@@ -310,7 +321,9 @@ public class ClaudeCodeView extends ViewPart {
             setServerStatus(Status.RED, "Stopped");
         }
 
-        if (phpBridge != null && phpBridge.isRunning()) {
+        if (phpBridge != null && phpBridge.isOverridden()) {
+            setBridgeStatus(Status.BLUE, "Overridden");
+        } else if (phpBridge != null && phpBridge.isRunning()) {
             if (NativeCore.bridgeIsConnected()) {
                 setBridgeStatus(Status.GREEN, "Connected");
             } else {
@@ -351,6 +364,7 @@ public class ClaudeCodeView extends ViewPart {
         if (greenLight != null && !greenLight.isDisposed()) greenLight.dispose();
         if (yellowLight != null && !yellowLight.isDisposed()) yellowLight.dispose();
         if (redLight != null && !redLight.isDisposed()) redLight.dispose();
+        if (blueLight != null && !blueLight.isDisposed()) blueLight.dispose();
         super.dispose();
     }
 }

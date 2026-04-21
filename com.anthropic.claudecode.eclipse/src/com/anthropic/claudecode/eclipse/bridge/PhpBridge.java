@@ -27,6 +27,7 @@ public final class PhpBridge {
     private Socket socketB;
     private Thread readerThread;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean overridden = new AtomicBoolean(false);
     private Consumer<byte[]> dataCallback;
     private Path extractDir;
 
@@ -167,6 +168,11 @@ public final class PhpBridge {
                 System.err.println("[PhpBridge] Process still alive at timeout: " + process.isAlive());
                 System.err.println("[PhpBridge] Ready file exists: " + Files.exists(readyFile));
                 stop();
+                // On macOS, set override mode instead of failing completely
+                if (isMacOS()) {
+                    System.out.println("[PhpBridge] macOS detected - enabling direct protocol override");
+                    overridden.set(true);
+                }
                 return false;
             }
             System.out.println("[PhpBridge] Got READY, connecting to port " + ports[1]);
@@ -233,6 +239,10 @@ public final class PhpBridge {
 
     public boolean isRunning() {
         return running.get() && process != null && process.isAlive();
+    }
+
+    public boolean isOverridden() {
+        return overridden.get();
     }
 
     public int getPortA() {
