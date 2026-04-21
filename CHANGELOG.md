@@ -4,7 +4,20 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.2.3] — 2026-04-19 *(current)*
+## [2.3.0] — 2026-04-21 *(current)*
+
+### Added
+- **Open Claude CLI Here** — right-click context menu in any navigator (Package Explorer, Project Explorer, etc.) to launch a Claude CLI session scoped to the selected folder or project
+- **Show In → Claude CLI** — Package Explorer now supports "Show In → Claude CLI" across 30+ perspectives (Java, Java EE, Node.js, Python, C/C++, etc.)
+- **Proxy preferences** — new HTTP Proxy, HTTPS Proxy, and NO_PROXY fields in preferences; auto-localhost safeguard prepends `localhost,127.0.0.1,::1` when a proxy is active
+- **Apple Silicon support** — native `aarch64` dylib now bundled for M1/M2/M3 Macs (fixes #5)
+
+### Changed
+- Claude CLI tab labels now show the full project-relative path (e.g., `Claude (MyProject/src/main)` instead of just `Claude (main)`)
+
+---
+
+## [2.2.3] — 2026-04-19
 
 ### Added
 - **Custom CLI arguments** — new "Arguments" field in preferences lets you pass additional flags to the Claude CLI (e.g., `--model claude-opus-4-7-20260418`); arguments are appended to every terminal launch
