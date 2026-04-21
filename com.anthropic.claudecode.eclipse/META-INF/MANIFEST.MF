@@ -23,7 +23,9 @@ Bundle-NativeCode: native/windows/x86_64/claude_eclipse_core.dll;\
   native/linux/x86_64/libclaude_eclipse_core.so;\
   osname=Linux;processor=x86-64,\
   native/macos/x86_64/libclaude_eclipse_core.dylib;\
-  osname=MacOS X;processor=x86-64
+  osname=MacOS X;processor=x86-64,\
+  native/macos/aarch64/libclaude_eclipse_core.dylib;\
+  osname=MacOS X;processor=aarch64
 Bundle-RequiredExecutionEnvironment: JavaSE-21
 Automatic-Module-Name: com.anthropic.claudecode.eclipse
 Bundle-ActivationPolicy: lazy
