@@ -66,7 +66,7 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
 
         addField(new BooleanFieldEditor(
                 Constants.PREF_DEBUG_MODE,
-                "Debug mode (show bridge messages)",
+                "Debug mode",
                 getFieldEditorParent()));
 
         Label separator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);

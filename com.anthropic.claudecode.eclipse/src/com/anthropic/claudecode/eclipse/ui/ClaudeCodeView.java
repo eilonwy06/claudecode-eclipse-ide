@@ -66,7 +66,7 @@ public class ClaudeCodeView extends ViewPart {
         createButtonRow(container);
         createLogArea(container, display);
 
-        appendLog("Claude Code for Eclipse v2.3.0\n");
+        appendLog("Claude Code for Eclipse v2.3.11\n");
         appendLog("─────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {
@@ -84,9 +84,15 @@ public class ClaudeCodeView extends ViewPart {
 
         startPhpBridge();
 
-        // Show macOS override message if applicable
+        // Show bridge info for Windows/Linux, or override message for macOS
         if (phpBridge != null && phpBridge.isOverridden()) {
             appendLog("macOS detected, direct protocol active.\n\n");
+        } else if (phpBridge != null && phpBridge.isRunning()) {
+            String phpMsg = phpBridge.getPhpMessage();
+            if (phpMsg != null && !phpMsg.isEmpty()) {
+                appendLog(phpMsg + "\n");
+            }
+            appendLog("Bridge relay ports: " + phpBridge.getPortA() + " ↔ " + phpBridge.getPortB() + "\n\n");
         }
         appendLog("Click 'Launch Claude Terminal' to open the Claude CLI.\n\n");
 
@@ -254,19 +260,19 @@ public class ClaudeCodeView extends ViewPart {
 
         if (started) {
             if (isDebugMode()) {
-                appendLog("PHP bridge started on port " + phpBridge.getPortA() + "\n");
+                appendLog("Bridge started on port " + phpBridge.getPortA() + "\n");
             }
             boolean connected = NativeCore.bridgeConnect(phpBridge.getPortA());
             if (isDebugMode()) {
                 if (connected) {
-                    appendLog("Rust connected to PHP bridge.\n\n");
+                    appendLog("Rust connected to Bridge.\n\n");
                 } else {
-                    appendLog("[WARN] Rust failed to connect to PHP bridge.\n\n");
+                    appendLog("[WARN] Rust failed to connect to Bridge.\n\n");
                 }
             }
         } else {
             if (isDebugMode()) {
-                appendLog("[WARN] PHP bridge failed to start.\n\n");
+                appendLog("[WARN] Bridge failed to start.\n\n");
             }
         }
     }
@@ -279,6 +285,10 @@ public class ClaudeCodeView extends ViewPart {
     private boolean isAutoLaunchEnabled() {
         IPreferenceStore store = Activator.getDefault().getPreferenceStore();
         return store.getBoolean(Constants.PREF_AUTO_LAUNCH_CLI);
+    }
+
+    private boolean isMacOS() {
+        return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac");
     }
 
     private void appendLog(String text) {

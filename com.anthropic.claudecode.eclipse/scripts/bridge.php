@@ -44,7 +44,7 @@ fwrite(STDERR, "READY_STDERR $portA $portB\n");
 
 // File-based ready signal (workaround for macOS pipe buffering)
 if ($readyFile !== null) {
-    file_put_contents($readyFile, "READY $portA $portB\n");
+    file_put_contents($readyFile, "READY $portA $portB\nBridge connected.\n");
 }
 
 $clientA = null;

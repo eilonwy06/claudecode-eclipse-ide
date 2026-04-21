@@ -4,7 +4,7 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.3.0] — 2026-04-21 *(current)*
+## [2.3.11] — 2026-04-21 *(current)*
 
 ### Added
 - **Open Claude CLI Here** — right-click context menu in any navigator (Package Explorer, Project Explorer, etc.) to launch a Claude CLI session scoped to the selected folder or project

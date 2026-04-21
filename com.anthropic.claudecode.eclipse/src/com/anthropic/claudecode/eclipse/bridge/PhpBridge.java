@@ -12,10 +12,12 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.Locale;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+
+import com.anthropic.claudecode.eclipse.Activator;
+import com.anthropic.claudecode.eclipse.Constants;
 
 public final class PhpBridge {
 
@@ -30,6 +32,7 @@ public final class PhpBridge {
     private final AtomicBoolean overridden = new AtomicBoolean(false);
     private Consumer<byte[]> dataCallback;
     private Path extractDir;
+    private String phpMessage;
 
     public PhpBridge() {}
 
@@ -47,43 +50,43 @@ public final class PhpBridge {
                 Path homebrewIntel = Path.of("/usr/local/bin/php");
                 if (Files.isExecutable(homebrewArm)) {
                     binary = homebrewArm;
-                    System.out.println("[PhpBridge] Using Homebrew PHP (ARM): " + binary);
+                    debugLog("[Bridge] Using Homebrew PHP (ARM): " + binary);
                 } else if (Files.isExecutable(homebrewIntel)) {
                     binary = homebrewIntel;
-                    System.out.println("[PhpBridge] Using Homebrew PHP (Intel): " + binary);
+                    debugLog("[Bridge] Using Homebrew PHP (Intel): " + binary);
                 } else {
-                    System.out.println("[PhpBridge] No Homebrew PHP found, using bundled");
+                    debugLog("[Bridge] No Homebrew PHP found, using bundled");
                     binary = extractBinary();
                     // Clear quarantine attribute on macOS
                     try {
                         new ProcessBuilder("/usr/bin/xattr", "-cr", binary.toAbsolutePath().toString())
                             .start().waitFor();
-                        System.out.println("[PhpBridge] Cleared quarantine attributes");
+                        debugLog("[Bridge] Cleared quarantine attributes");
                     } catch (Exception e) {
-                        System.out.println("[PhpBridge] Could not clear xattr: " + e.getMessage());
+                        debugLog("[Bridge] Could not clear xattr: " + e.getMessage());
                     }
                 }
             } else {
-                System.out.println("[PhpBridge] Extracting binary...");
+                debugLog("[Bridge] Extracting binary...");
                 binary = extractBinary();
             }
-            System.out.println("[PhpBridge] Binary: " + binary.toAbsolutePath());
-            System.out.println("[PhpBridge] Binary exists: " + Files.exists(binary));
-            System.out.println("[PhpBridge] Binary executable: " + Files.isExecutable(binary));
+            debugLog("[Bridge] Binary: " + binary.toAbsolutePath());
+            debugLog("[Bridge] Binary exists: " + Files.exists(binary));
+            debugLog("[Bridge] Binary executable: " + Files.isExecutable(binary));
 
             Path script = extractScript();
-            System.out.println("[PhpBridge] Script: " + script.toAbsolutePath());
+            debugLog("[Bridge] Script: " + script.toAbsolutePath());
 
             // Use file-based ready signal (works around macOS pipe buffering)
             Path readyFile = Files.createTempFile("cb_ready_", ".txt");
             readyFile.toFile().deleteOnExit();
             Files.deleteIfExists(readyFile); // PHP will create it
-            System.out.println("[PhpBridge] Ready file: " + readyFile.toAbsolutePath());
+            debugLog("[Bridge] Ready file: " + readyFile.toAbsolutePath());
 
             int[] ports = new int[2];
 
             String osName = System.getProperty("os.name", "");
-            System.out.println("[PhpBridge] os.name = " + osName);
+            debugLog("[Bridge] os.name = " + osName);
 
             ProcessBuilder pb;
             if (!isWindows()) {
@@ -94,7 +97,7 @@ public final class PhpBridge {
                     PORT_A, PORT_B,
                     readyFile.toAbsolutePath().toString());
                 pb = new ProcessBuilder("/bin/sh", "-c", cmd);
-                System.out.println("[PhpBridge] Shell command: " + cmd);
+                debugLog("[Bridge] Shell command: " + cmd);
             } else {
                 pb = new ProcessBuilder(
                     binary.toAbsolutePath().toString(),
@@ -105,9 +108,9 @@ public final class PhpBridge {
                 );
             }
             pb.redirectErrorStream(false);
-            System.out.println("[PhpBridge] Starting process...");
+            debugLog("[Bridge] Starting process...");
             process = pb.start();
-            System.out.println("[PhpBridge] Process started, waiting for READY...");
+            debugLog("[Bridge] Process started, waiting for READY...");
 
             // Drain stdout/stderr to prevent blocking
             Thread stdoutDrain = new Thread(() -> {
@@ -140,42 +143,48 @@ public final class PhpBridge {
             while (System.currentTimeMillis() < deadline) {
                 if (!process.isAlive()) {
                     int exitCode = process.exitValue();
-                    System.err.println("[PhpBridge] Process died early with exit code: " + exitCode);
+                    debugErr("[Bridge] Process died early with exit code: " + exitCode);
                     stop();
                     return false;
                 }
                 if (Files.exists(readyFile)) {
                     String content = Files.readString(readyFile).trim();
-                    if (content.equals("STARTED")) {
-                        System.out.println("[PhpBridge] Script started, waiting for socket binding...");
-                    } else if (content.startsWith("READY ")) {
-                        System.out.println("[PhpBridge] Ready file content: " + content);
-                        String[] parts = content.split(" ");
+                    String[] lines = content.split("\n");
+                    String firstLine = lines[0].trim();
+                    if (firstLine.equals("STARTED")) {
+                        debugLog("[Bridge] Script started, waiting for socket binding...");
+                    } else if (firstLine.startsWith("READY ")) {
+                        debugLog("[Bridge] Ready file content: " + firstLine);
+                        String[] parts = firstLine.split(" ");
                         if (parts.length == 3) {
                             ports[0] = Integer.parseInt(parts[1]);
                             ports[1] = Integer.parseInt(parts[2]);
                             gotReady = true;
+                            // Log PHP confirmation message if present
+                            if (lines.length > 1) {
+                                phpMessage = lines[1].trim();
+                            }
                             break;
                         }
                     } else {
-                        System.out.println("[PhpBridge] Unexpected ready file content: " + content);
+                        debugLog("[Bridge] Unexpected ready file content: " + content);
                     }
                 }
                 Thread.sleep(100);
             }
             if (!gotReady) {
-                System.err.println("[PhpBridge] Timeout waiting for READY signal");
-                System.err.println("[PhpBridge] Process still alive at timeout: " + process.isAlive());
-                System.err.println("[PhpBridge] Ready file exists: " + Files.exists(readyFile));
+                debugErr("[Bridge] Timeout waiting for READY signal");
+                debugErr("[Bridge] Process still alive at timeout: " + process.isAlive());
+                debugErr("[Bridge] Ready file exists: " + Files.exists(readyFile));
                 stop();
                 // On macOS, set override mode instead of failing completely
                 if (isMacOS()) {
-                    System.out.println("[PhpBridge] macOS detected - enabling direct protocol override");
+                    debugLog("[Bridge] macOS detected - enabling direct protocol override");
                     overridden.set(true);
                 }
                 return false;
             }
-            System.out.println("[PhpBridge] Got READY, connecting to port " + ports[1]);
+            debugLog("[Bridge] Got READY, connecting to port " + ports[1]);
 
             socketB = new Socket("127.0.0.1", ports[1]);
             running.set(true);
@@ -187,7 +196,7 @@ public final class PhpBridge {
             return true;
 
         } catch (Exception e) {
-            System.err.println("[PhpBridge] Failed to start: " + e.getMessage());
+            debugErr("[Bridge] Failed to start: " + e.getMessage());
             e.printStackTrace();
             stop();
             return false;
@@ -247,6 +256,14 @@ public final class PhpBridge {
 
     public int getPortA() {
         return PORT_A;
+    }
+
+    public int getPortB() {
+        return PORT_B;
+    }
+
+    public String getPhpMessage() {
+        return phpMessage;
     }
 
     private void readLoop() {
@@ -350,5 +367,25 @@ public final class PhpBridge {
 
     private boolean isMacOS() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+    }
+
+    private boolean isDebugMode() {
+        try {
+            return Activator.getDefault().getPreferenceStore().getBoolean(Constants.PREF_DEBUG_MODE);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void debugLog(String message) {
+        if (isDebugMode()) {
+            System.out.println(message);
+        }
+    }
+
+    private void debugErr(String message) {
+        if (isDebugMode()) {
+            System.err.println(message);
+        }
     }
 }
