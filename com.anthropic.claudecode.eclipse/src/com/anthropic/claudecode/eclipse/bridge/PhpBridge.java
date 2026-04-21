@@ -105,8 +105,10 @@ public final class PhpBridge {
                 }
                 if (Files.exists(readyFile)) {
                     String content = Files.readString(readyFile).trim();
-                    System.out.println("[PhpBridge] Ready file content: " + content);
-                    if (content.startsWith("READY ")) {
+                    if (content.equals("STARTED")) {
+                        System.out.println("[PhpBridge] Script started, waiting for socket binding...");
+                    } else if (content.startsWith("READY ")) {
+                        System.out.println("[PhpBridge] Ready file content: " + content);
                         String[] parts = content.split(" ");
                         if (parts.length == 3) {
                             ports[0] = Integer.parseInt(parts[1]);
@@ -114,6 +116,8 @@ public final class PhpBridge {
                             gotReady = true;
                             break;
                         }
+                    } else {
+                        System.out.println("[PhpBridge] Unexpected ready file content: " + content);
                     }
                 }
                 Thread.sleep(100);

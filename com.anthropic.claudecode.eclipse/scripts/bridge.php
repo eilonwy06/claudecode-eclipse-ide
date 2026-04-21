@@ -8,6 +8,11 @@ if (function_exists('ob_end_flush')) {
     @ob_end_flush();
 }
 
+// Early diagnostic: write to ready file immediately to confirm script is running
+if ($argc === 4 && !empty($argv[3])) {
+    file_put_contents($argv[3], "STARTED\n");
+}
+
 if ($argc < 3 || $argc > 4) {
     fwrite(STDERR, "Usage: php bridge.php <port_a> <port_b> [ready_file]\n");
     exit(1);
