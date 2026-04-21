@@ -67,6 +67,7 @@ public final class PhpBridge {
                         new InputStreamReader(process.getInputStream()))) {
                     String line;
                     while ((line = br.readLine()) != null) {
+                        System.out.println("[PhpBridge STDOUT] " + line);
                         if (line.startsWith("READY ")) {
                             String[] parts = line.split(" ");
                             if (parts.length == 3) {
@@ -76,7 +77,10 @@ public final class PhpBridge {
                             }
                         }
                     }
-                } catch (IOException ignored) {}
+                    System.out.println("[PhpBridge] STDOUT stream ended");
+                } catch (IOException e) {
+                    System.err.println("[PhpBridge] Error reading stdout: " + e.getMessage());
+                }
             }, "bridge-startup");
             startupReader.setDaemon(true);
             startupReader.start();

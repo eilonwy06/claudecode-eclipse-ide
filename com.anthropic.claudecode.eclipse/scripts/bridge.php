@@ -3,6 +3,10 @@
 declare(strict_types=1);
 error_reporting(E_ALL);
 set_time_limit(0);
+ob_implicit_flush(true);
+if (function_exists('ob_end_flush')) {
+    @ob_end_flush();
+}
 
 if ($argc !== 3) {
     fwrite(STDERR, "Usage: php bridge.php <port_a> <port_b>\n");
