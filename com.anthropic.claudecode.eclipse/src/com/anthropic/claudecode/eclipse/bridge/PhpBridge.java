@@ -56,13 +56,25 @@ public final class PhpBridge {
 
             int[] ports = new int[2];
 
-            ProcessBuilder pb = new ProcessBuilder(
-                binary.toAbsolutePath().toString(),
-                script.toAbsolutePath().toString(),
-                String.valueOf(PORT_A),
-                String.valueOf(PORT_B),
-                readyFile.toAbsolutePath().toString()
-            );
+            ProcessBuilder pb;
+            if (isMacOS()) {
+                // macOS: spawn through shell to get proper environment
+                String cmd = String.format("'%s' '%s' %d %d '%s'",
+                    binary.toAbsolutePath().toString(),
+                    script.toAbsolutePath().toString(),
+                    PORT_A, PORT_B,
+                    readyFile.toAbsolutePath().toString());
+                pb = new ProcessBuilder("/bin/sh", "-c", cmd);
+                System.out.println("[PhpBridge] macOS shell command: " + cmd);
+            } else {
+                pb = new ProcessBuilder(
+                    binary.toAbsolutePath().toString(),
+                    script.toAbsolutePath().toString(),
+                    String.valueOf(PORT_A),
+                    String.valueOf(PORT_B),
+                    readyFile.toAbsolutePath().toString()
+                );
+            }
             pb.redirectErrorStream(false);
             System.out.println("[PhpBridge] Starting process...");
             process = pb.start();
@@ -296,5 +308,9 @@ public final class PhpBridge {
 
     private boolean isWindows() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    private boolean isMacOS() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
     }
 }
