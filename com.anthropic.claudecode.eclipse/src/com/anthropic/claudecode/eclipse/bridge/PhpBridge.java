@@ -48,42 +48,38 @@ public final class PhpBridge {
             Path script = extractScript();
             System.out.println("[PhpBridge] Script: " + script.toAbsolutePath());
 
-            CountDownLatch readyLatch = new CountDownLatch(1);
+            // Use file-based ready signal (works around macOS pipe buffering)
+            Path readyFile = Files.createTempFile("cb_ready_", ".txt");
+            readyFile.toFile().deleteOnExit();
+            Files.deleteIfExists(readyFile); // PHP will create it
+            System.out.println("[PhpBridge] Ready file: " + readyFile.toAbsolutePath());
+
             int[] ports = new int[2];
 
             ProcessBuilder pb = new ProcessBuilder(
                 binary.toAbsolutePath().toString(),
                 script.toAbsolutePath().toString(),
                 String.valueOf(PORT_A),
-                String.valueOf(PORT_B)
+                String.valueOf(PORT_B),
+                readyFile.toAbsolutePath().toString()
             );
             pb.redirectErrorStream(false);
             System.out.println("[PhpBridge] Starting process...");
             process = pb.start();
             System.out.println("[PhpBridge] Process started, waiting for READY...");
 
-            Thread startupReader = new Thread(() -> {
+            // Drain stdout/stderr to prevent blocking
+            Thread stdoutDrain = new Thread(() -> {
                 try (BufferedReader br = new BufferedReader(
                         new InputStreamReader(process.getInputStream()))) {
                     String line;
                     while ((line = br.readLine()) != null) {
                         System.out.println("[PhpBridge STDOUT] " + line);
-                        if (line.startsWith("READY ")) {
-                            String[] parts = line.split(" ");
-                            if (parts.length == 3) {
-                                ports[0] = Integer.parseInt(parts[1]);
-                                ports[1] = Integer.parseInt(parts[2]);
-                                readyLatch.countDown();
-                            }
-                        }
                     }
-                    System.out.println("[PhpBridge] STDOUT stream ended");
-                } catch (IOException e) {
-                    System.err.println("[PhpBridge] Error reading stdout: " + e.getMessage());
-                }
-            }, "bridge-startup");
-            startupReader.setDaemon(true);
-            startupReader.start();
+                } catch (IOException ignored) {}
+            }, "bridge-stdout");
+            stdoutDrain.setDaemon(true);
+            stdoutDrain.start();
 
             Thread stderrDrain = new Thread(() -> {
                 try (BufferedReader err = new BufferedReader(
@@ -91,39 +87,41 @@ public final class PhpBridge {
                     String line;
                     while ((line = err.readLine()) != null) {
                         System.err.println("[PhpBridge STDERR] " + line);
-                        // Also check stderr for READY (diagnostic)
-                        if (line.startsWith("READY_STDERR ")) {
-                            System.out.println("[PhpBridge] Got READY on STDERR - stdout buffering issue confirmed!");
-                            String[] parts = line.split(" ");
-                            if (parts.length == 3 && readyLatch.getCount() > 0) {
-                                ports[0] = Integer.parseInt(parts[1]);
-                                ports[1] = Integer.parseInt(parts[2]);
-                                readyLatch.countDown();
-                            }
-                        }
                     }
                 } catch (IOException ignored) {}
             }, "bridge-stderr");
             stderrDrain.setDaemon(true);
             stderrDrain.start();
 
-            // Check every 500ms if process died early
+            // Poll for ready file
             long deadline = System.currentTimeMillis() + STARTUP_TIMEOUT_MS;
+            boolean gotReady = false;
             while (System.currentTimeMillis() < deadline) {
-                if (readyLatch.await(500, TimeUnit.MILLISECONDS)) {
-                    break; // got READY
-                }
                 if (!process.isAlive()) {
                     int exitCode = process.exitValue();
                     System.err.println("[PhpBridge] Process died early with exit code: " + exitCode);
                     stop();
                     return false;
                 }
-                System.out.println("[PhpBridge] Still waiting... process alive: " + process.isAlive());
+                if (Files.exists(readyFile)) {
+                    String content = Files.readString(readyFile).trim();
+                    System.out.println("[PhpBridge] Ready file content: " + content);
+                    if (content.startsWith("READY ")) {
+                        String[] parts = content.split(" ");
+                        if (parts.length == 3) {
+                            ports[0] = Integer.parseInt(parts[1]);
+                            ports[1] = Integer.parseInt(parts[2]);
+                            gotReady = true;
+                            break;
+                        }
+                    }
+                }
+                Thread.sleep(100);
             }
-            if (readyLatch.getCount() > 0) {
+            if (!gotReady) {
                 System.err.println("[PhpBridge] Timeout waiting for READY signal");
                 System.err.println("[PhpBridge] Process still alive at timeout: " + process.isAlive());
+                System.err.println("[PhpBridge] Ready file exists: " + Files.exists(readyFile));
                 stop();
                 return false;
             }

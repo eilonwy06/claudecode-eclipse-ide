@@ -8,13 +8,14 @@ if (function_exists('ob_end_flush')) {
     @ob_end_flush();
 }
 
-if ($argc !== 3) {
-    fwrite(STDERR, "Usage: php bridge.php <port_a> <port_b>\n");
+if ($argc < 3 || $argc > 4) {
+    fwrite(STDERR, "Usage: php bridge.php <port_a> <port_b> [ready_file]\n");
     exit(1);
 }
 
 $portA = (int) $argv[1];
 $portB = (int) $argv[2];
+$readyFile = ($argc === 4) ? $argv[3] : null;
 
 $serverA = @stream_socket_server("tcp://127.0.0.1:$portA", $errno, $errstr);
 if (!$serverA) {
@@ -35,6 +36,11 @@ stream_set_blocking($serverB, false);
 fwrite(STDOUT, "READY $portA $portB\n");
 fflush(STDOUT);
 fwrite(STDERR, "READY_STDERR $portA $portB\n");
+
+// File-based ready signal (workaround for macOS pipe buffering)
+if ($readyFile !== null) {
+    file_put_contents($readyFile, "READY $portA $portB\n");
+}
 
 $clientA = null;
 $clientB = null;
