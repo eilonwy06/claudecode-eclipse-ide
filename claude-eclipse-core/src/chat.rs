@@ -183,12 +183,14 @@ fn run_turn(
     #[cfg(windows)]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
-    // macOS: Eclipse.app launched from Finder has a minimal PATH and can't
-    // find `claude` installed under Homebrew/nvm/etc.  Inject the PATH from
-    // the user's login shell so bare commands resolve.  Absolute paths are
-    // unaffected — the kernel skips PATH lookup when the command contains /.
-    if let Some(p) = crate::shell_env::login_shell_path() {
-        cmd.env("PATH", p);
+    // macOS/Linux: Eclipse launched from Finder (mac) or the GNOME/KDE
+    // menu (linux) inherits a minimal env and misses anything set only in
+    // the user's shell rc — PATH entries for nvm/asdf/Homebrew-installed
+    // `claude` and any corporate proxy vars.  Inject whatever we captured
+    // from the login shell; absolute paths are unaffected because the
+    // kernel skips PATH lookup when the command contains /.
+    for (k, v) in crate::shell_env::captured_env().to_inject() {
+        cmd.env(k, v);
     }
 
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
@@ -348,6 +350,12 @@ fn fire_string(
     method: &str,
     value: &str,
 ) {
+    // Mirror through PHP bridge if connected
+    if crate::php_bridge::is_connected() {
+        let msg = format!("CHAT:{}:{}", method, value);
+        crate::php_bridge::send_line(&msg);
+    }
+    // JNI callback
     let mut env = match java_vm.attach_current_thread() {
         Ok(e) => e,
         Err(_) => return,

@@ -216,6 +216,15 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    @Override
+    public <T> T getAdapter(Class<T> adapter) {
+        if (adapter == IShowInTarget.class) {
+            return (T) this;
+        }
+        return super.getAdapter(adapter);
+    }
+
     @Override
     public boolean show(ShowInContext context) {
         if (context == null) return false;

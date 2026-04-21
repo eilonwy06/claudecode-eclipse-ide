@@ -183,11 +183,146 @@
       <startup class="com.anthropic.claudecode.eclipse.ClaudeStartup"/>
    </extension>
 
-   <!-- Register Claude CLI as a Show In target -->
+   <!-- Register Claude CLI in Show In menu (Package Explorer works, Project Explorer is CNF limitation) -->
    <extension point="org.eclipse.ui.perspectiveExtensions">
-      <perspectiveExtension targetID="*">
+      <!-- Java -->
+      <perspectiveExtension targetID="org.eclipse.jdt.ui.JavaPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
       </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.jdt.ui.JavaBrowsingPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.jdt.ui.JavaHierarchyPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Java EE / Jakarta EE -->
+      <perspectiveExtension targetID="org.eclipse.jst.j2ee.J2EEPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.jst.jee.ui.J2EEPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.wst.web.ui.J2EEPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Resource -->
+      <perspectiveExtension targetID="org.eclipse.ui.resourcePerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.rse.ui.view.SystemPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Debug -->
+      <perspectiveExtension targetID="org.eclipse.debug.ui.DebugPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Plug-in Development -->
+      <perspectiveExtension targetID="org.eclipse.pde.ui.PDEPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Team / Git -->
+      <perspectiveExtension targetID="org.eclipse.team.ui.TeamSynchronizingPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.egit.ui.GitRepositoryExploring">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- C/C++ -->
+      <perspectiveExtension targetID="org.eclipse.cdt.ui.CPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Web / JavaScript / TypeScript -->
+      <perspectiveExtension targetID="org.eclipse.wst.jsdt.ui.JavaScriptPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.wst.web.ui.webDevPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.wst.xml.ui.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.wildwebdeveloper.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.wildwebdeveloper.web">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Node.js / Nodeclipse / Enide -->
+      <perspectiveExtension targetID="org.nodeclipse.ui.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.nodeclipse.enide.studio.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.nodeclipse.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- PHP -->
+      <perspectiveExtension targetID="org.eclipse.php.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Python -->
+      <perspectiveExtension targetID="org.python.pydev.ui.PythonPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.python.pydev.debug.ui.DebugPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Database / SQL -->
+      <perspectiveExtension targetID="org.eclipse.datatools.sqltools.sqleditor.perspectives.EditorPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.eclipse.datatools.connectivity.DataSourceExplorerNavigator">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Spring -->
+      <perspectiveExtension targetID="com.springsource.sts.ide.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="org.springframework.ide.eclipse.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Groovy / Grails -->
+      <perspectiveExtension targetID="org.codehaus.groovy.eclipse.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <perspectiveExtension targetID="com.springsource.sts.grails.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Scala -->
+      <perspectiveExtension targetID="org.scala-ide.sdt.core.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Kotlin -->
+      <perspectiveExtension targetID="org.jetbrains.kotlin.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Ruby -->
+      <perspectiveExtension targetID="org.eclipse.dltk.ruby.ui.RubyPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Rust -->
+      <perspectiveExtension targetID="org.eclipse.corrosion.perspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+      <!-- Go -->
+      <perspectiveExtension targetID="com.googlecode.goclipse.perspectives.GoPerspective">
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+      </perspectiveExtension>
+   </extension>
+
+   <!-- Open Claude CLI Here - context menu for navigators -->
+   <extension point="org.eclipse.ui.popupMenus">
+      <objectContribution
+            id="com.anthropic.claudecode.eclipse.openCliHere"
+            objectClass="org.eclipse.core.resources.IResource"
+            adaptable="true">
+         <action
+               id="com.anthropic.claudecode.eclipse.actions.openCliHere"
+               label="Open Claude CLI Here"
+               icon="icons/claude-16.png"
+               class="com.anthropic.claudecode.eclipse.ui.actions.OpenCliHereAction"/>
+      </objectContribution>
    </extension>
 
 </plugin>

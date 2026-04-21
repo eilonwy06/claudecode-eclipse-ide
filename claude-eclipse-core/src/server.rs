@@ -53,6 +53,7 @@ pub struct AppState {
     pub clients: Mutex<HashMap<String, mpsc::UnboundedSender<SseEvent>>>,
     pub auth_token: String,
     pub tool_callback: Mutex<Option<ToolCallbackRef>>,
+    pub preferred_port: Option<u16>,
 }
 
 // ---------------------------------------------------------------------------
@@ -92,11 +93,21 @@ pub struct Server {
 
 impl Server {
     pub fn new(port_min: u16, port_max: u16) -> Self {
-        let auth_token = Uuid::new_v4().to_string();
+        Self::new_with_config(port_min, port_max, None, None)
+    }
+
+    pub fn new_with_config(
+        port_min: u16,
+        port_max: u16,
+        preferred_port: Option<u16>,
+        existing_token: Option<String>,
+    ) -> Self {
+        let auth_token = existing_token.unwrap_or_else(|| Uuid::new_v4().to_string());
         let state = Arc::new(AppState {
             clients: Mutex::new(HashMap::new()),
             auth_token,
             tool_callback: Mutex::new(None),
+            preferred_port,
         });
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -124,9 +135,17 @@ impl Server {
 
         // Bind synchronously before spawning so we can return the port number.
         let (port_min, port_max) = (self.port_min, self.port_max);
+        let preferred = self.state.preferred_port;
         let listener = self
             .runtime
             .block_on(async move {
+                // Try preferred port first if specified
+                if let Some(pref) = preferred {
+                    if let Ok(l) = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", pref)).await {
+                        return Ok(l);
+                    }
+                }
+                // Fall back to scanning the range
                 for p in port_min..=port_max {
                     if let Ok(l) =
                         tokio::net::TcpListener::bind(format!("127.0.0.1:{}", p)).await

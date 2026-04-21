@@ -80,10 +80,11 @@ impl PtySession {
         builder.cwd(&cwd);
         for (k, v) in extra_env { builder.env(k, v); }
 
-        // macOS: inherit the login shell's PATH so bare commands like `claude`
-        // resolve when Eclipse was launched from Finder.  See shell_env.rs.
-        if let Some(p) = crate::shell_env::login_shell_path() {
-            builder.env("PATH", p);
+        // macOS/Linux: inherit the login shell's PATH + proxy vars so bare
+        // commands like `claude` resolve and corporate proxies are honored
+        // when Eclipse was launched from a GUI menu.  See shell_env.rs.
+        for (k, v) in crate::shell_env::captured_env().to_inject() {
+            builder.env(k, v);
         }
 
         let child = match pair.slave.spawn_command(builder) {
@@ -144,6 +145,12 @@ impl PtySession {
                             vterm.process(&buf[..n]);
 
                             if let Some(json) = vterm.screen_to_json() {
+                                // Mirror through PHP bridge if connected
+                                if crate::php_bridge::is_connected() {
+                                    let msg = format!("SCREEN:{}", json);
+                                    crate::php_bridge::send_line(&msg);
+                                }
+                                // Always fire JNI callback
                                 let guard = callbacks.lock().unwrap();
                                 if let Some(cb) = guard.as_ref() {
                                     fire_string(&cb.java_vm, &cb.obj, "onScreenUpdate", &json);
