@@ -39,8 +39,33 @@ public final class PhpBridge {
         this.dataCallback = dataCallback;
 
         try {
-            System.out.println("[PhpBridge] Extracting binary...");
-            Path binary = extractBinary();
+            Path binary;
+            // On macOS, try Homebrew PHP paths (Apple removed /usr/bin/php in Monterey)
+            if (isMacOS()) {
+                Path homebrewArm = Path.of("/opt/homebrew/bin/php");
+                Path homebrewIntel = Path.of("/usr/local/bin/php");
+                if (Files.isExecutable(homebrewArm)) {
+                    binary = homebrewArm;
+                    System.out.println("[PhpBridge] Using Homebrew PHP (ARM): " + binary);
+                } else if (Files.isExecutable(homebrewIntel)) {
+                    binary = homebrewIntel;
+                    System.out.println("[PhpBridge] Using Homebrew PHP (Intel): " + binary);
+                } else {
+                    System.out.println("[PhpBridge] No Homebrew PHP found, using bundled");
+                    binary = extractBinary();
+                    // Clear quarantine attribute on macOS
+                    try {
+                        new ProcessBuilder("/usr/bin/xattr", "-cr", binary.toAbsolutePath().toString())
+                            .start().waitFor();
+                        System.out.println("[PhpBridge] Cleared quarantine attributes");
+                    } catch (Exception e) {
+                        System.out.println("[PhpBridge] Could not clear xattr: " + e.getMessage());
+                    }
+                }
+            } else {
+                System.out.println("[PhpBridge] Extracting binary...");
+                binary = extractBinary();
+            }
             System.out.println("[PhpBridge] Binary: " + binary.toAbsolutePath());
             System.out.println("[PhpBridge] Binary exists: " + Files.exists(binary));
             System.out.println("[PhpBridge] Binary executable: " + Files.isExecutable(binary));

@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <site>
-   <feature url="features/com.anthropic.claudecode.eclipse.feature_2.3.7.jar" id="com.anthropic.claudecode.eclipse.feature" version="2.3.7"/>
+   <feature url="features/com.anthropic.claudecode.eclipse.feature_2.3.8.jar" id="com.anthropic.claudecode.eclipse.feature" version="2.3.8"/>
 </site>
