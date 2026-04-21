@@ -56,16 +56,19 @@ public final class PhpBridge {
 
             int[] ports = new int[2];
 
+            String osName = System.getProperty("os.name", "");
+            System.out.println("[PhpBridge] os.name = " + osName);
+
             ProcessBuilder pb;
-            if (isMacOS()) {
-                // macOS: spawn through shell to get proper environment
+            if (!isWindows()) {
+                // Unix (macOS/Linux): spawn through shell to get proper environment
                 String cmd = String.format("'%s' '%s' %d %d '%s'",
                     binary.toAbsolutePath().toString(),
                     script.toAbsolutePath().toString(),
                     PORT_A, PORT_B,
                     readyFile.toAbsolutePath().toString());
                 pb = new ProcessBuilder("/bin/sh", "-c", cmd);
-                System.out.println("[PhpBridge] macOS shell command: " + cmd);
+                System.out.println("[PhpBridge] Shell command: " + cmd);
             } else {
                 pb = new ProcessBuilder(
                     binary.toAbsolutePath().toString(),
