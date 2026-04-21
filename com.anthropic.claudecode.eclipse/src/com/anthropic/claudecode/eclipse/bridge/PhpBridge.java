@@ -39,8 +39,14 @@ public final class PhpBridge {
         this.dataCallback = dataCallback;
 
         try {
+            System.out.println("[PhpBridge] Extracting binary...");
             Path binary = extractBinary();
+            System.out.println("[PhpBridge] Binary: " + binary.toAbsolutePath());
+            System.out.println("[PhpBridge] Binary exists: " + Files.exists(binary));
+            System.out.println("[PhpBridge] Binary executable: " + Files.isExecutable(binary));
+
             Path script = extractScript();
+            System.out.println("[PhpBridge] Script: " + script.toAbsolutePath());
 
             CountDownLatch readyLatch = new CountDownLatch(1);
             int[] ports = new int[2];
@@ -52,7 +58,9 @@ public final class PhpBridge {
                 String.valueOf(PORT_B)
             );
             pb.redirectErrorStream(false);
+            System.out.println("[PhpBridge] Starting process...");
             process = pb.start();
+            System.out.println("[PhpBridge] Process started, waiting for READY...");
 
             Thread startupReader = new Thread(() -> {
                 try (BufferedReader br = new BufferedReader(
@@ -74,18 +82,23 @@ public final class PhpBridge {
             startupReader.start();
 
             Thread stderrDrain = new Thread(() -> {
-                try (InputStream err = process.getErrorStream()) {
-                    byte[] buf = new byte[1024];
-                    while (err.read(buf) != -1) {}
+                try (BufferedReader err = new BufferedReader(
+                        new InputStreamReader(process.getErrorStream()))) {
+                    String line;
+                    while ((line = err.readLine()) != null) {
+                        System.err.println("[PhpBridge STDERR] " + line);
+                    }
                 } catch (IOException ignored) {}
             }, "bridge-stderr");
             stderrDrain.setDaemon(true);
             stderrDrain.start();
 
             if (!readyLatch.await(STARTUP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                System.err.println("[PhpBridge] Timeout waiting for READY signal");
                 stop();
                 return false;
             }
+            System.out.println("[PhpBridge] Got READY, connecting to port " + ports[1]);
 
             socketB = new Socket("127.0.0.1", ports[1]);
             running.set(true);
@@ -97,6 +110,8 @@ public final class PhpBridge {
             return true;
 
         } catch (Exception e) {
+            System.err.println("[PhpBridge] Failed to start: " + e.getMessage());
+            e.printStackTrace();
             stop();
             return false;
         }
