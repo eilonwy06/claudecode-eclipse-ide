@@ -34,6 +34,7 @@ stream_set_blocking($serverB, false);
 
 fwrite(STDOUT, "READY $portA $portB\n");
 fflush(STDOUT);
+fwrite(STDERR, "READY_STDERR $portA $portB\n");
 
 $clientA = null;
 $clientB = null;

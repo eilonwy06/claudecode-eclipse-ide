@@ -91,14 +91,39 @@ public final class PhpBridge {
                     String line;
                     while ((line = err.readLine()) != null) {
                         System.err.println("[PhpBridge STDERR] " + line);
+                        // Also check stderr for READY (diagnostic)
+                        if (line.startsWith("READY_STDERR ")) {
+                            System.out.println("[PhpBridge] Got READY on STDERR - stdout buffering issue confirmed!");
+                            String[] parts = line.split(" ");
+                            if (parts.length == 3 && readyLatch.getCount() > 0) {
+                                ports[0] = Integer.parseInt(parts[1]);
+                                ports[1] = Integer.parseInt(parts[2]);
+                                readyLatch.countDown();
+                            }
+                        }
                     }
                 } catch (IOException ignored) {}
             }, "bridge-stderr");
             stderrDrain.setDaemon(true);
             stderrDrain.start();
 
-            if (!readyLatch.await(STARTUP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            // Check every 500ms if process died early
+            long deadline = System.currentTimeMillis() + STARTUP_TIMEOUT_MS;
+            while (System.currentTimeMillis() < deadline) {
+                if (readyLatch.await(500, TimeUnit.MILLISECONDS)) {
+                    break; // got READY
+                }
+                if (!process.isAlive()) {
+                    int exitCode = process.exitValue();
+                    System.err.println("[PhpBridge] Process died early with exit code: " + exitCode);
+                    stop();
+                    return false;
+                }
+                System.out.println("[PhpBridge] Still waiting... process alive: " + process.isAlive());
+            }
+            if (readyLatch.getCount() > 0) {
                 System.err.println("[PhpBridge] Timeout waiting for READY signal");
+                System.err.println("[PhpBridge] Process still alive at timeout: " + process.isAlive());
                 stop();
                 return false;
             }
