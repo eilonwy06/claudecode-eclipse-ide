@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.3.11] — 2026-04-21 *(current)*
+## [2.3.12] — 2026-04-25 *(current)*
+
+### Changed
+- **Linux binary compatibility** — rebuilt `libclaude_eclipse_core.so` with older glibc symbols to support a wider range of Linux distributions (Ubuntu 20.04+, Debian 10+, RHEL 8+, etc.)
+
+---
+
+## [2.3.11] — 2026-04-21
 
 ### Added
 - **Open Claude CLI Here** — right-click context menu in any navigator (Package Explorer, Project Explorer, etc.) to launch a Claude CLI session scoped to the selected folder or project

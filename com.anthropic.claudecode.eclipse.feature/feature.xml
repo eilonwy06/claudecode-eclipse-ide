@@ -2,7 +2,7 @@
 <feature
       id="com.anthropic.claudecode.eclipse.feature"
       label="Claude Code for Eclipse IDE"
-      version="2.3.11"
+      version="2.3.12"
       include-sources="true"
       provider-name="eilonwy06">
 
