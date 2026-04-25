@@ -154,11 +154,27 @@ cp target/release/claude_eclipse_core.dll ../com.anthropic.claudecode.eclipse/na
 ```
 
 **Linux (via Docker):**
+
+*From Linux/macOS:*
 ```bash
-docker run --rm -v "$(pwd):/src" rust:latest bash -c \
-  "cd /src/claude-eclipse-core && cargo build --release"
-cp claude-eclipse-core/target/release/libclaude_eclipse_core.so \
-   com.anthropic.claudecode.eclipse/native/linux/x86_64/
+cd claude-eclipse-core
+docker run --rm -v "$(pwd):/src" -w /src rust:slim-bullseye cargo build --release
+cp target/release/libclaude_eclipse_core.so \
+   ../com.anthropic.claudecode.eclipse/native/linux/x86_64/
+```
+
+*From Windows (CMD):*
+```cmd
+docker run --rm -v "%cd%:/src" -w /src rust:slim-bullseye cargo build --release
+copy claude-eclipse-core\target\release\libclaude_eclipse_core.so ^
+     com.anthropic.claudecode.eclipse\native\linux\x86_64\
+```
+
+*From Windows (PowerShell):*
+```powershell
+docker run --rm -v "${PWD}:/src" -w /src rust:slim-bullseye cargo build --release
+copy claude-eclipse-core\target\release\libclaude_eclipse_core.so `
+     com.anthropic.claudecode.eclipse\native\linux\x86_64\
 ```
 
 **macOS (native build — must be built on a Mac):**
