@@ -6,6 +6,19 @@ RemoteSystemsTempFiles/
 # Build outputs
 com.anthropic.claudecode.eclipse/bin/
 
+# Rust build artifacts (claude-eclipse-core)
+claude-eclipse-core/target/
+
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# Editor/IDE
+*.swp
+*.swo
+*~
+.idea/
+*.iml
+.vscode/
