@@ -113,6 +113,27 @@ pub fn remove() {
     }
 }
 
+/// Removes all lock files EXCEPT the one for the given port.
+/// Call this before launching Claude CLI to ensure it only finds our server.
+pub fn remove_other_lock_files(our_port: u16) {
+    let dir = lock_file_dir();
+    let our_filename = format!("{}.lock", our_port);
+
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+            if filename.ends_with(".lock") && filename != our_filename {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+}
+
 fn lock_file_dir() -> PathBuf {
     if let Ok(config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
         if !config_dir.is_empty() {

@@ -215,7 +215,11 @@ public class ClaudeCodeView extends ViewPart {
 
         Display.getCurrent().asyncExec(() -> {
             Activator.getDefault().restart();
-            appendLog("Server restarted.\n");
+            int newPort = Activator.getDefault().getHttpSseServer().getPort();
+            String newToken = Activator.getDefault().getHttpSseServer().getAuthToken();
+            appendLog("Server restarted on port " + newPort + "\n");
+            appendLog("New token: " + newToken.substring(0, 8) + "...\n");
+            appendLog("Lock file updated: ~/.claude/ide/" + newPort + ".lock\n");
 
             if (phpBridge != null) {
                 NativeCore.bridgeDisconnect();
@@ -223,6 +227,21 @@ public class ClaudeCodeView extends ViewPart {
             }
             startPhpBridge();
             updateStatus();
+
+            // Restart all CLI sessions so they reconnect with new MCP credentials
+            try {
+                IWorkbenchPage page = UiHelper.getActivePage();
+                if (page != null) {
+                    ClaudeCliView cliView = (ClaudeCliView) page.findView(ClaudeCliView.VIEW_ID);
+                    if (cliView != null) {
+                        appendLog("Restarting CLI sessions...\n");
+                        cliView.restartAllSessions();
+                        appendLog("CLI sessions restarted.\n\n");
+                    }
+                }
+            } catch (Exception e) {
+                appendLog("Could not restart CLI sessions: " + e.getMessage() + "\n\n");
+            }
         });
     }
 
@@ -326,7 +345,12 @@ public class ClaudeCodeView extends ViewPart {
 
         if (activator.isServerRunning()) {
             int port = activator.getHttpSseServer().getPort();
-            setServerStatus(Status.GREEN, "Port " + port);
+            int clients = activator.getHttpSseServer().getClientCount();
+            if (clients > 0) {
+                setServerStatus(Status.GREEN, "Port " + port + " (" + clients + " connected)");
+            } else {
+                setServerStatus(Status.YELLOW, "Port " + port + " (no clients)");
+            }
         } else {
             setServerStatus(Status.RED, "Stopped");
         }

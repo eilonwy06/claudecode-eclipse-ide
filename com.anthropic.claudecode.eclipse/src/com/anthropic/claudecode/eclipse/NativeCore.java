@@ -139,6 +139,9 @@ public final class NativeCore {
     /** Removes the lock file created by the most recent {@link #lockFileWrite} call. */
     public static native void lockFileRemove();
 
+    /** Removes all lock files EXCEPT the one for our port. Call before launching CLI. */
+    public static native void lockFileRemoveOthers(int ourPort);
+
     // ── Chat process manager ──────────────────────────────────────────────────
 
     /** Creates a new ChatManager. Returns an opaque native handle. */

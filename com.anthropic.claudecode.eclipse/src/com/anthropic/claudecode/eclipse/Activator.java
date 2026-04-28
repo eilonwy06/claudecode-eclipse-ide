@@ -123,6 +123,10 @@ public class Activator extends AbstractUIPlugin {
         return selectionTracker;
     }
 
+    public LockFileManager getLockFileManager() {
+        return lockFileManager;
+    }
+
     public static Activator getDefault() {
         return instance;
     }

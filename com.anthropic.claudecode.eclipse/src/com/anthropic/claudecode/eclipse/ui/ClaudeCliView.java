@@ -643,6 +643,11 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             int port = activator.getHttpSseServer().getPort();
             String authToken = activator.getHttpSseServer().getAuthToken();
 
+            // Remove other Eclipse instances' lock files so Claude CLI only finds ours.
+            // Then rewrite ours to ensure it's present (in case another instance deleted it).
+            NativeCore.lockFileRemoveOthers(port);
+            activator.getLockFileManager().writeLockFile(port, authToken);
+
             String claudeCmd = activator.getPreferenceStore().getString(Constants.PREF_CLAUDE_CMD);
             if (claudeCmd == null || claudeCmd.isBlank()) claudeCmd = Constants.DEFAULT_CLAUDE_CMD;
 

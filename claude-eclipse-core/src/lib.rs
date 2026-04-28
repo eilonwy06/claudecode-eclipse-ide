@@ -233,6 +233,15 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_lockFile
     lock_file::remove();
 }
 
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_lockFileRemoveOthers(
+    _env: JNIEnv,
+    _class: JClass,
+    our_port: jint,
+) {
+    lock_file::remove_other_lock_files(our_port as u16);
+}
+
 // ===========================================================================
 // Chat JNI entry points
 // ===========================================================================
