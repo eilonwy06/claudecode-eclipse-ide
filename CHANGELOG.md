@@ -4,7 +4,18 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.3.12] — 2026-04-25 *(current)*
+## [2.3.13] — 2026-04-28 *(current)*
+
+### Fixed
+- **MCP multi-workspace conflicts** — launching Claude CLI now clears other Eclipse instances' lock files and rewrites its own, ensuring the CLI connects to the correct MCP server when multiple Eclipse workspaces are open
+
+### Changed
+- **Restart Server** button now also restarts all CLI sessions so MCP tools reconnect automatically
+- **MCP status indicator** in Claude Code view now shows client connection count (green = connected, yellow = waiting for clients)
+
+---
+
+## [2.3.12] — 2026-04-25
 
 ### Changed
 - **Linux binary compatibility** — rebuilt `libclaude_eclipse_core.so` with older glibc symbols to support a wider range of Linux distributions (Ubuntu 20.04+, Debian 10+, RHEL 8+, etc.)
