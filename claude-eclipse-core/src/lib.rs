@@ -13,6 +13,7 @@ use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jboolean, jint, jlong, jstring};
 use jni::JNIEnv;
 use server::Server;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 // ---------------------------------------------------------------------------
@@ -20,6 +21,16 @@ use std::sync::{Arc, OnceLock};
 // ---------------------------------------------------------------------------
 
 static JAVA_VM: OnceLock<Arc<jni::JavaVM>> = OnceLock::new();
+
+// ---------------------------------------------------------------------------
+// Global debug flag — set from Java via setDebugMode().
+// ---------------------------------------------------------------------------
+
+static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn is_debug() -> bool {
+    DEBUG_MODE.load(Ordering::Relaxed)
+}
 
 pub(crate) fn java_vm() -> Arc<jni::JavaVM> {
     Arc::clone(JAVA_VM.get().expect("JavaVM not initialised"))
@@ -526,6 +537,23 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_consoleP
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_consoleSetFont(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    font_name: JString,
+    font_size: jint,
+) {
+    if handle == 0 { return; }
+    let name: String = match env.get_string(&font_name) {
+        Ok(s) => s.into(),
+        Err(_) => return,
+    };
+    let session = unsafe { &*(handle as *const console::ConsoleSession) };
+    session.set_font(&name, font_size as i16);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_consoleDestroy(
     _env: JNIEnv,
     _class: JClass,
@@ -671,4 +699,17 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_setProxy
             .filter(|s: &String| !s.is_empty())
     };
     shell_env::set_proxy_overrides(http, https, no);
+}
+
+// ===========================================================================
+// Debug mode JNI entry point
+// ===========================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_setDebugMode(
+    _env: JNIEnv,
+    _class: JClass,
+    enabled: jboolean,
+) {
+    DEBUG_MODE.store(enabled != 0, Ordering::Relaxed);
 }

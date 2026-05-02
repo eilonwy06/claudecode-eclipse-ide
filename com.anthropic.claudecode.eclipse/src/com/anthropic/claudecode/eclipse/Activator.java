@@ -57,6 +57,12 @@ public class Activator extends AbstractUIPlugin {
             prefs.getString(Constants.PREF_NO_PROXY)
         );
 
+        try {
+            NativeCore.setDebugMode(prefs.getBoolean(Constants.PREF_DEBUG_MODE));
+        } catch (UnsatisfiedLinkError ignored) {
+            // Native library doesn't have setDebugMode — older build, skip silently.
+        }
+
         int portMin = prefs.getInt(Constants.PREF_PORT_MIN);
         int portMax = prefs.getInt(Constants.PREF_PORT_MAX);
 

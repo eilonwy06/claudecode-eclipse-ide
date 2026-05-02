@@ -107,6 +107,11 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 store.getString(Constants.PREF_HTTPS_PROXY),
                 store.getString(Constants.PREF_NO_PROXY)
             );
+            try {
+                NativeCore.setDebugMode(store.getBoolean(Constants.PREF_DEBUG_MODE));
+            } catch (UnsatisfiedLinkError ignored) {
+                // Native library doesn't have setDebugMode — older build, skip silently.
+            }
 
             Activator activator = Activator.getDefault();
             if (activator.isServerRunning()) {

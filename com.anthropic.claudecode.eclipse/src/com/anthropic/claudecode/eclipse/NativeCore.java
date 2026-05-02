@@ -257,6 +257,15 @@ public final class NativeCore {
     public static native void consolePostMessage(long handle, int msg, long wParam, long lParam);
 
     /**
+     * Sets the console font. Only effective on Windows.
+     *
+     * @param handle    console session handle
+     * @param fontName  font face name (e.g. "Consolas", "Cascadia Mono")
+     * @param fontSize  font height in pixels
+     */
+    public static native void consoleSetFont(long handle, String fontName, int fontSize);
+
+    /**
      * Terminates the process and frees native memory.
      * The handle MUST NOT be used after this call.
      */
@@ -283,6 +292,11 @@ public final class NativeCore {
      * Pass null or empty string to clear an override (fall back to env/shell).
      */
     public static native void setProxyOverrides(String httpProxy, String httpsProxy, String noProxy);
+
+    /**
+     * Enables or disables debug logging in native code.
+     */
+    public static native void setDebugMode(boolean enabled);
 
     /** Callbacks fired from Rust reader thread. */
     public interface PtyCallbacks {

@@ -18,7 +18,9 @@ pub async fn handle_message(
     let msg: Value = match serde_json::from_str(&body) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("MCP: failed to parse JSON: {} — body: {}", e, body);
+            if crate::is_debug() {
+                eprintln!("MCP: failed to parse JSON: {} — body: {}", e, body);
+            }
             return;
         }
     };

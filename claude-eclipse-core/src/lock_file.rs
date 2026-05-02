@@ -72,7 +72,9 @@ pub fn write(port: u16, auth_token: &str, workspace_root: &str, project_paths_js
     remove_stale_lock_files(&dir);
 
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("lock_file: create_dir_all {:?}: {}", dir, e);
+        if crate::is_debug() {
+            eprintln!("lock_file: create_dir_all {:?}: {}", dir, e);
+        }
         return;
     }
 
@@ -99,7 +101,11 @@ pub fn write(port: u16, auth_token: &str, workspace_root: &str, project_paths_js
         Ok(_) => {
             *state().lock().unwrap() = Some(path);
         }
-        Err(e) => eprintln!("lock_file: write {:?}: {}", path, e),
+        Err(e) => {
+            if crate::is_debug() {
+                eprintln!("lock_file: write {:?}: {}", path, e);
+            }
+        }
     }
 }
 
@@ -108,7 +114,9 @@ pub fn remove() {
     let mut guard = state().lock().unwrap();
     if let Some(path) = guard.take() {
         if let Err(e) = std::fs::remove_file(&path) {
-            eprintln!("lock_file: remove {:?}: {}", path, e);
+            if crate::is_debug() {
+                eprintln!("lock_file: remove {:?}: {}", path, e);
+            }
         }
     }
 }

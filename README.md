@@ -75,7 +75,9 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 
 > **Note (Windows):** The Claude CLI view embeds a native Windows console (conhost) directly into the Eclipse view — no WebView2, xterm.js, or TM Terminal required. Right-click paste is supported (Ctrl+V is not currently available).
 
-> **Note (Linux/macOS):** The Claude CLI view uses a native Rust PTY rendered in an SWT StyledText widget with full ANSI color, keyboard input, scrollback, and resize support. The monospace font defaults to `Monospace` on Linux and `Menlo` on macOS.
+> **Note (Linux/macOS):** The Claude CLI view uses a native Rust PTY rendered in an SWT StyledText widget with full ANSI color, keyboard input, scrollback, and resize support.
+
+> **Font customization (all platforms):** The console font can be changed in **Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude CLI Console Font**. By default it inherits from Eclipse's "Text Font" setting.
 
 ### Keyboard Shortcuts
 

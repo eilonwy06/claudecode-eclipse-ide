@@ -173,6 +173,19 @@
             class="com.anthropic.claudecode.eclipse.ui.ClaudePreferencePage"/>
    </extension>
 
+   <!-- Font Definition -->
+   <extension point="org.eclipse.ui.themes">
+      <fontDefinition
+            id="com.anthropic.claudecode.eclipse.font.console"
+            label="Claude CLI Console Font"
+            categoryId="org.eclipse.ui.workbenchMisc"
+            defaultsTo="org.eclipse.jface.textfont">
+         <description>
+            The font used for the Claude CLI terminal console.
+         </description>
+      </fontDefinition>
+   </extension>
+
    <!-- Preference Initializer -->
    <extension point="org.eclipse.core.runtime.preferences">
       <initializer class="com.anthropic.claudecode.eclipse.ui.ClaudePreferenceInitializer"/>

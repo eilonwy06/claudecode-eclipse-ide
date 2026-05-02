@@ -8,6 +8,8 @@ import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IAdaptable;
+import org.eclipse.jface.resource.JFaceResources;
+import org.eclipse.jface.util.IPropertyChangeListener;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.swt.SWT;
@@ -22,6 +24,7 @@ import org.eclipse.swt.dnd.Clipboard;
 import org.eclipse.swt.dnd.TextTransfer;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Font;
+import org.eclipse.swt.graphics.FontData;
 import org.eclipse.swt.graphics.GC;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.FillLayout;
@@ -55,11 +58,9 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
     private static final boolean IS_WINDOWS =
             System.getProperty("os.name", "").toLowerCase().contains("win");
-    private static final boolean IS_MAC =
-            System.getProperty("os.name", "").toLowerCase().contains("mac");
 
-    /** Monospace font name for the PTY renderer (Linux/macOS path only). */
-    private static final String PTY_FONT_NAME = IS_MAC ? "Menlo" : "Monospace";
+    /** Font definition ID from plugin.xml (Colors and Fonts preference). */
+    private static final String FONT_ID = "com.anthropic.claudecode.eclipse.font.console";
 
     private static final int BG_R = 0x12, BG_G = 0x13, BG_B = 0x14; // #121314
 
@@ -68,6 +69,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     private volatile boolean viewDisposed = false;
     private boolean launching = false;
     private Color bgColor;
+    private IPropertyChangeListener fontChangeListener;
 
     @Override
     public void createPartControl(Composite parent) {
@@ -170,6 +172,20 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             display.timerExec(100, checker[0]);
         };
         display.timerExec(100, checker[0]);
+
+        // Listen for font changes in Colors and Fonts preferences.
+        fontChangeListener = event -> {
+            if (FONT_ID.equals(event.getProperty())) {
+                display.asyncExec(() -> {
+                    if (viewDisposed || tabFolder == null || tabFolder.isDisposed()) return;
+                    for (CTabItem item : tabFolder.getItems()) {
+                        TerminalSession session = (TerminalSession) item.getData();
+                        if (session != null) session.updateFont();
+                    }
+                });
+            }
+        };
+        JFaceResources.getFontRegistry().addListener(fontChangeListener);
     }
 
     private void openNewSession(String cwd, String scopeLabel, String... extraArgs) {
@@ -283,6 +299,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     @Override
     public void dispose() {
         viewDisposed = true;
+        if (fontChangeListener != null) {
+            JFaceResources.getFontRegistry().removeListener(fontChangeListener);
+            fontChangeListener = null;
+        }
         if (tabFolder != null && !tabFolder.isDisposed()) {
             for (CTabItem item : tabFolder.getItems()) {
                 TerminalSession session = (TerminalSession) item.getData();
@@ -373,8 +393,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             // immediately (as was done before) causes a GC.setForeground crash on GTK.
             termText.setForeground(cachedColor(229, 229, 229));
 
-            // Monospace font — try several common names.
-            termFont = new Font(consoleHost.getDisplay(), PTY_FONT_NAME, 10, SWT.NORMAL);
+            // Use font from Colors and Fonts preferences (defaults to Text Font).
+            termFont = JFaceResources.getFont(FONT_ID);
             termText.setFont(termFont);
             termText.setWordWrap(false);
             termText.setAlwaysShowScrollBars(false);
@@ -616,6 +636,14 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             }
 
             String fullText = sb.toString();
+
+            // Check if user is currently scrolled to (or near) the bottom.
+            // If so, we'll auto-scroll after updating; otherwise, preserve their position.
+            int oldTopIndex = termText.getTopIndex();
+            int oldLineCount = termText.getLineCount();
+            int visibleLines = termText.getClientArea().height / termText.getLineHeight();
+            boolean wasAtBottom = (oldTopIndex + visibleLines >= oldLineCount - 1);
+
             termText.setText(fullText);
 
             // Apply styles.
@@ -623,12 +651,13 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 termText.setStyleRange(style);
             }
 
-            // Auto-scroll to show the cursor line.
-            int cursorLine = scrollbackLines.size() + cy;
-            int totalLines = termText.getLineCount();
-            if (cursorLine >= 0 && cursorLine < totalLines) {
-                // Show the cursor line near the bottom of the visible area.
-                termText.setTopIndex(Math.max(0, cursorLine - (screenRows - 1)));
+            // Only auto-scroll if user was already at the bottom.
+            if (wasAtBottom) {
+                int cursorLine = scrollbackLines.size() + cy;
+                int totalLines = termText.getLineCount();
+                if (cursorLine >= 0 && cursorLine < totalLines) {
+                    termText.setTopIndex(Math.max(0, cursorLine - (screenRows - 1)));
+                }
             }
         }
 
@@ -713,6 +742,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             boolean ok = NativeCore.consoleEmbed(consoleHandle, consoleHost.handle, w, h);
             if (ok) {
                 embedded = true;
+                updateFont(); // Apply font from Colors and Fonts preferences.
                 Display.getCurrent().timerExec(50, this::focus);
             } else {
                 embedRetries++;
@@ -818,6 +848,44 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
         // ── Dispose ─────────────────────────────────────────────────────
 
+        void updateFont() {
+            boolean debug = Activator.getDefault().getPreferenceStore().getBoolean(Constants.PREF_DEBUG_MODE);
+            if (debug) System.out.println("[FONT DEBUG] updateFont() called, disposed=" + disposed);
+            if (disposed) return;
+            Font font = JFaceResources.getFont(FONT_ID);
+            FontData[] fontData = font.getFontData();
+            if (debug) System.out.println("[FONT DEBUG] fontData.length=" + fontData.length);
+            if (fontData.length == 0) return;
+            String fontName = fontData[0].getName();
+            int fontSize = fontData[0].getHeight();
+            if (debug) {
+                System.out.println("[FONT DEBUG] fontName='" + fontName + "', fontSize=" + fontSize);
+                System.out.println("[FONT DEBUG] IS_WINDOWS=" + IS_WINDOWS + ", consoleHandle=" + consoleHandle + ", embedded=" + embedded);
+            }
+
+            if (IS_WINDOWS) {
+                if (consoleHandle != 0 && embedded) {
+                    if (debug) System.out.println("[FONT DEBUG] Calling NativeCore.consoleSetFont()");
+                    NativeCore.consoleSetFont(consoleHandle, fontName, fontSize);
+                    if (debug) System.out.println("[FONT DEBUG] consoleSetFont() returned");
+                } else {
+                    if (debug) System.out.println("[FONT DEBUG] Skipped: consoleHandle=" + consoleHandle + ", embedded=" + embedded);
+                }
+            } else {
+                if (termText != null && !termText.isDisposed()) {
+                    termFont = font;
+                    termText.setFont(termFont);
+                    // Recalculate terminal size with new font metrics.
+                    if (ptyHandle != 0) {
+                        int[] cr = calcColsRows();
+                        if (cr[0] > 0 && cr[1] > 0) {
+                            NativeCore.ptyResize(ptyHandle, cr[0], cr[1]);
+                        }
+                    }
+                }
+            }
+        }
+
         void dispose() {
             disposed = true;
             if (overlay != null && !overlay.isDisposed()) {
@@ -832,10 +900,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 NativeCore.ptyDestroy(ptyHandle);
                 ptyHandle = 0;
             }
-            if (termFont != null && !termFont.isDisposed()) {
-                termFont.dispose();
-                termFont = null;
-            }
+            // termFont is managed by JFaceResources — do not dispose.
+            termFont = null;
             // Dispose cached PTY terminal colors (Linux/macOS only — no-op on Windows).
             for (Color c : termColors.values()) {
                 if (!c.isDisposed()) c.dispose();

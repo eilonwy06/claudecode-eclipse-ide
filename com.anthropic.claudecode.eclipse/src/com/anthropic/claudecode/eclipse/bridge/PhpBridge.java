@@ -118,7 +118,7 @@ public final class PhpBridge {
                         new InputStreamReader(process.getInputStream()))) {
                     String line;
                     while ((line = br.readLine()) != null) {
-                        System.out.println("[PhpBridge STDOUT] " + line);
+                        debugLog("[PhpBridge STDOUT] " + line);
                     }
                 } catch (IOException ignored) {}
             }, "bridge-stdout");
@@ -130,7 +130,7 @@ public final class PhpBridge {
                         new InputStreamReader(process.getErrorStream()))) {
                     String line;
                     while ((line = err.readLine()) != null) {
-                        System.err.println("[PhpBridge STDERR] " + line);
+                        debugErr("[PhpBridge STDERR] " + line);
                     }
                 } catch (IOException ignored) {}
             }, "bridge-stderr");

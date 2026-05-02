@@ -4,7 +4,17 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.3.13] — 2026-04-28 *(current)*
+## [2.3.14] — 2026-05-02 *(current)*
+
+### Added
+- **Console font preference** — the Claude CLI terminal font can now be customized in Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude CLI Console Font; defaults to Eclipse's Text Font setting; works on all platforms (Windows, Linux, macOS)
+
+### Changed
+- **Debug logging gated by preference** — all debug output (Java and Rust) is now controlled by the Debug mode checkbox in Claude Code preferences; no more console spam when debug mode is off
+
+---
+
+## [2.3.13] — 2026-04-28
 
 ### Fixed
 - **MCP multi-workspace conflicts** — launching Claude CLI now clears other Eclipse instances' lock files and rewrites its own, ensuring the CLI connects to the correct MCP server when multiple Eclipse workspaces are open

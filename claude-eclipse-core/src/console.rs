@@ -113,6 +113,30 @@ mod win32 {
     pub const WM_LBUTTONUP: u32 = 0x0202;
     pub const MK_LBUTTON: usize = 0x0001;
 
+    // Console font constants
+    pub const LF_FACESIZE: usize = 32;
+    pub const GENERIC_READ: u32 = 0x80000000;
+    pub const GENERIC_WRITE: u32 = 0x40000000;
+    pub const FILE_SHARE_WRITE: u32 = 0x00000002;
+    pub const OPEN_EXISTING: u32 = 3;
+    pub const INVALID_HANDLE_VALUE: isize = -1;
+
+    #[repr(C)]
+    pub struct COORD {
+        pub x: i16,
+        pub y: i16,
+    }
+
+    #[repr(C)]
+    pub struct CONSOLE_FONT_INFOEX {
+        pub cb_size: u32,
+        pub font_index: u32,
+        pub font_size: COORD,
+        pub font_family: u32,
+        pub font_weight: u32,
+        pub face_name: [u16; LF_FACESIZE],
+    }
+
     #[link(name = "kernel32")]
     extern "system" {
         pub fn CreateProcessW(
@@ -129,6 +153,20 @@ mod win32 {
         pub fn AttachConsole(pid: u32) -> i32;
         pub fn GetConsoleWindow() -> isize;
         pub fn GetCurrentThreadId() -> u32;
+        pub fn CreateFileW(
+            file_name: *const u16,
+            desired_access: u32,
+            share_mode: u32,
+            security_attrs: *mut u8,
+            creation_disposition: u32,
+            flags_and_attrs: u32,
+            template_file: isize,
+        ) -> isize;
+        pub fn SetCurrentConsoleFontEx(
+            console_output: isize,
+            maximum_window: i32,
+            console_font_info: *mut CONSOLE_FONT_INFOEX,
+        ) -> i32;
 
         // Job Object
         pub fn CreateJobObjectW(sa: *mut u8, name: *const u16) -> isize;
@@ -428,6 +466,77 @@ impl ConsoleSession {
         }
     }
 
+    /// Sets the console font. Temporarily attaches to the child's console
+    /// to call SetCurrentConsoleFontEx.
+    #[cfg(windows)]
+    pub fn set_font(&self, font_name: &str, font_size: i16) {
+        let debug = crate::is_debug();
+        if debug {
+            eprintln!("[DEBUG] set_font called: name='{}', size={}, child_pid={}",
+                      font_name, font_size, self.child_pid);
+        }
+        if self.child_pid == 0 {
+            if debug { eprintln!("[DEBUG] child_pid is 0, returning early"); }
+            return;
+        }
+        let _lock = CONSOLE_LOCK.lock().unwrap();
+        unsafe {
+            let original = win32::GetConsoleWindow();
+            if debug { eprintln!("[DEBUG] original console window: {}", original); }
+            win32::FreeConsole();
+
+            let attach_result = win32::AttachConsole(self.child_pid);
+            if debug {
+                eprintln!("[DEBUG] AttachConsole({}) returned {}", self.child_pid, attach_result);
+            }
+
+            if attach_result != 0 {
+                // Open CONOUT$ to get the attached console's screen buffer handle.
+                let conout = win32::to_wide("CONOUT$");
+                let stdout = win32::CreateFileW(
+                    conout.as_ptr(),
+                    win32::GENERIC_READ | win32::GENERIC_WRITE,
+                    win32::FILE_SHARE_WRITE,
+                    std::ptr::null_mut(),
+                    win32::OPEN_EXISTING,
+                    0,
+                    0,
+                );
+                if debug { eprintln!("[DEBUG] CreateFileW(CONOUT$) returned {}", stdout); }
+
+                if stdout != win32::INVALID_HANDLE_VALUE {
+                    let mut font_info: win32::CONSOLE_FONT_INFOEX = std::mem::zeroed();
+                    font_info.cb_size = std::mem::size_of::<win32::CONSOLE_FONT_INFOEX>() as u32;
+                    font_info.font_size.y = font_size;
+                    font_info.font_weight = 400; // FW_NORMAL
+
+                    let wide_name = win32::to_wide(font_name);
+                    let copy_len = wide_name.len().min(win32::LF_FACESIZE - 1);
+                    font_info.face_name[..copy_len].copy_from_slice(&wide_name[..copy_len]);
+
+                    let set_result = win32::SetCurrentConsoleFontEx(stdout, 0, &mut font_info);
+                    if debug {
+                        eprintln!("[DEBUG] SetCurrentConsoleFontEx returned {}", set_result);
+                    }
+
+                    if set_result == 0 && debug {
+                        #[link(name = "kernel32")]
+                        extern "system" {
+                            fn GetLastError() -> u32;
+                        }
+                        eprintln!("[DEBUG] GetLastError: {}", GetLastError());
+                    }
+                    win32::CloseHandle(stdout);
+                }
+                win32::FreeConsole();
+            }
+
+            if original != 0 {
+                win32::AttachConsole(win32::ATTACH_PARENT_PROCESS);
+            }
+        }
+    }
+
     #[cfg(windows)]
     pub fn kill(&mut self) {
         unsafe {
@@ -469,6 +578,8 @@ impl ConsoleSession {
     pub fn is_focused(&self) -> bool { false }
     #[cfg(not(windows))]
     pub fn post_message(&self, _msg: u32, _wparam: usize, _lparam: isize) {}
+    #[cfg(not(windows))]
+    pub fn set_font(&self, _font_name: &str, _font_size: i16) {}
     #[cfg(not(windows))]
     pub fn kill(&mut self) {}
 }

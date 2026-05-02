@@ -78,7 +78,12 @@ impl PtySession {
         let mut builder = portable_pty::CommandBuilder::new(&cmd);
         for arg in &args      { builder.arg(arg); }
         builder.cwd(&cwd);
-        for (k, v) in extra_env { builder.env(k, v); }
+        for (k, v) in &extra_env {
+            if crate::is_debug() {
+                eprintln!("[pty] Setting env: {}={}", k, v);
+            }
+            builder.env(k, v);
+        }
 
         // macOS/Linux: inherit the login shell's PATH + proxy vars so bare
         // commands like `claude` resolve and corporate proxies are honored
