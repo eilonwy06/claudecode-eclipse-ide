@@ -1,6 +1,7 @@
 package com.anthropic.claudecode.eclipse.ui;
 
 import org.eclipse.jface.preference.BooleanFieldEditor;
+import org.eclipse.jface.preference.ComboFieldEditor;
 import org.eclipse.jface.preference.FieldEditorPreferencePage;
 import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.preference.IntegerFieldEditor;
@@ -67,6 +68,15 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
         addField(new BooleanFieldEditor(
                 Constants.PREF_DEBUG_MODE,
                 "Debug mode",
+                getFieldEditorParent()));
+
+        addField(new ComboFieldEditor(
+                Constants.PREF_CONSOLE_THEME,
+                "Console theme:",
+                new String[][] {
+                    {"Dark", Constants.CONSOLE_THEME_DARK},
+                    {"Light", Constants.CONSOLE_THEME_LIGHT}
+                },
                 getFieldEditorParent()));
 
         Label separator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);

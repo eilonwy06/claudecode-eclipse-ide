@@ -79,6 +79,8 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 
 > **Font customization (all platforms):** The console font can be changed in **Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude CLI Console Font**. By default it inherits from Eclipse's "Text Font" setting.
 
+> **Theme customization (all platforms):** The console theme (Dark/Light) can be changed in **Window → Preferences → Claude Code → Console theme**. Changes apply immediately without restart.
+
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -124,6 +126,7 @@ Go to **Window → Preferences → Claude Code** to configure:
 | Claude command | `claude` | Path to the Claude CLI executable |
 | Arguments | *(empty)* | Additional CLI arguments (e.g., `--model claude-opus-4-7-20260418`) |
 | Port range (min/max) | 10000–65535 | Port range for the internal HTTP+SSE server |
+| Console theme | Dark | Terminal color theme (Dark or Light); applies immediately |
 
 ## Architecture
 

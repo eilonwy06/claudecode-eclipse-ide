@@ -13,6 +13,7 @@ import org.eclipse.swt.graphics.GC;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
+import org.eclipse.swt.layout.RowLayout;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
@@ -66,7 +67,7 @@ public class ClaudeCodeView extends ViewPart {
         createButtonRow(container);
         createLogArea(container, display);
 
-        appendLog("Claude Code for Eclipse v2.3.14\n");
+        appendLog("Claude Code for Eclipse v2.3.15\n");
         appendLog("─────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {
@@ -134,57 +135,67 @@ public class ClaudeCodeView extends ViewPart {
 
     private void createStatusBar(Composite parent) {
         Composite statusBar = new Composite(parent, SWT.NONE);
-        GridLayout layout = new GridLayout(6, false);
+        RowLayout layout = new RowLayout(SWT.HORIZONTAL);
+        layout.wrap = true;
         layout.marginWidth = 0;
         layout.marginHeight = 4;
-        layout.horizontalSpacing = 6;
+        layout.spacing = 6;
+        layout.center = true;
         statusBar.setLayout(layout);
         statusBar.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
-        serverIndicator = new Label(statusBar, SWT.NONE);
+        // Server status group
+        Composite serverGroup = new Composite(statusBar, SWT.NONE);
+        RowLayout serverLayout = new RowLayout(SWT.HORIZONTAL);
+        serverLayout.marginWidth = 0;
+        serverLayout.marginHeight = 0;
+        serverLayout.spacing = 4;
+        serverLayout.center = true;
+        serverGroup.setLayout(serverLayout);
+
+        serverIndicator = new Label(serverGroup, SWT.NONE);
         serverIndicator.setImage(redLight);
 
-        serverLabel = new Label(statusBar, SWT.NONE);
+        serverLabel = new Label(serverGroup, SWT.NONE);
         serverLabel.setText("Server: --");
-        serverLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
 
-        Label sep1 = new Label(statusBar, SWT.SEPARATOR | SWT.VERTICAL);
-        GridData sepData = new GridData(SWT.CENTER, SWT.FILL, false, false);
-        sepData.heightHint = 16;
-        sep1.setLayoutData(sepData);
+        // Bridge status group
+        Composite bridgeGroup = new Composite(statusBar, SWT.NONE);
+        RowLayout bridgeLayout = new RowLayout(SWT.HORIZONTAL);
+        bridgeLayout.marginWidth = 0;
+        bridgeLayout.marginHeight = 0;
+        bridgeLayout.spacing = 4;
+        bridgeLayout.center = true;
+        bridgeGroup.setLayout(bridgeLayout);
 
-        bridgeIndicator = new Label(statusBar, SWT.NONE);
+        bridgeIndicator = new Label(bridgeGroup, SWT.NONE);
         bridgeIndicator.setImage(redLight);
 
-        bridgeLabel = new Label(statusBar, SWT.NONE);
+        bridgeLabel = new Label(bridgeGroup, SWT.NONE);
         bridgeLabel.setText("Bridge: --");
-        bridgeLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
-
-        Label spacer = new Label(statusBar, SWT.NONE);
-        spacer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
     }
 
     private void createButtonRow(Composite parent) {
         Composite buttonRow = new Composite(parent, SWT.NONE);
-        GridLayout layout = new GridLayout(3, true);
+        RowLayout layout = new RowLayout(SWT.HORIZONTAL);
+        layout.wrap = true;
         layout.marginWidth = 0;
-        layout.horizontalSpacing = 8;
+        layout.marginHeight = 0;
+        layout.spacing = 8;
+        layout.pack = false;
         buttonRow.setLayout(layout);
         buttonRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
         launchButton = new Button(buttonRow, SWT.PUSH);
         launchButton.setText("Launch Terminal");
-        launchButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         launchButton.addListener(SWT.Selection, e -> startClaude());
 
         Button restartBtn = new Button(buttonRow, SWT.PUSH);
         restartBtn.setText("Restart Server");
-        restartBtn.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         restartBtn.addListener(SWT.Selection, e -> restartServer());
 
         Button resumeBtn = new Button(buttonRow, SWT.PUSH);
         resumeBtn.setText("Resume Session");
-        resumeBtn.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         resumeBtn.addListener(SWT.Selection, e -> restartClaude("--resume"));
     }
 

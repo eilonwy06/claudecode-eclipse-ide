@@ -554,6 +554,23 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_consoleS
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_consoleSetColors(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    bg_r: jint,
+    bg_g: jint,
+    bg_b: jint,
+    fg_r: jint,
+    fg_g: jint,
+    fg_b: jint,
+) {
+    if handle == 0 { return; }
+    let session = unsafe { &*(handle as *const console::ConsoleSession) };
+    session.set_colors(bg_r as u8, bg_g as u8, bg_b as u8, fg_r as u8, fg_g as u8, fg_b as u8);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_consoleDestroy(
     _env: JNIEnv,
     _class: JClass,
