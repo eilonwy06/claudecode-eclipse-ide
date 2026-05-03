@@ -137,6 +137,27 @@ mod win32 {
         pub face_name: [u16; LF_FACESIZE],
     }
 
+    #[repr(C)]
+    pub struct SMALL_RECT {
+        pub left: i16,
+        pub top: i16,
+        pub right: i16,
+        pub bottom: i16,
+    }
+
+    #[repr(C)]
+    pub struct CONSOLE_SCREEN_BUFFER_INFOEX {
+        pub cb_size: u32,
+        pub size: COORD,
+        pub cursor_position: COORD,
+        pub attributes: u16,
+        pub window: SMALL_RECT,
+        pub maximum_window_size: COORD,
+        pub popup_attributes: u16,
+        pub fullscreen_supported: i32,
+        pub color_table: [u32; 16],
+    }
+
     #[link(name = "kernel32")]
     extern "system" {
         pub fn CreateProcessW(
@@ -166,6 +187,14 @@ mod win32 {
             console_output: isize,
             maximum_window: i32,
             console_font_info: *mut CONSOLE_FONT_INFOEX,
+        ) -> i32;
+        pub fn GetConsoleScreenBufferInfoEx(
+            console_output: isize,
+            console_screen_buffer_info: *mut CONSOLE_SCREEN_BUFFER_INFOEX,
+        ) -> i32;
+        pub fn SetConsoleScreenBufferInfoEx(
+            console_output: isize,
+            console_screen_buffer_info: *const CONSOLE_SCREEN_BUFFER_INFOEX,
         ) -> i32;
 
         // Job Object
@@ -537,6 +566,79 @@ impl ConsoleSession {
         }
     }
 
+    /// Sets the console background and foreground colors.
+    /// Colors are specified as RGB values (0-255 each).
+    #[cfg(windows)]
+    pub fn set_colors(&self, bg_r: u8, bg_g: u8, bg_b: u8, fg_r: u8, fg_g: u8, fg_b: u8) {
+        let debug = crate::is_debug();
+        if debug {
+            eprintln!("[DEBUG] set_colors called: bg=({},{},{}), fg=({},{},{})",
+                      bg_r, bg_g, bg_b, fg_r, fg_g, fg_b);
+        }
+        if self.child_pid == 0 {
+            if debug { eprintln!("[DEBUG] child_pid is 0, returning early"); }
+            return;
+        }
+        let _lock = CONSOLE_LOCK.lock().unwrap();
+        unsafe {
+            let original = win32::GetConsoleWindow();
+            win32::FreeConsole();
+
+            let attach_result = win32::AttachConsole(self.child_pid);
+            if debug {
+                eprintln!("[DEBUG] AttachConsole({}) returned {}", self.child_pid, attach_result);
+            }
+
+            if attach_result != 0 {
+                let conout = win32::to_wide("CONOUT$");
+                let stdout = win32::CreateFileW(
+                    conout.as_ptr(),
+                    win32::GENERIC_READ | win32::GENERIC_WRITE,
+                    win32::FILE_SHARE_WRITE,
+                    std::ptr::null_mut(),
+                    win32::OPEN_EXISTING,
+                    0,
+                    0,
+                );
+
+                if stdout != win32::INVALID_HANDLE_VALUE {
+                    let mut info: win32::CONSOLE_SCREEN_BUFFER_INFOEX = std::mem::zeroed();
+                    info.cb_size = std::mem::size_of::<win32::CONSOLE_SCREEN_BUFFER_INFOEX>() as u32;
+
+                    if win32::GetConsoleScreenBufferInfoEx(stdout, &mut info) != 0 {
+                        // Windows COLORREF is 0x00BBGGRR (BGR format)
+                        let bg_color: u32 = (bg_b as u32) << 16 | (bg_g as u32) << 8 | (bg_r as u32);
+                        let fg_color: u32 = (fg_b as u32) << 16 | (fg_g as u32) << 8 | (fg_r as u32);
+
+                        // Color table indices: 0 = background, 7 = default foreground (light gray)
+                        // Also set index 15 (bright white) for programs that use it
+                        info.color_table[0] = bg_color;
+                        info.color_table[7] = fg_color;
+                        info.color_table[15] = fg_color;
+
+                        // Fix: SetConsoleScreenBufferInfoEx shrinks window by 1 in each dimension
+                        // Work around by expanding it before the call
+                        info.window.right += 1;
+                        info.window.bottom += 1;
+
+                        let set_result = win32::SetConsoleScreenBufferInfoEx(stdout, &info);
+                        if debug {
+                            eprintln!("[DEBUG] SetConsoleScreenBufferInfoEx returned {}", set_result);
+                        }
+                    } else if debug {
+                        eprintln!("[DEBUG] GetConsoleScreenBufferInfoEx failed");
+                    }
+                    win32::CloseHandle(stdout);
+                }
+                win32::FreeConsole();
+            }
+
+            if original != 0 {
+                win32::AttachConsole(win32::ATTACH_PARENT_PROCESS);
+            }
+        }
+    }
+
     #[cfg(windows)]
     pub fn kill(&mut self) {
         unsafe {
@@ -580,6 +682,8 @@ impl ConsoleSession {
     pub fn post_message(&self, _msg: u32, _wparam: usize, _lparam: isize) {}
     #[cfg(not(windows))]
     pub fn set_font(&self, _font_name: &str, _font_size: i16) {}
+    #[cfg(not(windows))]
+    pub fn set_colors(&self, _bg_r: u8, _bg_g: u8, _bg_b: u8, _fg_r: u8, _fg_g: u8, _fg_b: u8) {}
     #[cfg(not(windows))]
     pub fn kill(&mut self) {}
 }

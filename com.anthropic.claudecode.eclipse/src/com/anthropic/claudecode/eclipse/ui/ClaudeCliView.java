@@ -62,24 +62,53 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     /** Font definition ID from plugin.xml (Colors and Fonts preference). */
     private static final String FONT_ID = "com.anthropic.claudecode.eclipse.font.console";
 
-    private static final int BG_R = 0x12, BG_G = 0x13, BG_B = 0x14; // #121314
+    // Dark theme colors
+    private static final int DARK_BG_R = 0x12, DARK_BG_G = 0x13, DARK_BG_B = 0x14; // #121314
+    private static final int DARK_FG_R = 0xE5, DARK_FG_G = 0xE5, DARK_FG_B = 0xE5; // #E5E5E5
+
+    // Light theme colors
+    private static final int LIGHT_BG_R = 0xF5, LIGHT_BG_G = 0xF5, LIGHT_BG_B = 0xF5; // #F5F5F5
+    private static final int LIGHT_FG_R = 0x1E, LIGHT_FG_G = 0x1E, LIGHT_FG_B = 0x1E; // #1E1E1E
+
+    // Active theme colors (set from preference)
+    private int bgR, bgG, bgB;
+    private int fgR, fgG, fgB;
 
     private CTabFolder tabFolder;
     private int sessionCounter = 0;
     private volatile boolean viewDisposed = false;
     private boolean launching = false;
     private Color bgColor;
+    private Color fgColor;
+    private Composite parentComposite;
+    private Composite containerComposite;
     private IPropertyChangeListener fontChangeListener;
+    private org.eclipse.jface.util.IPropertyChangeListener themeChangeListener;
 
     @Override
     public void createPartControl(Composite parent) {
         Display display = parent.getDisplay();
-        bgColor = new Color(display, BG_R, BG_G, BG_B);
 
+        // Read theme preference and set colors
+        String theme = Activator.getDefault().getPreferenceStore()
+                .getString(Constants.PREF_CONSOLE_THEME);
+        if (Constants.CONSOLE_THEME_LIGHT.equals(theme)) {
+            bgR = LIGHT_BG_R; bgG = LIGHT_BG_G; bgB = LIGHT_BG_B;
+            fgR = LIGHT_FG_R; fgG = LIGHT_FG_G; fgB = LIGHT_FG_B;
+        } else {
+            bgR = DARK_BG_R; bgG = DARK_BG_G; bgB = DARK_BG_B;
+            fgR = DARK_FG_R; fgG = DARK_FG_G; fgB = DARK_FG_B;
+        }
+
+        bgColor = new Color(display, bgR, bgG, bgB);
+        fgColor = new Color(display, fgR, fgG, fgB);
+
+        parentComposite = parent;
         parent.setBackground(bgColor);
         parent.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
 
         Composite container = new Composite(parent, SWT.NONE);
+        containerComposite = container;
         GridLayout layout = new GridLayout(1, false);
         layout.marginWidth = 0;
         layout.marginHeight = 0;
@@ -186,6 +215,55 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             }
         };
         JFaceResources.getFontRegistry().addListener(fontChangeListener);
+
+        // Listen for console theme preference changes.
+        themeChangeListener = event -> {
+            if (Constants.PREF_CONSOLE_THEME.equals(event.getProperty())) {
+                display.asyncExec(() -> {
+                    if (viewDisposed || tabFolder == null || tabFolder.isDisposed()) return;
+                    applyTheme((String) event.getNewValue());
+                });
+            }
+        };
+        Activator.getDefault().getPreferenceStore().addPropertyChangeListener(themeChangeListener);
+    }
+
+    private void applyTheme(String theme) {
+        Display display = Display.getCurrent();
+        if (display == null) return;
+
+        // Update color values
+        if (Constants.CONSOLE_THEME_LIGHT.equals(theme)) {
+            bgR = LIGHT_BG_R; bgG = LIGHT_BG_G; bgB = LIGHT_BG_B;
+            fgR = LIGHT_FG_R; fgG = LIGHT_FG_G; fgB = LIGHT_FG_B;
+        } else {
+            bgR = DARK_BG_R; bgG = DARK_BG_G; bgB = DARK_BG_B;
+            fgR = DARK_FG_R; fgG = DARK_FG_G; fgB = DARK_FG_B;
+        }
+
+        // Dispose old colors and create new ones
+        Color oldBg = bgColor;
+        Color oldFg = fgColor;
+        bgColor = new Color(display, bgR, bgG, bgB);
+        fgColor = new Color(display, fgR, fgG, fgB);
+
+        // Update container backgrounds
+        if (parentComposite != null && !parentComposite.isDisposed()) {
+            parentComposite.setBackground(bgColor);
+        }
+        if (containerComposite != null && !containerComposite.isDisposed()) {
+            containerComposite.setBackground(bgColor);
+        }
+
+        // Update all terminal sessions
+        for (CTabItem item : tabFolder.getItems()) {
+            TerminalSession session = (TerminalSession) item.getData();
+            if (session != null) session.updateTheme();
+        }
+
+        // Dispose old colors after updating (to avoid using disposed colors)
+        if (oldBg != null && !oldBg.isDisposed()) oldBg.dispose();
+        if (oldFg != null && !oldFg.isDisposed()) oldFg.dispose();
     }
 
     private void openNewSession(String cwd, String scopeLabel, String... extraArgs) {
@@ -303,6 +381,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             JFaceResources.getFontRegistry().removeListener(fontChangeListener);
             fontChangeListener = null;
         }
+        if (themeChangeListener != null) {
+            Activator.getDefault().getPreferenceStore().removePropertyChangeListener(themeChangeListener);
+            themeChangeListener = null;
+        }
         if (tabFolder != null && !tabFolder.isDisposed()) {
             for (CTabItem item : tabFolder.getItems()) {
                 TerminalSession session = (TerminalSession) item.getData();
@@ -310,6 +392,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             }
         }
         if (bgColor != null && !bgColor.isDisposed()) bgColor.dispose();
+        if (fgColor != null && !fgColor.isDisposed()) fgColor.dispose();
         super.dispose();
     }
 
@@ -391,7 +474,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             // Use cachedColor so the Color object stays alive for the session.
             // StyledTextRenderer stores the Color reference internally; disposing it
             // immediately (as was done before) causes a GC.setForeground crash on GTK.
-            termText.setForeground(cachedColor(229, 229, 229));
+            termText.setForeground(cachedColor(fgR, fgG, fgB));
 
             // Use font from Colors and Fonts preferences (defaults to Text Font).
             termFont = JFaceResources.getFont(FONT_ID);
@@ -625,9 +708,9 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                             style.foreground = style.background;
                             style.background = tmp;
                             if (style.foreground == null)
-                                style.foreground = cachedColor(BG_R, BG_G, BG_B);
+                                style.foreground = cachedColor(bgR, bgG, bgB);
                             if (style.background == null)
-                                style.background = cachedColor(229, 229, 229);
+                                style.background = cachedColor(fgR, fgG, fgB);
                         }
 
                         styles.add(style);
@@ -743,6 +826,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             if (ok) {
                 embedded = true;
                 updateFont(); // Apply font from Colors and Fonts preferences.
+                NativeCore.consoleSetColors(consoleHandle, bgR, bgG, bgB, fgR, fgG, fgB);
                 Display.getCurrent().timerExec(50, this::focus);
             } else {
                 embedRetries++;
@@ -882,6 +966,37 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                             NativeCore.ptyResize(ptyHandle, cr[0], cr[1]);
                         }
                     }
+                }
+            }
+        }
+
+        void updateTheme() {
+            if (disposed) return;
+
+            // Update consoleHost background
+            if (consoleHost != null && !consoleHost.isDisposed()) {
+                consoleHost.setBackground(bgColor);
+            }
+
+            // Update tab content background
+            if (tabItem != null && !tabItem.isDisposed()) {
+                Composite content = (Composite) tabItem.getControl();
+                if (content != null && !content.isDisposed()) {
+                    content.setBackground(bgColor);
+                }
+            }
+
+            if (IS_WINDOWS) {
+                // For Windows, update embedded console colors via native call
+                if (consoleHandle != 0 && embedded) {
+                    NativeCore.consoleSetColors(consoleHandle, bgR, bgG, bgB, fgR, fgG, fgB);
+                }
+            } else {
+                // For PTY terminal (Linux/macOS), update StyledText colors
+                if (termText != null && !termText.isDisposed()) {
+                    termText.setBackground(bgColor);
+                    termText.setForeground(cachedColor(fgR, fgG, fgB));
+                    termText.redraw();
                 }
             }
         }

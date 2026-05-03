@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.3.14] — 2026-05-02 *(current)*
+## [2.3.15] — 2026-05-02 *(current)*
+
+### Added
+- **Console theme preference** — new "Console theme" dropdown in Window → Preferences → Claude Code to switch between Dark and Light themes; changes apply immediately without restart; works on all platforms (Windows uses native console color API, Linux/macOS use SWT StyledText colors)
+
+---
+
+## [2.3.14] — 2026-05-02
 
 ### Added
 - **Console font preference** — the Claude CLI terminal font can now be customized in Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude CLI Console Font; defaults to Eclipse's Text Font setting; works on all platforms (Windows, Linux, macOS)

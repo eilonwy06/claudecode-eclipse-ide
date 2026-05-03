@@ -25,5 +25,7 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         store.setDefault(Constants.PREF_HTTP_PROXY, "");
         store.setDefault(Constants.PREF_HTTPS_PROXY, "");
         store.setDefault(Constants.PREF_NO_PROXY, "");
+
+        store.setDefault(Constants.PREF_CONSOLE_THEME, Constants.CONSOLE_THEME_DARK);
     }
 }

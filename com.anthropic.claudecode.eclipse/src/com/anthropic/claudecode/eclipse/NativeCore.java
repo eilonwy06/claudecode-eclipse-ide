@@ -266,6 +266,20 @@ public final class NativeCore {
     public static native void consoleSetFont(long handle, String fontName, int fontSize);
 
     /**
+     * Sets the console colors (background and foreground). Only effective on Windows.
+     *
+     * @param handle  console session handle
+     * @param bgR     background red (0-255)
+     * @param bgG     background green (0-255)
+     * @param bgB     background blue (0-255)
+     * @param fgR     foreground red (0-255)
+     * @param fgG     foreground green (0-255)
+     * @param fgB     foreground blue (0-255)
+     */
+    public static native void consoleSetColors(long handle, int bgR, int bgG, int bgB,
+                                               int fgR, int fgG, int fgB);
+
+    /**
      * Terminates the process and frees native memory.
      * The handle MUST NOT be used after this call.
      */
