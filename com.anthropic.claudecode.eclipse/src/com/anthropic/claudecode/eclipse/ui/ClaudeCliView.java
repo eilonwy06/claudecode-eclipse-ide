@@ -287,6 +287,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             TerminalSession session = new TerminalSession(tabItem, content, cwd, extraArgs);
             tabItem.setData(session);
             tabFolder.setSelection(tabItem);
+            // CTabFolder.setSelection does not trigger SelectionListener, so do it manually.
+            session.focus();
         } finally {
             Display.getCurrent().timerExec(500, () -> launching = false);
         }
