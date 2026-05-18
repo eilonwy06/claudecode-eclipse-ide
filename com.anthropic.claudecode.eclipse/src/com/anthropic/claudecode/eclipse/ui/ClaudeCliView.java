@@ -477,8 +477,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             termText.setForeground(cachedColor(fgR, fgG, fgB));
 
             // Use font from Colors and Fonts preferences (defaults to Text Font).
-            termFont = JFaceResources.getFont(FONT_ID);
-            termText.setFont(termFont);
+            applyTerminalFont(JFaceResources.getFont(FONT_ID));
             termText.setWordWrap(false);
             termText.setAlwaysShowScrollBars(false);
             termText.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
@@ -525,6 +524,24 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 }
                 e.doit = false;
             });
+        }
+
+        /**
+         * Sets the terminal font and also locks per-line height so a tall glyph
+         * (e.g. U+23BF) can't grow a single row and break the grid.
+         * Locking is important for correct lines rendering at least on Linux.
+         */
+        private void applyTerminalFont(Font font) {
+            if (termText == null || termText.isDisposed()) return;
+            termFont = font;
+            termText.setFont(font);
+            GC gc = new GC(termText);
+            try {
+                gc.setFont(font);
+                termText.setFixedLineMetrics(gc.getFontMetrics());
+            } finally {
+                gc.dispose();
+            }
         }
 
         /**
@@ -957,8 +974,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 }
             } else {
                 if (termText != null && !termText.isDisposed()) {
-                    termFont = font;
-                    termText.setFont(termFont);
+                    applyTerminalFont(font);
                     // Recalculate terminal size with new font metrics.
                     if (ptyHandle != 0) {
                         int[] cr = calcColsRows();
