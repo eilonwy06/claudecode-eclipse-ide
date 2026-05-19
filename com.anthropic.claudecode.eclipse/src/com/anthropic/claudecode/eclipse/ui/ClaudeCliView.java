@@ -469,7 +469,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         private void initPtyTerminal() {
             consoleHost.setLayout(new FillLayout());
 
-            termText = new StyledText(consoleHost, SWT.MULTI | SWT.V_SCROLL);
+            termText = new StyledText(consoleHost, SWT.MULTI | SWT.V_SCROLL | SWT.READ_ONLY);
             termText.setBackground(bgColor);
             // Use cachedColor so the Color object stays alive for the session.
             // StyledTextRenderer stores the Color reference internally; disposing it
