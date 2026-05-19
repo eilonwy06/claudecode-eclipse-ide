@@ -137,16 +137,19 @@ impl PtySession {
                 loop {
                     if cancelled.load(Ordering::Relaxed) { break; }
 
-                    // Check for pending resize.
-                    let sz = pending_size.swap(0, Ordering::Relaxed);
-                    if sz != 0 {
-                        let (cols, rows) = unpack_size(sz);
-                        vterm.resize(rows, cols);
-                    }
-
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
+                            // Apply any pending resize that landed while we were
+                            // blocked in read(), so post-SIGWINCH redraw bytes are
+                            // parsed at the new dimensions rather than clipped at
+                            // the old ones.
+                            let sz = pending_size.swap(0, Ordering::Relaxed);
+                            if sz != 0 {
+                                let (cols, rows) = unpack_size(sz);
+                                vterm.resize(rows, cols);
+                            }
+
                             vterm.process(&buf[..n]);
 
                             if let Some(json) = vterm.screen_to_json() {
