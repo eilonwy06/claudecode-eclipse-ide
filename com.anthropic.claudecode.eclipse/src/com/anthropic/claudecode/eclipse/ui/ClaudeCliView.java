@@ -8,6 +8,8 @@ import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IAdaptable;
+import org.eclipse.jface.action.Action;
+import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.resource.JFaceResources;
 import org.eclipse.jface.util.IPropertyChangeListener;
 import org.eclipse.jface.viewers.ISelection;
@@ -33,12 +35,12 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
-import org.eclipse.swt.widgets.ToolBar;
-import org.eclipse.swt.widgets.ToolItem;
 import org.eclipse.core.commands.AbstractHandler;
 import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.core.commands.ExecutionException;
+import org.eclipse.ui.ISharedImages;
 import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.handlers.IHandlerService;
 import org.eclipse.ui.part.IShowInTarget;
 import org.eclipse.ui.part.ShowInContext;
@@ -122,12 +124,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         tabFolder.setSimple(false);
         tabFolder.setTabHeight(24);
 
-        ToolBar toolbar = new ToolBar(tabFolder, SWT.FLAT);
-        ToolItem newBtn = new ToolItem(toolbar, SWT.PUSH);
-        newBtn.setText("+");
-        newBtn.setToolTipText("New Claude CLI Session");
-        newBtn.addListener(SWT.Selection, e -> openNewSession(null, null));
-        tabFolder.setTopRight(toolbar);
+        configureActionsBars();
 
         tabFolder.addCTabFolder2Listener(new CTabFolder2Adapter() {
             @Override
@@ -264,6 +261,21 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         // Dispose old colors after updating (to avoid using disposed colors)
         if (oldBg != null && !oldBg.isDisposed()) oldBg.dispose();
         if (oldFg != null && !oldFg.isDisposed()) oldFg.dispose();
+    }
+
+    private void configureActionsBars() {
+        IToolBarManager toolBarManager = getViewSite().getActionBars().getToolBarManager();
+        Action newSessionAction = new Action("New Claude CLI Session") {
+            @Override
+            public void run() {
+                openNewSession(null, null);
+            }
+        };
+        newSessionAction.setToolTipText("New Claude CLI Session");
+        newSessionAction.setImageDescriptor(
+                PlatformUI.getWorkbench().getSharedImages()
+                        .getImageDescriptor(ISharedImages.IMG_OBJ_ADD));
+        toolBarManager.add(newSessionAction);
     }
 
     private void openNewSession(String cwd, String scopeLabel, String... extraArgs) {
