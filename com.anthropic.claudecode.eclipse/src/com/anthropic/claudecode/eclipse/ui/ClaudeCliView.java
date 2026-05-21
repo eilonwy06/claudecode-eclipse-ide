@@ -8,6 +8,8 @@ import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IAdaptable;
+import org.eclipse.jface.action.Action;
+import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.resource.JFaceResources;
 import org.eclipse.jface.util.IPropertyChangeListener;
 import org.eclipse.jface.viewers.ISelection;
@@ -33,12 +35,12 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
-import org.eclipse.swt.widgets.ToolBar;
-import org.eclipse.swt.widgets.ToolItem;
 import org.eclipse.core.commands.AbstractHandler;
 import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.core.commands.ExecutionException;
+import org.eclipse.ui.ISharedImages;
 import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.handlers.IHandlerService;
 import org.eclipse.ui.part.IShowInTarget;
 import org.eclipse.ui.part.ShowInContext;
@@ -113,12 +115,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         tabFolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         tabFolder.setTabHeight(24);
 
-        ToolBar toolbar = new ToolBar(tabFolder, SWT.FLAT);
-        ToolItem newBtn = new ToolItem(toolbar, SWT.PUSH);
-        newBtn.setText("+");
-        newBtn.setToolTipText("New Claude CLI Session");
-        newBtn.addListener(SWT.Selection, e -> openNewSession(null, null));
-        tabFolder.setTopRight(toolbar);
+        configureActionsBars();
 
         tabFolder.addCTabFolder2Listener(new CTabFolder2Adapter() {
             @Override
@@ -239,6 +236,21 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         if (oldFg != null && !oldFg.isDisposed()) oldFg.dispose();
     }
 
+private void configureActionsBars() {
+        IToolBarManager toolBarManager = getViewSite().getActionBars().getToolBarManager();
+        Action newSessionAction = new Action("New Claude CLI Session") {
+            @Override
+            public void run() {
+                openNewSession(null, null);
+            }
+        };
+        newSessionAction.setToolTipText("New Claude CLI Session");
+        newSessionAction.setImageDescriptor(
+                PlatformUI.getWorkbench().getSharedImages()
+                        .getImageDescriptor(ISharedImages.IMG_OBJ_ADD));
+        toolBarManager.add(newSessionAction);
+    }
+
     private void setThemeColors(String theme, Display display) {
         if (Constants.CONSOLE_THEME_LIGHT.equals(theme)) {
             bgR = LIGHT_BG_R; bgG = LIGHT_BG_G; bgB = LIGHT_BG_B;
@@ -274,6 +286,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             TerminalSession session = new TerminalSession(tabItem, content, cwd, extraArgs);
             tabItem.setData(session);
             tabFolder.setSelection(tabItem);
+            // CTabFolder.setSelection does not trigger SelectionListener, so do it manually.
+            session.focus();
         } finally {
             Display.getCurrent().timerExec(500, () -> launching = false);
         }
@@ -456,7 +470,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         private void initPtyTerminal() {
             consoleHost.setLayout(new FillLayout());
 
-            termText = new StyledText(consoleHost, SWT.MULTI | SWT.V_SCROLL);
+            termText = new StyledText(consoleHost, SWT.MULTI | SWT.V_SCROLL | SWT.READ_ONLY);
             termText.setBackground(bgColor);
             // Use cachedColor so the Color object stays alive for the session.
             // StyledTextRenderer stores the Color reference internally; disposing it
@@ -464,8 +478,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             termText.setForeground(cachedColor(fgR, fgG, fgB));
 
             // Use font from Colors and Fonts preferences (defaults to Text Font).
-            termFont = JFaceResources.getFont(FONT_ID);
-            termText.setFont(termFont);
+            applyTerminalFont(JFaceResources.getFont(FONT_ID));
             termText.setWordWrap(false);
             termText.setAlwaysShowScrollBars(false);
             termText.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
@@ -512,6 +525,24 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 }
                 e.doit = false;
             });
+        }
+
+        /**
+         * Sets the terminal font and also locks per-line height so a tall glyph
+         * (e.g. U+23BF) can't grow a single row and break the grid.
+         * Locking is important for correct lines rendering at least on Linux.
+         */
+        private void applyTerminalFont(Font font) {
+            if (termText == null || termText.isDisposed()) return;
+            termFont = font;
+            termText.setFont(font);
+            GC gc = new GC(termText);
+            try {
+                gc.setFont(font);
+                termText.setFixedLineMetrics(gc.getFontMetrics());
+            } finally {
+                gc.dispose();
+            }
         }
 
         /**
@@ -946,8 +977,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 }
             } else {
                 if (termText != null && !termText.isDisposed()) {
-                    termFont = font;
-                    termText.setFont(termFont);
+                    applyTerminalFont(font);
                     // Recalculate terminal size with new font metrics.
                     if (ptyHandle != 0) {
                         int[] cr = calcColsRows();
