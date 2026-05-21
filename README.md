@@ -215,6 +215,10 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
+## Credits
+
+Special thanks to [xgsa](https://github.com/xgsa) for helping fix some issues in Linux and for improving the plugin.
+
 ## License
 
 [MIT](LICENSE)
