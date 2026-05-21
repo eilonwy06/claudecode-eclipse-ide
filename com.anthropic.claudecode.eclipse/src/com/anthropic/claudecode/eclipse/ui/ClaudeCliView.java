@@ -67,10 +67,12 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     // Dark theme colors
     private static final int DARK_BG_R = 0x12, DARK_BG_G = 0x13, DARK_BG_B = 0x14; // #121314
     private static final int DARK_FG_R = 0xE5, DARK_FG_G = 0xE5, DARK_FG_B = 0xE5; // #E5E5E5
+    private static final String DARK_COLORFGBG_ENV_VAL = "15;0";
 
     // Light theme colors
     private static final int LIGHT_BG_R = 0xF5, LIGHT_BG_G = 0xF5, LIGHT_BG_B = 0xF5; // #F5F5F5
     private static final int LIGHT_FG_R = 0x1E, LIGHT_FG_G = 0x1E, LIGHT_FG_B = 0x1E; // #1E1E1E
+    private static final String LIGHT_COLORFGBG_ENV_VAL = "0;15";
 
     // Active theme colors (set from preference)
     private int bgR, bgG, bgB;
@@ -82,6 +84,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     private boolean launching = false;
     private Color bgColor;
     private Color fgColor;
+    private String colorFgBgEnvVal;
     private Composite parentComposite;
     private Composite containerComposite;
     private IPropertyChangeListener fontChangeListener;
@@ -94,19 +97,9 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         // Read theme preference and set colors
         String theme = Activator.getDefault().getPreferenceStore()
                 .getString(Constants.PREF_CONSOLE_THEME);
-        if (Constants.CONSOLE_THEME_LIGHT.equals(theme)) {
-            bgR = LIGHT_BG_R; bgG = LIGHT_BG_G; bgB = LIGHT_BG_B;
-            fgR = LIGHT_FG_R; fgG = LIGHT_FG_G; fgB = LIGHT_FG_B;
-        } else {
-            bgR = DARK_BG_R; bgG = DARK_BG_G; bgB = DARK_BG_B;
-            fgR = DARK_FG_R; fgG = DARK_FG_G; fgB = DARK_FG_B;
-        }
-
-        bgColor = new Color(display, bgR, bgG, bgB);
-        fgColor = new Color(display, fgR, fgG, fgB);
+        setThemeColors(theme, display);
 
         parentComposite = parent;
-        parent.setBackground(bgColor);
         parent.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
 
         Composite container = new Composite(parent, SWT.NONE);
@@ -116,12 +109,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         layout.marginHeight = 0;
         layout.verticalSpacing = 0;
         container.setLayout(layout);
-        container.setBackground(bgColor);
         container.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
 
         tabFolder = new CTabFolder(container, SWT.BORDER | SWT.CLOSE);
         tabFolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
-        tabFolder.setSimple(false);
         tabFolder.setTabHeight(24);
 
         configureActionsBars();
@@ -229,28 +220,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         Display display = Display.getCurrent();
         if (display == null) return;
 
-        // Update color values
-        if (Constants.CONSOLE_THEME_LIGHT.equals(theme)) {
-            bgR = LIGHT_BG_R; bgG = LIGHT_BG_G; bgB = LIGHT_BG_B;
-            fgR = LIGHT_FG_R; fgG = LIGHT_FG_G; fgB = LIGHT_FG_B;
-        } else {
-            bgR = DARK_BG_R; bgG = DARK_BG_G; bgB = DARK_BG_B;
-            fgR = DARK_FG_R; fgG = DARK_FG_G; fgB = DARK_FG_B;
-        }
-
         // Dispose old colors and create new ones
         Color oldBg = bgColor;
         Color oldFg = fgColor;
-        bgColor = new Color(display, bgR, bgG, bgB);
-        fgColor = new Color(display, fgR, fgG, fgB);
-
-        // Update container backgrounds
-        if (parentComposite != null && !parentComposite.isDisposed()) {
-            parentComposite.setBackground(bgColor);
-        }
-        if (containerComposite != null && !containerComposite.isDisposed()) {
-            containerComposite.setBackground(bgColor);
-        }
+        setThemeColors(theme, display);
 
         // Update all terminal sessions
         for (CTabItem item : tabFolder.getItems()) {
@@ -263,7 +236,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         if (oldFg != null && !oldFg.isDisposed()) oldFg.dispose();
     }
 
-    private void configureActionsBars() {
+private void configureActionsBars() {
         IToolBarManager toolBarManager = getViewSite().getActionBars().getToolBarManager();
         Action newSessionAction = new Action("New Claude CLI Session") {
             @Override
@@ -276,6 +249,20 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 PlatformUI.getWorkbench().getSharedImages()
                         .getImageDescriptor(ISharedImages.IMG_OBJ_ADD));
         toolBarManager.add(newSessionAction);
+    }
+
+    private void setThemeColors(String theme, Display display) {
+        if (Constants.CONSOLE_THEME_LIGHT.equals(theme)) {
+            bgR = LIGHT_BG_R; bgG = LIGHT_BG_G; bgB = LIGHT_BG_B;
+            fgR = LIGHT_FG_R; fgG = LIGHT_FG_G; fgB = LIGHT_FG_B;
+            colorFgBgEnvVal = LIGHT_COLORFGBG_ENV_VAL;
+        } else {
+            bgR = DARK_BG_R; bgG = DARK_BG_G; bgB = DARK_BG_B;
+            fgR = DARK_FG_R; fgG = DARK_FG_G; fgB = DARK_FG_B;
+            colorFgBgEnvVal = DARK_COLORFGBG_ENV_VAL;
+        }
+        bgColor = new Color(display, bgR, bgG, bgB);
+        fgColor = new Color(display, fgR, fgG, fgB);
     }
 
     private void openNewSession(String cwd, String scopeLabel, String... extraArgs) {
@@ -299,6 +286,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             TerminalSession session = new TerminalSession(tabItem, content, cwd, extraArgs);
             tabItem.setData(session);
             tabFolder.setSelection(tabItem);
+            // CTabFolder.setSelection does not trigger SelectionListener, so do it manually.
+            session.focus();
         } finally {
             Display.getCurrent().timerExec(500, () -> launching = false);
         }
@@ -481,7 +470,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         private void initPtyTerminal() {
             consoleHost.setLayout(new FillLayout());
 
-            termText = new StyledText(consoleHost, SWT.MULTI | SWT.V_SCROLL);
+            termText = new StyledText(consoleHost, SWT.MULTI | SWT.V_SCROLL | SWT.READ_ONLY);
             termText.setBackground(bgColor);
             // Use cachedColor so the Color object stays alive for the session.
             // StyledTextRenderer stores the Color reference internally; disposing it
@@ -489,8 +478,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             termText.setForeground(cachedColor(fgR, fgG, fgB));
 
             // Use font from Colors and Fonts preferences (defaults to Text Font).
-            termFont = JFaceResources.getFont(FONT_ID);
-            termText.setFont(termFont);
+            applyTerminalFont(JFaceResources.getFont(FONT_ID));
             termText.setWordWrap(false);
             termText.setAlwaysShowScrollBars(false);
             termText.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
@@ -537,6 +525,24 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 }
                 e.doit = false;
             });
+        }
+
+        /**
+         * Sets the terminal font and also locks per-line height so a tall glyph
+         * (e.g. U+23BF) can't grow a single row and break the grid.
+         * Locking is important for correct lines rendering at least on Linux.
+         */
+        private void applyTerminalFont(Font font) {
+            if (termText == null || termText.isDisposed()) return;
+            termFont = font;
+            termText.setFont(font);
+            GC gc = new GC(termText);
+            try {
+                gc.setFont(font);
+                termText.setFixedLineMetrics(gc.getFontMetrics());
+            } finally {
+                gc.dispose();
+            }
         }
 
         /**
@@ -806,6 +812,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             envPairs.add(new String[]{"CLAUDE_IDE_PORT",       String.valueOf(port)});
             envPairs.add(new String[]{"CLAUDE_IDE_AUTH_TOKEN", authToken});
             envPairs.add(new String[]{"CLAUDE_IDE_NAME",       Constants.IDE_NAME});
+            // Needed for "/theme auto" works fine based on Eclipse preferences.
+            envPairs.add(new String[]{"COLORFGBG",             colorFgBgEnvVal});
 
             String argsJson     = toJsonStringArray(argList);
             String extraEnvJson = toJsonPairArray(envPairs);
@@ -969,8 +977,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 }
             } else {
                 if (termText != null && !termText.isDisposed()) {
-                    termFont = font;
-                    termText.setFont(termFont);
+                    applyTerminalFont(font);
                     // Recalculate terminal size with new font metrics.
                     if (ptyHandle != 0) {
                         int[] cr = calcColsRows();
