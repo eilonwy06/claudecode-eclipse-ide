@@ -65,10 +65,12 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     // Dark theme colors
     private static final int DARK_BG_R = 0x12, DARK_BG_G = 0x13, DARK_BG_B = 0x14; // #121314
     private static final int DARK_FG_R = 0xE5, DARK_FG_G = 0xE5, DARK_FG_B = 0xE5; // #E5E5E5
+    private static final String DARK_COLORFGBG_ENV_VAL = "15;0";
 
     // Light theme colors
     private static final int LIGHT_BG_R = 0xF5, LIGHT_BG_G = 0xF5, LIGHT_BG_B = 0xF5; // #F5F5F5
     private static final int LIGHT_FG_R = 0x1E, LIGHT_FG_G = 0x1E, LIGHT_FG_B = 0x1E; // #1E1E1E
+    private static final String LIGHT_COLORFGBG_ENV_VAL = "0;15";
 
     // Active theme colors (set from preference)
     private int bgR, bgG, bgB;
@@ -80,6 +82,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     private boolean launching = false;
     private Color bgColor;
     private Color fgColor;
+    private String colorFgBgEnvVal;
     private Composite parentComposite;
     private Composite containerComposite;
     private IPropertyChangeListener fontChangeListener;
@@ -92,16 +95,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         // Read theme preference and set colors
         String theme = Activator.getDefault().getPreferenceStore()
                 .getString(Constants.PREF_CONSOLE_THEME);
-        if (Constants.CONSOLE_THEME_LIGHT.equals(theme)) {
-            bgR = LIGHT_BG_R; bgG = LIGHT_BG_G; bgB = LIGHT_BG_B;
-            fgR = LIGHT_FG_R; fgG = LIGHT_FG_G; fgB = LIGHT_FG_B;
-        } else {
-            bgR = DARK_BG_R; bgG = DARK_BG_G; bgB = DARK_BG_B;
-            fgR = DARK_FG_R; fgG = DARK_FG_G; fgB = DARK_FG_B;
-        }
-
-        bgColor = new Color(display, bgR, bgG, bgB);
-        fgColor = new Color(display, fgR, fgG, fgB);
+        setThemeColors(theme, display);
 
         parentComposite = parent;
         parent.setBackground(bgColor);
@@ -232,20 +226,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         Display display = Display.getCurrent();
         if (display == null) return;
 
-        // Update color values
-        if (Constants.CONSOLE_THEME_LIGHT.equals(theme)) {
-            bgR = LIGHT_BG_R; bgG = LIGHT_BG_G; bgB = LIGHT_BG_B;
-            fgR = LIGHT_FG_R; fgG = LIGHT_FG_G; fgB = LIGHT_FG_B;
-        } else {
-            bgR = DARK_BG_R; bgG = DARK_BG_G; bgB = DARK_BG_B;
-            fgR = DARK_FG_R; fgG = DARK_FG_G; fgB = DARK_FG_B;
-        }
-
         // Dispose old colors and create new ones
         Color oldBg = bgColor;
         Color oldFg = fgColor;
-        bgColor = new Color(display, bgR, bgG, bgB);
-        fgColor = new Color(display, fgR, fgG, fgB);
+        setThemeColors(theme, display);
 
         // Update container backgrounds
         if (parentComposite != null && !parentComposite.isDisposed()) {
@@ -264,6 +248,20 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         // Dispose old colors after updating (to avoid using disposed colors)
         if (oldBg != null && !oldBg.isDisposed()) oldBg.dispose();
         if (oldFg != null && !oldFg.isDisposed()) oldFg.dispose();
+    }
+
+    private void setThemeColors(String theme, Display display) {
+        if (Constants.CONSOLE_THEME_LIGHT.equals(theme)) {
+            bgR = LIGHT_BG_R; bgG = LIGHT_BG_G; bgB = LIGHT_BG_B;
+            fgR = LIGHT_FG_R; fgG = LIGHT_FG_G; fgB = LIGHT_FG_B;
+            colorFgBgEnvVal = LIGHT_COLORFGBG_ENV_VAL;
+        } else {
+            bgR = DARK_BG_R; bgG = DARK_BG_G; bgB = DARK_BG_B;
+            fgR = DARK_FG_R; fgG = DARK_FG_G; fgB = DARK_FG_B;
+            colorFgBgEnvVal = DARK_COLORFGBG_ENV_VAL;
+        }
+        bgColor = new Color(display, bgR, bgG, bgB);
+        fgColor = new Color(display, fgR, fgG, fgB);
     }
 
     private void openNewSession(String cwd, String scopeLabel, String... extraArgs) {
@@ -794,6 +792,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             envPairs.add(new String[]{"CLAUDE_IDE_PORT",       String.valueOf(port)});
             envPairs.add(new String[]{"CLAUDE_IDE_AUTH_TOKEN", authToken});
             envPairs.add(new String[]{"CLAUDE_IDE_NAME",       Constants.IDE_NAME});
+            // Needed for "/theme auto" works fine based on Eclipse preferences.
+            envPairs.add(new String[]{"COLORFGBG",             colorFgBgEnvVal});
 
             String argsJson     = toJsonStringArray(argList);
             String extraEnvJson = toJsonPairArray(envPairs);
