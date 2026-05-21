@@ -98,7 +98,6 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         setThemeColors(theme, display);
 
         parentComposite = parent;
-        parent.setBackground(bgColor);
         parent.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
 
         Composite container = new Composite(parent, SWT.NONE);
@@ -108,12 +107,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         layout.marginHeight = 0;
         layout.verticalSpacing = 0;
         container.setLayout(layout);
-        container.setBackground(bgColor);
         container.setData("org.eclipse.e4.ui.css.disabled", Boolean.TRUE);
 
         tabFolder = new CTabFolder(container, SWT.BORDER | SWT.CLOSE);
         tabFolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
-        tabFolder.setSimple(false);
         tabFolder.setTabHeight(24);
 
         ToolBar toolbar = new ToolBar(tabFolder, SWT.FLAT);
@@ -230,14 +227,6 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         Color oldBg = bgColor;
         Color oldFg = fgColor;
         setThemeColors(theme, display);
-
-        // Update container backgrounds
-        if (parentComposite != null && !parentComposite.isDisposed()) {
-            parentComposite.setBackground(bgColor);
-        }
-        if (containerComposite != null && !containerComposite.isDisposed()) {
-            containerComposite.setBackground(bgColor);
-        }
 
         // Update all terminal sessions
         for (CTabItem item : tabFolder.getItems()) {
