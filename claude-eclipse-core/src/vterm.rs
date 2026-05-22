@@ -188,30 +188,49 @@ impl VirtualTerminal {
             return 0;
         }
 
+        // If old[0] is empty, nothing meaningful scrolled off — this is just
+        // initial content appearing on a blank screen.
+        if old_rows[0].is_empty() {
+            return 0;
+        }
+
         // Quick check: if old[0] == new[0], no scroll happened.
         if old_rows[0] == new_rows[0] {
             return 0;
         }
 
-        // Find where old[0] appears in new_rows.
-        // If old[0] == new[N], then N rows scrolled off (old rows 0..N are gone).
-        let max_check = old_rows.len().min(new_rows.len());
+        // Find the first non-empty row in old_rows to use as anchor.
+        // We need actual content to detect scrolling reliably.
+        let anchor_idx = match old_rows.iter().position(|r| !r.is_empty()) {
+            Some(idx) => idx,
+            None => return 0, // All old rows empty, nothing to track.
+        };
+        let anchor = &old_rows[anchor_idx];
+
+        // Look for where the anchor row appears in new_rows.
+        // If old[anchor_idx] == new[anchor_idx + N], then N rows scrolled off.
+        let max_check = new_rows.len();
         for n in 1..max_check {
-            // Check if old[0..] matches new[n..] (shifted by n rows).
-            let mut matches = true;
-            for i in 0..(max_check - n) {
-                if old_rows[i] != new_rows[n + i] {
-                    matches = false;
-                    break;
-                }
+            let new_idx = anchor_idx + n;
+            if new_idx >= new_rows.len() {
+                break;
             }
-            if matches {
-                return n;
+            if new_rows[new_idx] == *anchor {
+                // Verify the scroll by checking subsequent rows also match.
+                let mut valid = true;
+                for i in 1..(old_rows.len() - anchor_idx).min(new_rows.len() - new_idx) {
+                    if old_rows[anchor_idx + i] != new_rows[new_idx + i] {
+                        valid = false;
+                        break;
+                    }
+                }
+                if valid {
+                    return n;
+                }
             }
         }
 
         // No match found — content was replaced entirely (e.g., clear screen).
-        // Don't treat this as scrolling.
         0
     }
 
