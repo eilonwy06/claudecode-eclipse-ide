@@ -814,6 +814,8 @@ private void configureActionsBars() {
             envPairs.add(new String[]{"CLAUDE_IDE_NAME",       Constants.IDE_NAME});
             // Needed for "/theme auto" works fine based on Eclipse preferences.
             envPairs.add(new String[]{"COLORFGBG",             colorFgBgEnvVal});
+            // Allow using RGB colors, so Claude Code looks prettier.
+            envPairs.add(new String[]{"COLORTERM",             "truecolor"});
 
             String argsJson     = toJsonStringArray(argList);
             String extraEnvJson = toJsonPairArray(envPairs);
