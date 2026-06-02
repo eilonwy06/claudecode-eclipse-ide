@@ -4,9 +4,6 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.eclipse.core.commands.AbstractHandler;
-import org.eclipse.core.commands.ExecutionEvent;
-import org.eclipse.core.commands.ExecutionException;
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResource;
@@ -15,6 +12,11 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IAdaptable;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.IToolBarManager;
+import org.eclipse.jface.action.MenuManager;
+import org.eclipse.jface.action.Separator;
+import org.eclipse.jface.preference.IPreferenceStore;
+import org.eclipse.jface.preference.PreferenceConverter;
+import org.eclipse.jface.preference.PreferenceStore;
 import org.eclipse.jface.resource.FontRegistry;
 import org.eclipse.jface.resource.JFaceResources;
 import org.eclipse.jface.util.IPropertyChangeListener;
@@ -28,14 +30,15 @@ import org.eclipse.swt.custom.CTabItem;
 import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.FontData;
+import org.eclipse.swt.graphics.RGB;
 import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.ISharedImages;
 import org.eclipse.ui.PlatformUI;
-import org.eclipse.ui.handlers.IHandlerService;
 import org.eclipse.ui.part.IShowInTarget;
 import org.eclipse.ui.part.ShowInContext;
 import org.eclipse.ui.part.ViewPart;
@@ -49,7 +52,9 @@ import org.eclipse.terminal.connector.process.ProcessSettings;
 import org.eclipse.terminal.control.ITerminalListener;
 import org.eclipse.terminal.control.ITerminalViewControl;
 import org.eclipse.terminal.control.TerminalTitleRequestor;
-import org.eclipse.terminal.control.TerminalViewControlFactory;
+import org.eclipse.terminal.internal.emulator.VT100TerminalControl;
+import org.eclipse.terminal.internal.preferences.ITerminalConstants;
+import org.eclipse.terminal.model.TerminalColor;
 
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.Constants;
@@ -91,15 +96,14 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     private static final String LOCAL_CONNECTOR_ID =
             "org.eclipse.terminal.connector.local.LocalConnector";
 
-    // Dark theme background (tab content fill) + COLORFGBG hint for Claude.
-    private static final int DARK_BG_R = 0x12, DARK_BG_G = 0x13, DARK_BG_B = 0x14; // #121314
+    // COLORFGBG hint for Claude's "/theme auto", derived from the console theme.
     private static final String DARK_COLORFGBG_ENV_VAL = "15;0";
-
-    // Light theme background + COLORFGBG hint for Claude.
-    private static final int LIGHT_BG_R = 0xF5, LIGHT_BG_G = 0xF5, LIGHT_BG_B = 0xF5; // #F5F5F5
     private static final String LIGHT_COLORFGBG_ENV_VAL = "0;15";
 
+    // Active terminal colors, read from the PREF_CONSOLE_BG/FG_COLOR preferences
+    // (user-configurable, independent of Eclipse's shared Terminal colors).
     private int bgR, bgG, bgB;
+    private int fgR, fgG, fgB;
     private String colorFgBgEnvVal;
 
     private CTabFolder tabFolder;
@@ -150,22 +154,6 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             }
         }));
 
-        // Forward Ctrl+V to the active terminal (Eclipse grabs it first).
-        IHandlerService hs = getSite().getService(IHandlerService.class);
-        if (hs != null) {
-            hs.activateHandler("org.eclipse.ui.edit.paste", new AbstractHandler() {
-                @Override
-                public Object execute(ExecutionEvent event) throws ExecutionException {
-                    CTabItem item = tabFolder.getSelection();
-                    if (item != null && !item.isDisposed()) {
-                        TerminalSession session = (TerminalSession) item.getData();
-                        if (session != null) session.paste();
-                    }
-                    return null;
-                }
-            });
-        }
-
         fontChangeListener = event -> {
             if (FONT_ID.equals(event.getProperty())) {
                 display.asyncExec(() -> {
@@ -180,20 +168,25 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         JFaceResources.getFontRegistry().addListener(fontChangeListener);
 
         themeChangeListener = event -> {
-            if (Constants.PREF_CONSOLE_THEME.equals(event.getProperty())) {
+            String p = event.getProperty();
+            if (Constants.PREF_CONSOLE_THEME.equals(p)
+                    || Constants.PREF_CONSOLE_BG_COLOR.equals(p)
+                    || Constants.PREF_CONSOLE_FG_COLOR.equals(p)) {
                 display.asyncExec(() -> {
                     if (viewDisposed || tabFolder == null || tabFolder.isDisposed()) return;
-                    applyTheme((String) event.getNewValue());
+                    applyTheme();
                 });
             }
         };
         Activator.getDefault().getPreferenceStore().addPropertyChangeListener(themeChangeListener);
     }
 
-    private void applyTheme(String theme) {
+    private void applyTheme() {
         Display display = Display.getCurrent();
         if (display == null) return;
         Color oldBg = bgColor;
+        String theme = Activator.getDefault().getPreferenceStore()
+                .getString(Constants.PREF_CONSOLE_THEME);
         setThemeColors(theme, display);
         for (CTabItem item : tabFolder.getItems()) {
             TerminalSession session = (TerminalSession) item.getData();
@@ -217,14 +210,54 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     }
 
     private void setThemeColors(String theme, Display display) {
-        if (Constants.CONSOLE_THEME_LIGHT.equals(theme)) {
-            bgR = LIGHT_BG_R; bgG = LIGHT_BG_G; bgB = LIGHT_BG_B;
-            colorFgBgEnvVal = LIGHT_COLORFGBG_ENV_VAL;
-        } else {
-            bgR = DARK_BG_R; bgG = DARK_BG_G; bgB = DARK_BG_B;
-            colorFgBgEnvVal = DARK_COLORFGBG_ENV_VAL;
-        }
+        colorFgBgEnvVal = Constants.CONSOLE_THEME_LIGHT.equals(theme)
+                ? LIGHT_COLORFGBG_ENV_VAL : DARK_COLORFGBG_ENV_VAL;
+        // Background/foreground come from the user-configurable preferences.
+        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
+        RGB bg = PreferenceConverter.getColor(store, Constants.PREF_CONSOLE_BG_COLOR);
+        RGB fg = PreferenceConverter.getColor(store, Constants.PREF_CONSOLE_FG_COLOR);
+        bgR = bg.red; bgG = bg.green; bgB = bg.blue;
+        fgR = fg.red; fgG = fg.green; fgB = fg.blue;
         bgColor = new Color(display, bgR, bgG, bgB);
+    }
+
+    /**
+     * Builds a private preference store for one terminal control so the Claude
+     * CLI gets its OWN colors (custom background/foreground) independent of
+     * Eclipse's shared Terminal preferences. The control reads every
+     * {@link TerminalColor} from this store, so all of them must be set.
+     */
+    private PreferenceStore buildTerminalPrefs() {
+        PreferenceStore s = new PreferenceStore();
+        // Standard ANSI palette (so Claude's colored output renders correctly).
+        setPrefColor(s, TerminalColor.BLACK, 0, 0, 0);
+        setPrefColor(s, TerminalColor.RED, 205, 0, 0);
+        setPrefColor(s, TerminalColor.GREEN, 0, 205, 0);
+        setPrefColor(s, TerminalColor.YELLOW, 205, 205, 0);
+        setPrefColor(s, TerminalColor.BLUE, 0, 0, 238);
+        setPrefColor(s, TerminalColor.MAGENTA, 205, 0, 205);
+        setPrefColor(s, TerminalColor.CYAN, 0, 205, 205);
+        setPrefColor(s, TerminalColor.WHITE, 229, 229, 229);
+        setPrefColor(s, TerminalColor.BRIGHT_BLACK, 127, 127, 127);
+        setPrefColor(s, TerminalColor.BRIGHT_RED, 255, 0, 0);
+        setPrefColor(s, TerminalColor.BRIGHT_GREEN, 0, 255, 0);
+        setPrefColor(s, TerminalColor.BRIGHT_YELLOW, 255, 255, 0);
+        setPrefColor(s, TerminalColor.BRIGHT_BLUE, 92, 92, 255);
+        setPrefColor(s, TerminalColor.BRIGHT_MAGENTA, 255, 0, 255);
+        setPrefColor(s, TerminalColor.BRIGHT_CYAN, 0, 255, 255);
+        setPrefColor(s, TerminalColor.BRIGHT_WHITE, 255, 255, 255);
+        // Our custom background/foreground (and a sensible selection).
+        setPrefColor(s, TerminalColor.FOREGROUND, fgR, fgG, fgB);
+        setPrefColor(s, TerminalColor.BACKGROUND, bgR, bgG, bgB);
+        setPrefColor(s, TerminalColor.SELECTION_FOREGROUND, fgR, fgG, fgB);
+        setPrefColor(s, TerminalColor.SELECTION_BACKGROUND, 0x33, 0x44, 0x55);
+        s.setValue(ITerminalConstants.PREF_BUFFERLINES, ITerminalConstants.DEFAULT_BUFFERLINES);
+        s.setValue(ITerminalConstants.PREF_INVERT_COLORS, false);
+        return s;
+    }
+
+    private static void setPrefColor(PreferenceStore s, TerminalColor c, int r, int g, int b) {
+        PreferenceConverter.setValue(s, ITerminalConstants.getPrefForTerminalColor(c), new RGB(r, g, b));
     }
 
     private void openNewSession(String cwd, String scopeLabel, String... extraArgs) {
@@ -401,6 +434,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         private final String customCwd;
         private volatile boolean disposed = false;
         private ITerminalViewControl termControl;
+        private PreferenceStore prefStore;
 
         TerminalSession(Composite content, String cwd, String[] extraArgs) {
             this.content = content;
@@ -501,12 +535,16 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 public void setTerminalTitle(String title, TerminalTitleRequestor requestor) { /* keep "Claude N" */ }
             };
 
-            termControl = TerminalViewControlFactory.makeControl(
-                    listener, content, new ITerminalConnector[] { connector }, true);
+            // Use a private preference store so this terminal has its OWN
+            // colors (custom bg/fg) instead of Eclipse's shared Terminal prefs.
+            prefStore = buildTerminalPrefs();
+            termControl = new VT100TerminalControl(
+                    listener, content, new ITerminalConnector[] { connector }, prefStore);
             termControl.setCharset(java.nio.charset.StandardCharsets.UTF_8);
             applyControlFont();
             termControl.setConnector(connector);
             termControl.connectTerminal();
+            installCopyPaste();
 
             content.layout();
             focus();
@@ -529,10 +567,45 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             }
         }
 
-        void paste() {
-            if (!disposed && termControl != null && !termControl.isDisposed()) {
-                termControl.paste();
-            }
+        /**
+         * Adds a right-click Copy/Paste menu and cross-platform copy/paste key
+         * handling to the terminal canvas. The embedded control doesn't inherit
+         * the stock Terminal view's edit actions, so we wire them ourselves via
+         * the public copy()/paste()/selectAll() API.
+         */
+        private void installCopyPaste() {
+            if (termControl == null || termControl.isDisposed()) return;
+            final ITerminalViewControl control = termControl;
+            Control canvas = control.getControl();
+            if (canvas == null || canvas.isDisposed()) return;
+
+            MenuManager mgr = new MenuManager();
+            mgr.add(new Action("Copy") { @Override public void run() { control.copy(); } });
+            mgr.add(new Action("Paste") { @Override public void run() { control.paste(); } });
+            mgr.add(new Separator());
+            mgr.add(new Action("Select All") { @Override public void run() { control.selectAll(); } });
+            mgr.add(new Action("Clear") { @Override public void run() { control.clearTerminal(); } });
+            canvas.setMenu(mgr.createContextMenu(canvas));
+
+            // MOD1 = Ctrl on Windows/Linux, Cmd on macOS.
+            canvas.addListener(SWT.KeyDown, e -> {
+                boolean mod = (e.stateMask & SWT.MOD1) != 0;
+                boolean shift = (e.stateMask & SWT.SHIFT) != 0;
+                if (mod && !shift && e.keyCode == 'v') {            // paste
+                    control.paste(); e.doit = false;
+                } else if (shift && e.keyCode == SWT.INSERT) {      // paste
+                    control.paste(); e.doit = false;
+                } else if (mod && shift && e.keyCode == 'c') {      // copy
+                    control.copy(); e.doit = false;
+                } else if (mod && e.keyCode == SWT.INSERT) {        // copy
+                    control.copy(); e.doit = false;
+                } else if (mod && !shift && e.keyCode == 'c') {     // Ctrl+C: copy if
+                    String sel = control.getSelection();            // text selected,
+                    if (sel != null && !sel.isEmpty()) {            // else fall through
+                        control.copy(); e.doit = false;             // (SIGINT to claude)
+                    }
+                }
+            });
         }
 
         void updateFont() {
@@ -542,6 +615,12 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         void updateTheme() {
             if (disposed) return;
             if (content != null && !content.isDisposed()) content.setBackground(bgColor);
+            // Update the private store's bg/fg; the control listens to its own
+            // store, so this recolors the live terminal.
+            if (prefStore != null) {
+                setPrefColor(prefStore, TerminalColor.FOREGROUND, fgR, fgG, fgB);
+                setPrefColor(prefStore, TerminalColor.BACKGROUND, bgR, bgG, bgB);
+            }
         }
 
         void dispose() {

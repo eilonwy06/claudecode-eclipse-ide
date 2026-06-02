@@ -29,6 +29,11 @@ public final class Constants {
     public static final String CONSOLE_THEME_DARK = "dark";
     public static final String CONSOLE_THEME_LIGHT = "light";
 
+    /** Claude CLI terminal colors (independent of Eclipse's Terminal prefs).
+     *  Stored as PreferenceConverter RGB strings ("r,g,b"). */
+    public static final String PREF_CONSOLE_BG_COLOR = "consoleBgColor";
+    public static final String PREF_CONSOLE_FG_COLOR = "consoleFgColor";
+
     public static final String DEFAULT_CLAUDE_CMD = "claude";
 
     private Constants() {}

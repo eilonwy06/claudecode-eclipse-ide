@@ -1,6 +1,7 @@
 package com.anthropic.claudecode.eclipse.ui;
 
 import org.eclipse.jface.preference.BooleanFieldEditor;
+import org.eclipse.jface.preference.ColorFieldEditor;
 import org.eclipse.jface.preference.ComboFieldEditor;
 import org.eclipse.jface.preference.FieldEditorPreferencePage;
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -77,6 +78,17 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                     {"Dark", Constants.CONSOLE_THEME_DARK},
                     {"Light", Constants.CONSOLE_THEME_LIGHT}
                 },
+                getFieldEditorParent()));
+
+        // Claude CLI terminal colors — independent of Eclipse's Terminal colors.
+        addField(new ColorFieldEditor(
+                Constants.PREF_CONSOLE_BG_COLOR,
+                "Claude CLI background:",
+                getFieldEditorParent()));
+
+        addField(new ColorFieldEditor(
+                Constants.PREF_CONSOLE_FG_COLOR,
+                "Claude CLI foreground:",
                 getFieldEditorParent()));
 
         Label separator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);
