@@ -10,7 +10,7 @@ mod vterm;
 
 use chat::ChatManager;
 use jni::objects::{JClass, JObject, JString};
-use jni::sys::{jboolean, jint, jlong, jstring};
+use jni::sys::{jboolean, jint, jlong, jobjectArray, jstring};
 use jni::JNIEnv;
 use server::Server;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -729,4 +729,46 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_setDebug
     enabled: jboolean,
 ) {
     DEBUG_MODE.store(enabled != 0, Ordering::Relaxed);
+}
+
+// ===========================================================================
+// Login-shell environment JNI entry point
+// ===========================================================================
+
+/// Returns the login-shell environment to inject into a spawned terminal
+/// process, as a `String[]` of `KEY=VALUE` entries (e.g. `PATH=...`,
+/// `HTTPS_PROXY=...`).
+///
+/// This is the same capture used by the chat and the old PTY launch
+/// (see [`shell_env`]): GUI-launched Eclipse on macOS/Linux inherits a sparse
+/// environment, so without these entries `claude` installed via
+/// nvm/asdf/Homebrew/`npm -g` is invisible on PATH and shell-rc proxy vars are
+/// missing. On Windows the capture is empty (the full user environment is
+/// already inherited), so this returns a zero-length array.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_shellEnvInject(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jobjectArray {
+    let pairs = shell_env::captured_env().to_inject();
+
+    let string_class = match env.find_class("java/lang/String") {
+        Ok(c) => c,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let empty = match env.new_string("") {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let array = match env.new_object_array(pairs.len() as i32, &string_class, &empty) {
+        Ok(a) => a,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    for (i, (k, v)) in pairs.iter().enumerate() {
+        if let Ok(entry) = env.new_string(format!("{}={}", k, v)) {
+            let _ = env.set_object_array_element(&array, i as i32, &entry);
+        }
+    }
+    array.into_raw()
 }

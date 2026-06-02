@@ -308,6 +308,19 @@ public final class NativeCore {
     public static native void setProxyOverrides(String httpProxy, String httpsProxy, String noProxy);
 
     /**
+     * Returns the login-shell environment to inject into a spawned terminal
+     * process, as {@code KEY=VALUE} entries (e.g. {@code PATH=...},
+     * {@code HTTPS_PROXY=...}).
+     *
+     * <p>GUI-launched Eclipse on macOS/Linux inherits a sparse environment, so
+     * without these entries {@code claude} installed via nvm/asdf/Homebrew/
+     * {@code npm -g} is invisible on PATH and shell-rc proxy vars are missing.
+     * On Windows this returns an empty array (the full user environment is
+     * already inherited). May return {@code null} if the native call fails.
+     */
+    public static native String[] shellEnvInject();
+
+    /**
      * Enables or disables debug logging in native code.
      */
     public static native void setDebugMode(boolean enabled);
