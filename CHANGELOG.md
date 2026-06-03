@@ -9,6 +9,10 @@ All notable changes to Claude Code for Eclipse are documented here.
 ### Fixed
 - **Ctrl+C with selection now copies instead of sending SIGINT** — when text is selected in the terminal, `Ctrl`/`⌘`+`C` copies to clipboard; only sends interrupt when nothing is selected (thanks [@xgsa](https://github.com/xgsa), PR #28)
 
+---
+
+## [2.4.0] — 2026-06-03
+
 ### Changed
 - **Claude CLI now uses the embedded Eclipse Terminal** on all platforms, replacing the previous native console approach (Windows conhost / Linux + macOS Rust PTY + SWT StyledText renderer). This brings a mature terminal with proper scrollback, 24-bit truecolor, resize, and text selection — and fixes the Linux/macOS scrollback quirks
 - **Tab titles** now reflect Claude Code's current task (when provided by the CLI), falling back to "Claude N"
