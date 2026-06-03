@@ -4,7 +4,25 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.3.15] — 2026-05-02 *(current)*
+## [2.4.0] — 2026-06-03 *(current)*
+
+### Changed
+- **Claude CLI now uses the embedded Eclipse Terminal** on all platforms, replacing the previous native console approach (Windows conhost / Linux + macOS Rust PTY + SWT StyledText renderer). This brings a mature terminal with proper scrollback, 24-bit truecolor, resize, and text selection — and fixes the Linux/macOS scrollback quirks
+- **Tab titles** now reflect Claude Code's current task (when provided by the CLI), falling back to "Claude N"
+
+### Added
+- **Customizable Claude CLI colors** — set the terminal background and foreground in Window → Preferences → Claude Code ("Claude CLI background" / "Claude CLI foreground"); independent of Eclipse's built-in Terminal colors and applied immediately without restart
+- **Copy/paste and right-click menu** — Copy, Paste, Select All, and Clear & Refresh, plus cross-platform keyboard shortcuts (`Ctrl`/`⌘`+`V` or `Shift`+`Insert` to paste; `Ctrl`/`⌘`+`Shift`+`C` or `Ctrl`/`⌘`+`Insert` to copy; `Ctrl`/`⌘`+`C` copies a selection, otherwise interrupts Claude)
+- **Shift+Tab** support (Claude's auto-mode cycle)
+- **24-bit truecolor** — sets `COLORTERM=truecolor` so Claude emits RGB colors (thanks [@xgsa](https://github.com/xgsa), PR #26)
+- **Login-shell environment capture (macOS/Linux)** — GUI-launched Eclipse now inherits the login-shell `PATH` and proxy variables, so Claude installed via nvm/asdf/Homebrew/`npm -g` and shell-rc proxy settings are found
+
+### Dependencies
+- Now requires the Eclipse Terminal bundles — `org.eclipse.terminal.control`, `org.eclipse.terminal.connector.process`, `org.eclipse.terminal.connector.local` (1.1.0+) — and their CDT native PTY dependency. These ship with most Eclipse packages; on a minimal "Eclipse IDE for Java Developers" they may need installing first (see the README)
+
+---
+
+## [2.3.15] — 2026-05-02
 
 ### Added
 - **Console theme preference** — new "Console theme" dropdown in Window → Preferences → Claude Code to switch between Dark and Light themes; changes apply immediately without restart; works on all platforms (Windows uses native console color API, Linux/macOS use SWT StyledText colors)
