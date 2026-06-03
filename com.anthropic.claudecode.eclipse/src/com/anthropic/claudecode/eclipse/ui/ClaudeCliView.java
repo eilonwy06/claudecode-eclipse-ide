@@ -37,6 +37,7 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Listener;
 import org.eclipse.ui.ISharedImages;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.part.IShowInTarget;
@@ -439,6 +440,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         private volatile boolean disposed = false;
         private ITerminalViewControl termControl;
         private PreferenceStore prefStore;
+        private Listener ctrlCFilter;
 
         TerminalSession(CTabItem tabItem, Composite content, String cwd, String[] extraArgs) {
             this.tabItem = tabItem;
@@ -618,15 +620,31 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                     control.copy(); e.doit = false;
                 } else if (mod && e.keyCode == SWT.INSERT) {        // copy
                     control.copy(); e.doit = false;
-                } else if (mod && !shift && e.keyCode == 'c') {     // Ctrl+C: copy if
-                    String sel = control.getSelection();            // text selected,
-                    if (sel != null && !sel.isEmpty()) {            // else fall through
-                        control.copy(); e.doit = false;             // (SIGINT to claude)
-                    }
                 } else if (shift && !mod && e.keyCode == SWT.TAB) { // Shift+Tab → ESC[Z
                     control.pasteString("\033[Z"); e.doit = false;  // (claude auto-mode cycle)
                 }
             });
+
+            // Ctrl+C with selection must be intercepted in a Display filter, not a widget
+            // listener. The terminal's TerminalKeyHandler is registered first (typed
+            // addKeyListener during construction) and runs before our addListener handler,
+            // so by the time we see the event the SIGINT has already been sent. A filter
+            // fires before ALL widget listeners; setting e.type = SWT.None there causes
+            // EventTable.sendEvent to exit before invoking any widget listener (it checks
+            // event.type == 0 at the top of each iteration), so the terminal never sees it.
+            ctrlCFilter = e -> {
+                if (disposed || e.widget != canvas) return;
+                boolean mod = (e.stateMask & SWT.MOD1) != 0;
+                boolean shift = (e.stateMask & SWT.SHIFT) != 0;
+                if (mod && !shift && e.keyCode == 'c') {
+                    String sel = control.getSelection();
+                    if (sel != null && !sel.isEmpty()) {
+                        control.copy();
+                        e.type = SWT.None; // stops EventTable iteration; terminal never sees this
+                    }
+                }
+            };
+            canvas.getDisplay().addFilter(SWT.KeyDown, ctrlCFilter);
         }
 
         void updateFont() {
@@ -646,6 +664,11 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
         void dispose() {
             disposed = true;
+            if (ctrlCFilter != null) {
+                Display display = Display.getDefault();
+                if (!display.isDisposed()) display.removeFilter(SWT.KeyDown, ctrlCFilter);
+                ctrlCFilter = null;
+            }
             if (termControl != null && !termControl.isDisposed()) {
                 termControl.disposeTerminal();
             }
