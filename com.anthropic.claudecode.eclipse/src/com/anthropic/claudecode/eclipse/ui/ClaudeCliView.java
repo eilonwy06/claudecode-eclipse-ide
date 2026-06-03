@@ -249,8 +249,11 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         // Our custom background/foreground (and a sensible selection).
         setPrefColor(s, TerminalColor.FOREGROUND, fgR, fgG, fgB);
         setPrefColor(s, TerminalColor.BACKGROUND, bgR, bgG, bgB);
-        setPrefColor(s, TerminalColor.SELECTION_FOREGROUND, fgR, fgG, fgB);
-        setPrefColor(s, TerminalColor.SELECTION_BACKGROUND, 0x33, 0x44, 0x55);
+        // Use the platform selection colors so it stays legible in any theme.
+        RGB selBg = Display.getDefault().getSystemColor(SWT.COLOR_LIST_SELECTION).getRGB();
+        RGB selFg = Display.getDefault().getSystemColor(SWT.COLOR_LIST_SELECTION_TEXT).getRGB();
+        setPrefColor(s, TerminalColor.SELECTION_FOREGROUND, selFg.red, selFg.green, selFg.blue);
+        setPrefColor(s, TerminalColor.SELECTION_BACKGROUND, selBg.red, selBg.green, selBg.blue);
         s.setValue(ITerminalConstants.PREF_BUFFERLINES, ITerminalConstants.DEFAULT_BUFFERLINES);
         s.setValue(ITerminalConstants.PREF_INVERT_COLORS, false);
         return s;
@@ -275,7 +278,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             content.setBackground(bgColor);
             tabItem.setControl(content);
 
-            TerminalSession session = new TerminalSession(content, cwd, extraArgs);
+            TerminalSession session = new TerminalSession(tabItem, content, cwd, extraArgs);
             tabItem.setData(session);
             tabFolder.setSelection(tabItem);
             session.focus();
@@ -430,13 +433,15 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
     private final class TerminalSession {
 
+        private final CTabItem tabItem;
         private final Composite content;
         private final String customCwd;
         private volatile boolean disposed = false;
         private ITerminalViewControl termControl;
         private PreferenceStore prefStore;
 
-        TerminalSession(Composite content, String cwd, String[] extraArgs) {
+        TerminalSession(CTabItem tabItem, Composite content, String cwd, String[] extraArgs) {
+            this.tabItem = tabItem;
             this.content = content;
             this.customCwd = cwd;
             // Defer launch so the widget has its final layout size.
@@ -532,7 +537,15 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 @Override
                 public void setTerminalSelectionChanged() { /* no-op */ }
                 @Override
-                public void setTerminalTitle(String title, TerminalTitleRequestor requestor) { /* keep "Claude N" */ }
+                public void setTerminalTitle(String title, TerminalTitleRequestor requestor) {
+                    // Claude Code sets the title to the current task — show it on the tab.
+                    if (title == null || title.isBlank()) return;
+                    Display.getDefault().asyncExec(() -> {
+                        if (!disposed && tabItem != null && !tabItem.isDisposed()) {
+                            tabItem.setText(title);
+                        }
+                    });
+                }
             };
 
             // Use a private preference store so this terminal has its OWN
@@ -584,7 +597,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             mgr.add(new Action("Paste") { @Override public void run() { control.paste(); } });
             mgr.add(new Separator());
             mgr.add(new Action("Select All") { @Override public void run() { control.selectAll(); } });
-            mgr.add(new Action("Clear") { @Override public void run() { control.clearTerminal(); } });
+            mgr.add(new Action("Clear && Refresh") { @Override public void run() {
+                control.clearTerminal();
+                control.pasteString("\f"); // Ctrl+L → claude clears and redraws its UI
+            } });
             canvas.setMenu(mgr.createContextMenu(canvas));
 
             // MOD1 = Ctrl on Windows/Linux, Cmd on macOS.
@@ -604,6 +620,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                     if (sel != null && !sel.isEmpty()) {            // else fall through
                         control.copy(); e.doit = false;             // (SIGINT to claude)
                     }
+                } else if (shift && !mod && e.keyCode == SWT.TAB) { // Shift+Tab → ESC[Z
+                    control.pasteString("\033[Z"); e.doit = false;  // (claude auto-mode cycle)
                 }
             });
         }

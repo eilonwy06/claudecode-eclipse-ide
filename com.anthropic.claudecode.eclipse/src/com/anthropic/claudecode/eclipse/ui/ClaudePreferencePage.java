@@ -63,7 +63,7 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
 
         addField(new BooleanFieldEditor(
                 Constants.PREF_AUTO_LAUNCH_CLI,
-                "Auto-launch Claude Terminal on workspace open",
+                "Auto-launch Claude CLI on workspace open",
                 getFieldEditorParent()));
 
         addField(new BooleanFieldEditor(
@@ -73,7 +73,7 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
 
         addField(new ComboFieldEditor(
                 Constants.PREF_CONSOLE_THEME,
-                "Console theme:",
+                "Claude CLI theme:",
                 new String[][] {
                     {"Dark", Constants.CONSOLE_THEME_DARK},
                     {"Light", Constants.CONSOLE_THEME_LIGHT}
