@@ -143,8 +143,6 @@ Go to **Window → Preferences → Claude Code** to configure:
 
 The plugin follows a **Rust-first** approach: the heavy logic — HTTP/SSE server, MCP/JSON-RPC protocol, chat process management, and lock-file handling — lives in a native Rust library (`claude-eclipse-core`) loaded via JNI. Java is a thin glue layer for Eclipse/SWT API calls.
 
-The **Claude CLI** terminal is the exception: it's the Eclipse Terminal control (`org.eclipse.terminal`), embedded per tab on the Java side and launching `claude` through the local-process connector's PTY (ConPTY on Windows, native PTY on Linux/macOS). The crate still contains an older PTY/VT100 renderer from earlier versions; it's no longer in the terminal path and is slated for removal.
-
 ```
 Claude CLI  <--NDJSON-->  Rust (chat.rs)  --JNI callbacks-->  Java (ClaudeChatView)
                           Rust (mcp.rs)   --JNI tool call-->  Java (McpToolRegistry)
