@@ -20,6 +20,12 @@
       with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.
    </license>
 
+   <requires>
+      <import plugin="org.eclipse.terminal.control" version="1.1.0" match="compatible"/>
+      <import plugin="org.eclipse.terminal.connector.process" version="1.1.0" match="compatible"/>
+      <import plugin="org.eclipse.terminal.connector.local" version="1.1.0" match="compatible"/>
+   </requires>
+
    <plugin
          id="com.anthropic.claudecode.eclipse"
          version="0.0.0"/>

@@ -126,35 +126,31 @@ impl VirtualTerminal {
     }
 
     pub fn process(&mut self, data: &[u8]) {
-        // Snapshot the visible top rows and scrollback count BEFORE processing,
-        // so we can detect lines that scroll off into the scrollback buffer.
-        let (old_sb, top_rows) = {
-            let screen = self.parser.screen();
-            let sb = screen.scrollback();
-            let rows = screen.size().0;
-            let cols = screen.size().1;
-            let mut lines = Vec::with_capacity(rows as usize);
-            for row in 0..rows {
-                let mut line = String::with_capacity(cols as usize);
-                for col in 0..cols {
-                    if let Some(cell) = screen.cell(row, col) {
-                        let ch = cell.contents();
-                        if ch.is_empty() { line.push(' '); } else { line.push_str(&ch); }
-                    }
-                }
-                lines.push(line.trim_end().to_string());
-            }
-            (sb, lines)
-        };
+        // Skip scrollback tracking in alternate screen mode (e.g., vim, less).
+        if self.parser.screen().alternate_screen() {
+            self.parser.process(data);
+            return;
+        }
+
+        // Snapshot all visible rows BEFORE processing.
+        let old_rows = self.snapshot_visible_rows();
 
         self.parser.process(data);
 
-        let new_sb = self.parser.screen().scrollback();
-        let delta = new_sb.saturating_sub(old_sb);
-        if delta > 0 {
-            // The top `delta` rows from the previous visible screen scrolled off.
-            for i in 0..delta.min(top_rows.len()) {
-                self.scrollback_buf.push(top_rows[i].clone());
+        // Skip if still in alternate screen after processing.
+        if self.parser.screen().alternate_screen() {
+            return;
+        }
+
+        // Snapshot rows AFTER processing.
+        let new_rows = self.snapshot_visible_rows();
+
+        // Detect how many rows scrolled off by finding where old row 0 appears
+        // in the new screen. If old[0] == new[N], then N rows scrolled off.
+        let scrolled = self.detect_scroll_amount(&old_rows, &new_rows);
+        if scrolled > 0 {
+            for i in 0..scrolled.min(old_rows.len()) {
+                self.scrollback_buf.push(old_rows[i].clone());
             }
         }
 
@@ -166,15 +162,80 @@ impl VirtualTerminal {
         }
     }
 
+    /// Snapshot all visible rows as trimmed strings.
+    fn snapshot_visible_rows(&self) -> Vec<String> {
+        let screen = self.parser.screen();
+        let rows = screen.size().0;
+        let cols = screen.size().1;
+        let mut lines = Vec::with_capacity(rows as usize);
+        for row in 0..rows {
+            let mut line = String::with_capacity(cols as usize);
+            for col in 0..cols {
+                if let Some(cell) = screen.cell(row, col) {
+                    let ch = cell.contents();
+                    if ch.is_empty() { line.push(' '); } else { line.push_str(&ch); }
+                }
+            }
+            lines.push(line.trim_end().to_string());
+        }
+        lines
+    }
+
+    /// Detect how many rows scrolled off the top.
+    /// Returns 0 if no scroll detected, or N if the top N rows scrolled off.
+    fn detect_scroll_amount(&self, old_rows: &[String], new_rows: &[String]) -> usize {
+        if old_rows.is_empty() || new_rows.is_empty() {
+            return 0;
+        }
+
+        // If old[0] is empty, nothing meaningful scrolled off — this is just
+        // initial content appearing on a blank screen.
+        if old_rows[0].is_empty() {
+            return 0;
+        }
+
+        // Quick check: if old[0] == new[0], no scroll happened.
+        if old_rows[0] == new_rows[0] {
+            return 0;
+        }
+
+        // Find the first non-empty row in old_rows to use as anchor.
+        // We need actual content to detect scrolling reliably.
+        let anchor_idx = match old_rows.iter().position(|r| !r.is_empty()) {
+            Some(idx) => idx,
+            None => return 0, // All old rows empty, nothing to track.
+        };
+        let anchor = &old_rows[anchor_idx];
+
+        // Look for where the anchor row appears in new_rows.
+        // If old[anchor_idx] == new[anchor_idx + N], then N rows scrolled off.
+        let max_check = new_rows.len();
+        for n in 1..max_check {
+            let new_idx = anchor_idx + n;
+            if new_idx >= new_rows.len() {
+                break;
+            }
+            if new_rows[new_idx] == *anchor {
+                // Verify the scroll by checking subsequent rows also match.
+                let mut valid = true;
+                for i in 1..(old_rows.len() - anchor_idx).min(new_rows.len() - new_idx) {
+                    if old_rows[anchor_idx + i] != new_rows[new_idx + i] {
+                        valid = false;
+                        break;
+                    }
+                }
+                if valid {
+                    return n;
+                }
+            }
+        }
+
+        // No match found — content was replaced entirely (e.g., clear screen).
+        0
+    }
+
     pub fn resize(&mut self, rows: u16, cols: u16) {
-        // After resize the parser may reflow content, changing the scrollback
-        // count.  Reset our tracking so we don't misattribute reflow as scroll.
-        let old_sb = self.parser.screen().scrollback();
         self.parser.set_size(rows, cols);
-        let new_sb = self.parser.screen().scrollback();
-        // If reflow added/removed scrollback lines, absorb the delta silently
-        // (we can't recover their content after set_size already ran).
-        let _ = (old_sb, new_sb);
     }
 
     /// Serializes the current screen state as JSON.

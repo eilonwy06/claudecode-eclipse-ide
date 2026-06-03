@@ -23,6 +23,18 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 - **Linux:** x86_64
 - **macOS:** aarch64 (Apple Silicon) and x86_64 (Intel)
 
+### Required Eclipse Terminal bundles
+
+The **Claude CLI** view embeds the Eclipse Terminal, so these bundles must be present (version **1.1.0 or newer**, within the `1.x` range):
+
+- `org.eclipse.terminal.control`
+- `org.eclipse.terminal.connector.process`
+- `org.eclipse.terminal.connector.local`
+
+…plus their transitive dependencies (notably CDT's native PTY support, `org.eclipse.cdt.core.native`), which p2 resolves automatically.
+
+These bundles ship with most Eclipse packages (Eclipse IDE for C/C++ Developers, for Committers, for Enterprise Java Developers, and the full SDK), and the plugin's feature declares them, so p2 normally pulls them in during installation. If you're on the minimal **Eclipse IDE for Java Developers** and installation reports them as missing, install them first via **Help → Install New Software** from the main Eclipse release update site (search for *Terminal*). A reasonably recent Eclipse release is required, since Terminal `1.1+` ships only in newer versions.
+
 ### Setting Up Claude Code CLI
 
 1. **Install Node.js** (v18 or later) from [nodejs.org](https://nodejs.org) if you don't have it
@@ -64,7 +76,7 @@ Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
 
 Go to **Window → Show View → Other → Claude Code** and open the views you want:
 - **Claude Code** — server status, launch/resume/restart controls
-- **Claude CLI** — dedicated interactive terminal with native embedded console (Windows: conhost, Linux/macOS: PTY + StyledText with full ANSI color support)
+- **Claude CLI** — dedicated interactive terminal (multiple "Claude N" tabs), built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, and customizable colors
 - **Claude Chat** — web-based chat interface with markdown rendering
 
 ### Getting Started
@@ -73,13 +85,11 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 2. Type directly in the **Claude CLI** terminal, or switch to **Claude Chat** for a richer markdown interface
 3. Claude can read your open files, selection, and workspace context automatically via MCP tools
 
-> **Note (Windows):** The Claude CLI view embeds a native Windows console (conhost) directly into the Eclipse view — no WebView2, xterm.js, or TM Terminal required. Right-click paste is supported (Ctrl+V is not currently available).
-
-> **Note (Linux/macOS):** The Claude CLI view uses a native Rust PTY rendered in an SWT StyledText widget with full ANSI color, keyboard input, scrollback, and resize support.
+> **Note (all platforms):** The Claude CLI view embeds the Eclipse Terminal control and launches `claude` over a local PTY (ConPTY on Windows, native PTY on Linux/macOS), with full ANSI/24-bit color, scrollback, and resize. Copy/paste is available via the right-click menu or the keyboard: `Ctrl/⌘+V` (or `Shift+Insert`) to paste, `Ctrl/⌘+Shift+C` to copy, and `Ctrl/⌘+C` copies when text is selected (otherwise it passes through to interrupt Claude).
 
 > **Font customization (all platforms):** The console font can be changed in **Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude CLI Console Font**. By default it inherits from Eclipse's "Text Font" setting.
 
-> **Theme customization (all platforms):** The console theme (Dark/Light) can be changed in **Window → Preferences → Claude Code → Console theme**. Changes apply immediately without restart.
+> **Color customization (all platforms):** The Claude CLI's background/foreground colors — and the Dark/Light theme hint — can be set in **Window → Preferences → Claude Code** ("Claude CLI background", "Claude CLI foreground", and "Claude CLI theme"). These are independent of Eclipse's built-in Terminal colors and apply immediately without restart.
 
 ### Keyboard Shortcuts
 
@@ -126,11 +136,12 @@ Go to **Window → Preferences → Claude Code** to configure:
 | Claude command | `claude` | Path to the Claude CLI executable |
 | Arguments | *(empty)* | Additional CLI arguments (e.g., `--model claude-opus-4-7-20260418`) |
 | Port range (min/max) | 10000–65535 | Port range for the internal HTTP+SSE server |
-| Console theme | Dark | Terminal color theme (Dark or Light); applies immediately |
+| Claude CLI theme | Dark | Theme hint for Claude's `/theme auto` (Dark or Light); applies immediately |
+| Claude CLI background / foreground | `#121314` / `#E5E5E5` | Terminal colors, independent of Eclipse's Terminal; apply immediately |
 
 ## Architecture
 
-The plugin follows a **Rust-first** approach: all heavy logic (HTTP/SSE server, MCP protocol, chat process management, PTY handling, console embedding) lives in a native Rust library loaded via JNI. Java is a thin glue layer responsible only for Eclipse/SWT API calls.
+The plugin follows a **Rust-first** approach: the heavy logic — HTTP/SSE server, MCP/JSON-RPC protocol, chat process management, and lock-file handling — lives in a native Rust library (`claude-eclipse-core`) loaded via JNI. Java is a thin glue layer for Eclipse/SWT API calls.
 
 ```
 Claude CLI  <--NDJSON-->  Rust (chat.rs)  --JNI callbacks-->  Java (ClaudeChatView)
@@ -142,7 +153,7 @@ Claude CLI  <--NDJSON-->  Rust (chat.rs)  --JNI callbacks-->  Java (ClaudeChatVi
 
 | Project | Description |
 |---|---|
-| `claude-eclipse-core` | Rust native library — HTTP+SSE server, MCP/JSON-RPC protocol, chat process manager, PTY, console embedding. Built as a cdylib (`claude_eclipse_core.dll` / `libclaude_eclipse_core.so` / `libclaude_eclipse_core.dylib`) |
+| `claude-eclipse-core` | Rust native library — HTTP+SSE server, MCP/JSON-RPC protocol, chat process manager, lock-file management. Built as a cdylib (`claude_eclipse_core.dll` / `libclaude_eclipse_core.so` / `libclaude_eclipse_core.dylib`) |
 | `com.anthropic.claudecode.eclipse` | Eclipse plugin — UI views, MCP tool implementations, JNI bridge, chat HTML/JS |
 | `com.anthropic.claudecode.eclipse.feature` | Eclipse feature definition — declares the plugin and its metadata |
 | `com.anthropic.claudecode.eclipse.site` | p2 update site — the installable artifacts hosted via GitHub Pages |

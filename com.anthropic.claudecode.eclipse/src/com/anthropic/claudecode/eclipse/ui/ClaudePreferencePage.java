@@ -1,6 +1,7 @@
 package com.anthropic.claudecode.eclipse.ui;
 
 import org.eclipse.jface.preference.BooleanFieldEditor;
+import org.eclipse.jface.preference.ColorFieldEditor;
 import org.eclipse.jface.preference.ComboFieldEditor;
 import org.eclipse.jface.preference.FieldEditorPreferencePage;
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -62,7 +63,7 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
 
         addField(new BooleanFieldEditor(
                 Constants.PREF_AUTO_LAUNCH_CLI,
-                "Auto-launch Claude Terminal on workspace open",
+                "Auto-launch Claude CLI on workspace open",
                 getFieldEditorParent()));
 
         addField(new BooleanFieldEditor(
@@ -72,11 +73,22 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
 
         addField(new ComboFieldEditor(
                 Constants.PREF_CONSOLE_THEME,
-                "Console theme:",
+                "Claude CLI theme:",
                 new String[][] {
                     {"Dark", Constants.CONSOLE_THEME_DARK},
                     {"Light", Constants.CONSOLE_THEME_LIGHT}
                 },
+                getFieldEditorParent()));
+
+        // Claude CLI terminal colors — independent of Eclipse's Terminal colors.
+        addField(new ColorFieldEditor(
+                Constants.PREF_CONSOLE_BG_COLOR,
+                "Claude CLI background:",
+                getFieldEditorParent()));
+
+        addField(new ColorFieldEditor(
+                Constants.PREF_CONSOLE_FG_COLOR,
+                "Claude CLI foreground:",
                 getFieldEditorParent()));
 
         Label separator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);
