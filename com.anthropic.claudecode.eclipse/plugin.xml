@@ -177,7 +177,7 @@
                   icon="icons/claude-16.png"
                   label="Toggle Claude Code"
                   style="push"
-                  tooltip="Toggle Claude Code (Ctrl+Shift+C)"/>
+                  tooltip="Toggle Claude Code"/>
          </toolbar>
       </menuContribution>
    </extension>
