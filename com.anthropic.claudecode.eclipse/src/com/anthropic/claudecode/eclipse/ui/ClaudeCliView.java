@@ -296,6 +296,11 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         openNewSession(cwd, scopeLabel, extraArgs);
     }
 
+    public void ensureAtLeastOneTab() {
+        if (tabFolder == null || tabFolder.isDisposed()) return;
+        if (tabFolder.getItemCount() == 0) openNewSession(null, null);
+    }
+
     public void restartAllSessions() {
         if (tabFolder == null || tabFolder.isDisposed()) return;
         int count = tabFolder.getItemCount();
