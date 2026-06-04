@@ -23,6 +23,8 @@ import org.eclipse.jface.util.IPropertyChangeListener;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.dnd.Clipboard;
+import org.eclipse.swt.dnd.TextTransfer;
 import org.eclipse.swt.custom.CTabFolder;
 import org.eclipse.swt.custom.CTabFolder2Adapter;
 import org.eclipse.swt.custom.CTabFolderEvent;
@@ -78,8 +80,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
     public static final String VIEW_ID = "com.anthropic.claudecode.eclipse.ui.ClaudeCliView";
 
-    private static final boolean IS_WINDOWS =
-            System.getProperty("os.name", "").toLowerCase().contains("win");
+    private static final boolean IS_WINDOWS = Activator.isWindows();
 
     /** Font definition ID from plugin.xml (Colors and Fonts preference). */
     private static final String FONT_ID = "com.anthropic.claudecode.eclipse.font.console";
@@ -563,6 +564,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             termControl.setConnector(connector);
             termControl.connectTerminal();
             installCopyPaste();
+            createPopupMenu();
 
             content.layout();
             focus();
@@ -596,17 +598,6 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             final ITerminalViewControl control = termControl;
             Control canvas = control.getControl();
             if (canvas == null || canvas.isDisposed()) return;
-
-            MenuManager mgr = new MenuManager();
-            mgr.add(new Action("Copy") { @Override public void run() { control.copy(); } });
-            mgr.add(new Action("Paste") { @Override public void run() { control.paste(); } });
-            mgr.add(new Separator());
-            mgr.add(new Action("Select All") { @Override public void run() { control.selectAll(); } });
-            mgr.add(new Action("Clear && Refresh") { @Override public void run() {
-                control.clearTerminal();
-                control.pasteString("\f"); // Ctrl+L → claude clears and redraws its UI
-            } });
-            canvas.setMenu(mgr.createContextMenu(canvas));
 
             // MOD1 = Ctrl on Windows/Linux, Cmd on macOS.
             canvas.addListener(SWT.KeyDown, e -> {
@@ -645,6 +636,57 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 }
             };
             canvas.getDisplay().addFilter(SWT.KeyDown, ctrlCFilter);
+        }
+
+        private void createPopupMenu() {
+            if (termControl == null || termControl.isDisposed()) return;
+            final ITerminalViewControl control = termControl;
+            Control canvas = control.getControl();
+            if (canvas == null || canvas.isDisposed()) return;
+
+			String modKey = Activator.isMacOS() ? "\u2318" : "Ctrl";
+			MenuManager mgr = new MenuManager();
+            ISharedImages sharedImages = PlatformUI.getWorkbench().getSharedImages();
+            DisablingAction copyAction = new DisablingAction("&Copy\t" + modKey + "+C",
+                    sharedImages.getImageDescriptor(ISharedImages.IMG_TOOL_COPY),
+                    sharedImages.getImageDescriptor(ISharedImages.IMG_TOOL_COPY_DISABLED)) {
+                @Override public void run() { control.copy(); }
+                @Override public void updateEnabled() {
+                    String sel = control.getSelection();
+                    setEnabled(sel != null && !sel.isEmpty());
+                }
+            };
+            mgr.add(copyAction);
+            DisablingAction pasteAction = new DisablingAction("&Paste\t" + modKey + "+V",
+                    sharedImages.getImageDescriptor(ISharedImages.IMG_TOOL_PASTE),
+                    sharedImages.getImageDescriptor(ISharedImages.IMG_TOOL_PASTE_DISABLED)) {
+                @Override public void run() { control.paste(); }
+                @Override public void updateEnabled() {
+                    Clipboard cb = new Clipboard(Display.getDefault());
+                    try {
+                        String text = (String) cb.getContents(TextTransfer.getInstance());
+                        setEnabled(text != null && !text.isEmpty());
+                    } finally {
+                        cb.dispose();
+                    }
+                }
+            };
+            mgr.add(pasteAction);
+            mgr.addMenuListener(manager -> {
+                copyAction.updateEnabled();
+                pasteAction.updateEnabled();
+            });
+            mgr.add(new Action("Select &All\t" + modKey + "+A") { @Override public void run() { control.selectAll(); } });
+            mgr.add(new Separator());
+            Action clearRefreshAction = new Action("Clear && &Refresh",
+                    Activator.getImageDescriptor(Constants.IMG_CLEAR_REFRESH)) {
+                @Override public void run() {
+                    control.clearTerminal();
+                    control.pasteString("\f"); // Ctrl+L → claude clears and redraws its UI
+                }
+            };
+            mgr.add(clearRefreshAction);
+            canvas.setMenu(mgr.createContextMenu(canvas));
         }
 
         void updateFont() {

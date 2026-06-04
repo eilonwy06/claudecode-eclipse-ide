@@ -36,5 +36,7 @@ public final class Constants {
 
     public static final String DEFAULT_CLAUDE_CMD = "claude";
 
+    public static final String IMG_CLEAR_REFRESH = "clear_co";
+
     private Constants() {}
 }

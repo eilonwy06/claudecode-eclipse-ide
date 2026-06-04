@@ -1,9 +1,15 @@
 package com.anthropic.claudecode.eclipse;
 
+import java.net.URL;
+import java.util.Locale;
+
 import org.eclipse.core.runtime.ILog;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.jface.preference.IPreferenceStore;
+import org.eclipse.jface.resource.ImageDescriptor;
+import org.eclipse.jface.resource.ImageRegistry;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
+import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 
 import com.anthropic.claudecode.eclipse.editor.SelectionTracker;
@@ -15,6 +21,7 @@ public class Activator extends AbstractUIPlugin {
 
     private static Activator instance;
     private static final ILog LOG = Platform.getLog(Activator.class);
+    private static final String IMAGE_DIR_ROOT = "icons/";
 
     private HttpSseServer httpSseServer;
     private McpToolRegistry toolRegistry;
@@ -143,5 +150,27 @@ public class Activator extends AbstractUIPlugin {
 
     public static void logError(String message, Throwable t) {
         LOG.error(message, t);
+    }
+
+    public static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    public static boolean isMacOS() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+    }
+
+    @Override
+    protected void initializeImageRegistry(ImageRegistry registry) {
+        putImage(registry, getBundle(), Constants.IMG_CLEAR_REFRESH, "clear_co.svg");
+    }
+
+    private static void putImage(ImageRegistry registry, Bundle bundle, String key, String fileName) {
+        URL url = bundle.getEntry(IMAGE_DIR_ROOT + fileName);
+        if (url != null) registry.put(key, ImageDescriptor.createFromURL(url));
+    }
+
+    public static ImageDescriptor getImageDescriptor(String key) {
+        return getDefault().getImageRegistry().getDescriptor(key);
     }
 }

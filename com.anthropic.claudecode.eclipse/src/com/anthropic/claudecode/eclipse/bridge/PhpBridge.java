@@ -362,11 +362,11 @@ public final class PhpBridge {
     }
 
     private boolean isWindows() {
-        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+        return Activator.isWindows();
     }
 
     private boolean isMacOS() {
-        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+        return Activator.isMacOS();
     }
 
     private boolean isDebugMode() {
