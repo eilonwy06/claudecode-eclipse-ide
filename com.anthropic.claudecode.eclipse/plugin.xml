@@ -173,11 +173,11 @@
       <menuContribution locationURI="toolbar:org.eclipse.ui.main.toolbar?after=additions">
          <toolbar id="com.anthropic.claudecode.eclipse.toolbar">
             <command
-                  commandId="com.anthropic.claudecode.eclipse.commands.toggle"
+                  commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
                   icon="icons/claude-16.png"
-                  label="Toggle Claude Code"
+                  label="Activate Claude CLI"
                   style="push"
-                  tooltip="Toggle Claude Code"/>
+                  tooltip="Activate Claude CLI"/>
          </toolbar>
       </menuContribution>
    </extension>
