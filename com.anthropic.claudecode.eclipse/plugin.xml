@@ -63,6 +63,11 @@
             name="Restart Claude Code Server"
             description="Restart the MCP server"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.activateCli"
+            name="Activate Claude CLI"
+            description="Open the Claude CLI view"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
    </extension>
 
    <!-- Command Handlers -->
@@ -82,6 +87,9 @@
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.restart"
             class="com.anthropic.claudecode.eclipse.ui.handlers.RestartServerHandler"/>
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.ActivateClaudeCliHandler"/>
    </extension>
 
    <!-- Key Bindings -->
@@ -98,6 +106,10 @@
             commandId="com.anthropic.claudecode.eclipse.commands.addFile"
             schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
             sequence="M1+M3+A"/>
+      <key
+            commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="M1+`"/>
    </extension>
 
    <!-- Menus and Toolbar -->
@@ -112,6 +124,11 @@
                   commandId="com.anthropic.claudecode.eclipse.commands.toggle"
                   label="Toggle Claude Code"
                   mnemonic="T"
+                  style="push"/>
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
+                  label="Activate Claude CLI"
+                  mnemonic="L"
                   style="push"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
