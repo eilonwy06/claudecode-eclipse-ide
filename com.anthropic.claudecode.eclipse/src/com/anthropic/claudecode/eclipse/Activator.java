@@ -163,6 +163,7 @@ public class Activator extends AbstractUIPlugin {
     @Override
     protected void initializeImageRegistry(ImageRegistry registry) {
         putImage(registry, getBundle(), Constants.IMG_CLEAR_REFRESH, "clear_co.svg");
+        putImage(registry, getBundle(), Constants.IMG_NEW_CLI_SESSION, "new_cli_session.svg");
     }
 
     private static void putImage(ImageRegistry registry, Bundle bundle, String key, String fileName) {

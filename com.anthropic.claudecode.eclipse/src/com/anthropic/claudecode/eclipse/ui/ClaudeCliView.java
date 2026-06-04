@@ -206,8 +206,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             }
         };
         newSession.setToolTipText("New Claude CLI Session");
-        newSession.setImageDescriptor(PlatformUI.getWorkbench().getSharedImages()
-                .getImageDescriptor(ISharedImages.IMG_OBJ_ADD));
+        newSession.setImageDescriptor(Activator.getImageDescriptor(Constants.IMG_NEW_CLI_SESSION));
         toolBar.add(newSession);
     }
 
