@@ -101,7 +101,7 @@
       <key
             commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
             schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
-            sequence="M1+M2+S"/>
+            sequence="M1+M3+S"/>
       <key
             commandId="com.anthropic.claudecode.eclipse.commands.addFile"
             schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"

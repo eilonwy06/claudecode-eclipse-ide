@@ -97,7 +97,7 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 |---|---|
 | `Ctrl+Shift+C` | Toggle Claude Code view |
 | ``Ctrl+` ``    | Activate Claude CLI view |
-| `Ctrl+Shift+S` | Send current editor selection to Claude |
+| `Ctrl+Alt+S` | Send current editor selection to Claude |
 | `Ctrl+Alt+A` | Add current file to Claude's context |
 
 These are also available from the **Claude Code** menu in the menu bar and from the right-click context menu in any text editor.
