@@ -3,6 +3,12 @@ package com.anthropic.claudecode.eclipse;
 import org.eclipse.core.runtime.ILog;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.jface.preference.IPreferenceStore;
+import org.eclipse.ui.IViewPart;
+import org.eclipse.ui.IWorkbench;
+import org.eclipse.ui.IWorkbenchListener;
+import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.IWorkbenchWindow;
+import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.osgi.framework.BundleContext;
 
@@ -10,6 +16,7 @@ import com.anthropic.claudecode.eclipse.editor.SelectionTracker;
 import com.anthropic.claudecode.eclipse.mcp.McpToolRegistry;
 import com.anthropic.claudecode.eclipse.server.HttpSseServer;
 import com.anthropic.claudecode.eclipse.server.LockFileManager;
+import com.anthropic.claudecode.eclipse.ui.ClaudeCliView;
 
 public class Activator extends AbstractUIPlugin {
 
@@ -20,6 +27,7 @@ public class Activator extends AbstractUIPlugin {
     private McpToolRegistry toolRegistry;
     private SelectionTracker selectionTracker;
     private LockFileManager lockFileManager;
+    private IWorkbenchListener workbenchShutdownListener;
 
     @Override
     public void start(BundleContext context) throws Exception {
@@ -78,9 +86,39 @@ public class Activator extends AbstractUIPlugin {
         }
 
         LOG.info("Claude Code server started on port " + port);
+
+        if (workbenchShutdownListener == null && PlatformUI.isWorkbenchRunning()) {
+            workbenchShutdownListener = new IWorkbenchListener() {
+                @Override
+                public boolean preShutdown(IWorkbench workbench, boolean forced) {
+                    disconnectAllTerminals(workbench);
+                    return true;
+                }
+                @Override
+                public void postShutdown(IWorkbench workbench) {}
+            };
+            PlatformUI.getWorkbench().addWorkbenchListener(workbenchShutdownListener);
+        }
+    }
+
+    private void disconnectAllTerminals(IWorkbench workbench) {
+        for (IWorkbenchWindow window : workbench.getWorkbenchWindows()) {
+            for (IWorkbenchPage page : window.getPages()) {
+                IViewPart view = page.findView(ClaudeCliView.VIEW_ID);
+                if (view instanceof ClaudeCliView) {
+                    ((ClaudeCliView) view).disconnectAllSessions();
+                }
+            }
+        }
     }
 
     public void shutdown() {
+        if (workbenchShutdownListener != null) {
+            if (PlatformUI.isWorkbenchRunning()) {
+                PlatformUI.getWorkbench().removeWorkbenchListener(workbenchShutdownListener);
+            }
+            workbenchShutdownListener = null;
+        }
         if (selectionTracker != null) {
             selectionTracker.stop();
             selectionTracker = null;

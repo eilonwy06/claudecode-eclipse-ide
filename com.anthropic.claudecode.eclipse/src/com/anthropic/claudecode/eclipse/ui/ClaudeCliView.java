@@ -349,6 +349,14 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         return false;
     }
 
+    public void disconnectAllSessions() {
+        if (tabFolder == null || tabFolder.isDisposed()) return;
+        for (CTabItem item : tabFolder.getItems()) {
+            TerminalSession session = (TerminalSession) item.getData();
+            if (session != null) session.disconnect();
+        }
+    }
+
     @Override
     public void dispose() {
         viewDisposed = true;
@@ -659,6 +667,13 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             if (prefStore != null) {
                 setPrefColor(prefStore, TerminalColor.FOREGROUND, fgR, fgG, fgB);
                 setPrefColor(prefStore, TerminalColor.BACKGROUND, bgR, bgG, bgB);
+            }
+        }
+
+        void disconnect() {
+            if (termControl != null && !termControl.isDisposed()
+                    && termControl.getState() != TerminalState.CLOSED) {
+                termControl.disconnectTerminal();
             }
         }
 
