@@ -115,6 +115,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     private Color bgColor;
     private IPropertyChangeListener fontChangeListener;
     private IPropertyChangeListener themeChangeListener;
+    private Action scrollLockAction;
 
     @Override
     public void createPartControl(Composite parent) {
@@ -150,6 +151,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             if (item != null) {
                 TerminalSession session = (TerminalSession) item.getData();
                 if (session != null) {
+                    if (scrollLockAction != null)
+                        scrollLockAction.setChecked(session.isScrollLock());
                     getSite().getPage().activate(ClaudeCliView.this);
                     session.focus();
                 }
@@ -208,6 +211,21 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         newSession.setToolTipText("New Claude CLI Session");
         newSession.setImageDescriptor(Activator.getImageDescriptor(Constants.IMG_NEW_CLI_SESSION));
         toolBar.add(newSession);
+        toolBar.add(new Separator());
+
+        scrollLockAction = new Action("Scroll Lock", Action.AS_CHECK_BOX) {
+            @Override
+            public void run() {
+                CTabItem item = tabFolder.getSelection();
+                if (item != null) {
+                    TerminalSession session = (TerminalSession) item.getData();
+                    if (session != null) session.setScrollLock(isChecked());
+                }
+            }
+        };
+        scrollLockAction.setToolTipText("Scroll Lock");
+        scrollLockAction.setImageDescriptor(Activator.getImageDescriptor(Constants.IMG_SCROLL_LOCK));
+        toolBar.add(scrollLockAction);
     }
 
     private void setThemeColors(String theme, Display display) {
@@ -566,6 +584,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             createPopupMenu();
 
             content.layout();
+            if (scrollLockAction != null && scrollLockAction.isChecked())
+                termControl.setScrollLock(true);
             focus();
         }
 
@@ -686,6 +706,17 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             };
             mgr.add(clearRefreshAction);
             canvas.setMenu(mgr.createContextMenu(canvas));
+        }
+
+        void setScrollLock(boolean locked) {
+            if (!disposed && termControl != null && !termControl.isDisposed())
+                termControl.setScrollLock(locked);
+        }
+
+        boolean isScrollLock() {
+            if (!disposed && termControl != null && !termControl.isDisposed())
+                return termControl.isScrollLock();
+            return false;
         }
 
         void updateFont() {
