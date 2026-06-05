@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.4.2] — 2026-06-05 *(current)*
+## [2.4.3] — 2026-06-06 *(current)*
+
+### Added
+- **Stop button in Claude Chat** — Send button transforms to a red Stop (■) button while processing; click it or press Escape to cancel the current request; Enter key disabled during streaming to prevent accidental cancellation
+
+---
+
+## [2.4.2] — 2026-06-05
 
 ### Added
 - **Scroll lock button** in Claude CLI toolbar — toggles auto-scroll behavior ([@xgsa](https://github.com/xgsa), PR #33)

@@ -67,7 +67,7 @@ public class ClaudeCodeView extends ViewPart {
         createButtonRow(container);
         createLogArea(container, display);
 
-        appendLog("Claude Code for Eclipse v2.4.2\n");
+        appendLog("Claude Code for Eclipse v2.4.3\n");
         appendLog("─────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {
