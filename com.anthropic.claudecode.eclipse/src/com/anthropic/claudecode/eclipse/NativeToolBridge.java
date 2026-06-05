@@ -40,6 +40,11 @@ public class NativeToolBridge implements NativeCore.ToolCallback {
                     ? JsonParser.parseString(argsJson).getAsJsonObject()
                     : new JsonObject();
             McpToolResult result = tool.execute(args);
+            // null when UiHelper.syncCall() skips execution because the display is
+            // disposed (e.g. Eclipse is shutting down while a tool call is in flight).
+            if (result == null) {
+                return McpToolResult.error("Tool returned no result.").toJson().toString();
+            }
             return result.toJson().toString();
         } catch (Exception e) {
             Activator.logError("NativeToolBridge: error executing " + toolName, e);
