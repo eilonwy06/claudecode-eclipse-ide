@@ -32,6 +32,8 @@ public class ClaudeChatView extends ViewPart {
     private BrowserFunction sendToJavaFn;
     @SuppressWarnings("unused")
     private BrowserFunction newSessionFn;
+    @SuppressWarnings("unused")
+    private BrowserFunction cancelRequestFn;
 
     @Override
     public void createPartControl(Composite parent) {
@@ -54,6 +56,7 @@ public class ClaudeChatView extends ViewPart {
         // Register JS→Java bridge functions — stored in fields to prevent GC.
         sendToJavaFn = new SendMessageFunction(browser, "_sendToJava");
         newSessionFn = new NewSessionFunction(browser, "_newSession");
+        cancelRequestFn = new CancelRequestFunction(browser, "_cancelRequest");
 
         // Load the chat HTML once browser is ready
         browser.addProgressListener(new ProgressAdapter() {
@@ -187,6 +190,20 @@ public class ClaudeChatView extends ViewPart {
         public Object function(Object[] arguments) {
             processManager.resetSession();
             Activator.log("Chat session reset");
+            return null;
+        }
+    }
+
+    // --- BrowserFunction: JS calls Java to cancel current request ---
+    private class CancelRequestFunction extends BrowserFunction {
+        CancelRequestFunction(Browser browser, String name) {
+            super(browser, name);
+        }
+
+        @Override
+        public Object function(Object[] arguments) {
+            processManager.cancel();
+            Activator.log("Chat request cancelled");
             return null;
         }
     }

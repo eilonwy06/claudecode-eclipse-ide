@@ -98,7 +98,7 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
   </div>
   <div id="input-area">
     <textarea id="input" placeholder="Ask Claude..." rows="1" autofocus></textarea>
-    <button id="send-btn" onclick="sendMessage()">Send</button>
+    <button id="send-btn" onclick="handleSendStop()">Send</button>
   </div>
 </div>
 
@@ -119,16 +119,29 @@ inputEl.addEventListener('input', () => {
   inputEl.style.height = Math.min(inputEl.scrollHeight, 150) + 'px';
 });
 
-// Ctrl+Enter or Enter to send
+// Ctrl+Enter or Enter to send (disabled during streaming to prevent accidental cancel)
 inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    sendMessage();
-  } else if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
+    if (!isStreaming) sendMessage();
   }
 });
+
+// Escape to cancel during streaming
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isStreaming) {
+    e.preventDefault();
+    cancelRequest();
+  }
+});
+
+function handleSendStop() {
+  if (isStreaming) {
+    cancelRequest();
+  } else {
+    sendMessage();
+  }
+}
 
 function sendMessage() {
   const text = inputEl.value.trim();
@@ -145,6 +158,14 @@ function sendMessage() {
   if (typeof window._sendToJava === 'function') {
     window._sendToJava(text);
   }
+}
+
+function cancelRequest() {
+  if (typeof window._cancelRequest === 'function') {
+    window._cancelRequest();
+  }
+  finishAssistantMessage();
+  addSystemMessage('Request cancelled.');
 }
 
 function addMessage(role, content) {
@@ -210,9 +231,17 @@ function addSystemMessage(text) {
 
 function setStreaming(val) {
   isStreaming = val;
-  sendBtn.disabled = val;
   inputEl.disabled = val;
-  if (!val) inputEl.focus();
+  if (val) {
+    sendBtn.innerHTML = '&#9632;';
+    sendBtn.title = 'Stop';
+    sendBtn.style.background = '#d9534f';
+  } else {
+    sendBtn.innerHTML = 'Send';
+    sendBtn.title = '';
+    sendBtn.style.background = '';
+    inputEl.focus();
+  }
 }
 
 function setStatus(text) {
