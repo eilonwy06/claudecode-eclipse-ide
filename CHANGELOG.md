@@ -4,7 +4,22 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.4.1] — 2026-06-03 *(current)*
+## [2.4.2] — 2026-06-05 *(current)*
+
+### Added
+- **Scroll lock button** in Claude CLI toolbar — toggles auto-scroll behavior (thanks [@xgsa](https://github.com/xgsa), PR #33)
+- **Ctrl+\` shortcut** to quickly activate/focus the Claude CLI view (thanks [@xgsa](https://github.com/xgsa), PR #35)
+
+### Changed
+- **Send Selection shortcut changed from Ctrl+Shift+S to Ctrl+Alt+S** — avoids conflict with "Save All" on Linux (thanks [@xgsa](https://github.com/xgsa), PR #30)
+- **Polished toolbar and popup menu** — updated icons for "New Session" and "Clear & Refresh" actions, improved menu item states (thanks [@xgsa](https://github.com/xgsa), PRs #32, #33)
+
+### Fixed
+- **NPE on Eclipse termination** — terminals now properly disconnect when Eclipse shuts down, preventing NullPointerException in workbench listener (thanks [@xgsa](https://github.com/xgsa), PRs #31, #34)
+
+---
+
+## [2.4.1] — 2026-06-03
 
 ### Fixed
 - **Ctrl+C with selection now copies instead of sending SIGINT** — when text is selected in the terminal, `Ctrl`/`⌘`+`C` copies to clipboard; only sends interrupt when nothing is selected (thanks [@xgsa](https://github.com/xgsa), PR #28)
