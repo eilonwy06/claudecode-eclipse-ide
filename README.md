@@ -76,16 +76,18 @@ Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
 
 Go to **Window → Show View → Other → Claude Code** and open the views you want:
 - **Claude Code** — server status, launch/resume/restart controls
-- **Claude CLI** — dedicated interactive terminal (multiple "Claude N" tabs), built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, and customizable colors
+- **Claude CLI** — dedicated interactive terminal (multiple "Claude N" tabs), built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, customizable colors, and Ctrl/⌘-click navigation to file paths and links mentioned in Claude's answers
 - **Claude Chat** — web-based chat interface with markdown rendering
 
 ### Getting Started
 
 1. In the **Claude Code** view, click **Launch Claude Terminal** — this opens the **Claude CLI** view and starts Claude automatically
-2. Type directly in the **Claude CLI** terminal, or switch to **Claude Chat** for a richer markdown interface
+2. Type directly in the **Claude CLI** view, or switch to **Claude Chat** for a richer markdown interface
 3. Claude can read your open files, selection, and workspace context automatically via MCP tools
 
 > **Note (all platforms):** The Claude CLI view embeds the Eclipse Terminal control and launches `claude` over a local PTY (ConPTY on Windows, native PTY on Linux/macOS), with full ANSI/24-bit color, scrollback, and resize. Copy/paste is available via the right-click menu or the keyboard: `Ctrl/⌘+V` (or `Shift+Insert`) to paste, `Ctrl/⌘+Shift+C` to copy, and `Ctrl/⌘+C` copies when text is selected (otherwise it passes through to interrupt Claude).
+
+> **Open files and links (all platforms):** Claude often references file paths and URLs in its answers. **Ctrl-click** (⌘-click on macOS) any such token in the **Claude CLI** view to jump straight to it — a file opens in an editor, an `http`/`https` URL opens in your browser. You can also select text and choose **Open** from the right-click menu.
 
 > **Font customization (all platforms):** The console font can be changed in **Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude CLI Console Font**. By default it inherits from Eclipse's "Text Font" setting.
 
