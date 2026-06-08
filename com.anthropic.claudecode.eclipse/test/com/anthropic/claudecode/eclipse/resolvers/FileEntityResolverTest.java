@@ -145,6 +145,14 @@ class FileEntityResolverTest {
 	}
 
 	@Test
+	void lineRangeWithUnicodeDelimiter() {
+		resolver.existing.add("/abs/a.txt");
+		resolveAndFire("/abs/a.txt:10\u201315", false);
+		assertEquals("/abs/a.txt", resolver.locatedPath);
+		assertEquals(10, resolver.locatedLine);
+	}
+
+	@Test
 	void twoHyphensIsNotAValidLineReference() {
 		// ":10-15-20" must NOT parse as a line ref, so the suffix stays part of the path.
 		resolver.existing.add("/abs/a.txt:10-15-20");
