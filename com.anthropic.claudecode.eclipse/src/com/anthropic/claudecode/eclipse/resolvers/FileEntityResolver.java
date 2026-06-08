@@ -58,7 +58,7 @@ public class FileEntityResolver implements IEntityResolver {
 	private static final String LEADING_EDGE_JUNK = EDGE_JUNK.replace(".", "");
 
 	/** Trailing line reference: {@code :10} or {@code :10-15} (digits, with at most one hyphen). */
-	private static final Pattern LINE_SUFFIX = Pattern.compile(":(\\d+)(-\\d+)?$");
+	private static final Pattern LINE_SUFFIX = Pattern.compile(":(\\d+)([-\u2013]\\d+)?$");
 
 	@Override
 	public String getName() {

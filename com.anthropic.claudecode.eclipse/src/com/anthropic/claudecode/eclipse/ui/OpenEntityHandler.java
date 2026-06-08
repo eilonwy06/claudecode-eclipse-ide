@@ -48,6 +48,12 @@ public class OpenEntityHandler implements ITerminalMouseListener {
 	}
 
 	@Override
+	public void mouseDown(ITerminalTextDataReadOnly terminalText, int line, int column, int button, int stateMask) {
+		statusLine.setErrorMessage(null);
+		statusLine.setMessage(null);
+	}
+
+	@Override
 	public void mouseUp(ITerminalTextDataReadOnly terminalText, int line, int column, int button, int stateMask) {
 		// Only Ctrl-click (Cmd on macOS) on the left button; leave normal clicks/selection alone.
 		if ((stateMask & SWT.MODIFIER_MASK) != SWT.MOD1 || button != 1) {
@@ -78,6 +84,8 @@ public class OpenEntityHandler implements ITerminalMouseListener {
 		if (currentResolveJob != null) {
 			currentResolveJob.cancel();
 		}
+		statusLine.setErrorMessage(null);
+		statusLine.setMessage("Opening entity from \""+text+"\"...");
 		Job job = new Job("Resolving entity from Claude CLI") {
 			@Override
 			protected IStatus run(IProgressMonitor monitor) {
@@ -101,8 +109,9 @@ public class OpenEntityHandler implements ITerminalMouseListener {
 	 * the chooser menu.
 	 */
 	private void handleResolved(String text, List<NamedResolvedEntity> entities) {
+		statusLine.setMessage(null);
 		if (entities.isEmpty()) {
-			statusLine.setMessage("Unable to recognize entity to open from \""+text+"\"");
+			statusLine.setErrorMessage("Unable to recognize entity to open from \""+text+"\"");
 		} else if (entities.size() == 1) {
 			entities.get(0).entity().locate();
 		} else {
