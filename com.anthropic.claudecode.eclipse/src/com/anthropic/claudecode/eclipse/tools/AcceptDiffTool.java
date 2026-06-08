@@ -3,7 +3,6 @@ package com.anthropic.claudecode.eclipse.tools;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-import org.eclipse.compare.internal.CompareEditor;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IPath;
@@ -15,7 +14,6 @@ import com.anthropic.claudecode.eclipse.mcp.McpTool;
 import com.anthropic.claudecode.eclipse.mcp.McpToolResult;
 import com.google.gson.JsonObject;
 
-@SuppressWarnings("restriction")
 public class AcceptDiffTool implements McpTool {
 
     @Override
@@ -88,7 +86,7 @@ public class AcceptDiffTool implements McpTool {
 
         for (IEditorReference ref : page.getEditorReferences()) {
             var editor = ref.getEditor(false);
-            if (editor instanceof CompareEditor && editor.getEditorInput() == entry.getEditorInput()) {
+            if (editor.getEditorInput() == entry.getEditorInput()) {
                 page.closeEditor(editor, false);
                 break;
             }
