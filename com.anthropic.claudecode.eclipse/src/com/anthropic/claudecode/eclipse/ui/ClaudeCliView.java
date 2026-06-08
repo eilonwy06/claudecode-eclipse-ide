@@ -62,6 +62,7 @@ import org.eclipse.terminal.model.TerminalColor;
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.Constants;
 import com.anthropic.claudecode.eclipse.NativeCore;
+import com.anthropic.claudecode.eclipse.resolvers.EntitiesRegistry;
 
 /**
  * Claude CLI view: a tabbed view ("Claude 1", "Claude 2", …) where each tab
@@ -116,6 +117,9 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     private IPropertyChangeListener fontChangeListener;
     private IPropertyChangeListener themeChangeListener;
     private Action scrollLockAction;
+
+    /** Shared entity resolver registry for Ctrl-click navigation, one per view. */
+    private final EntitiesRegistry entitiesRegistry = new EntitiesRegistry();
 
     @Override
     public void createPartControl(Composite parent) {
@@ -594,7 +598,11 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             termControl.setConnector(connector);
             termControl.connectTerminal();
             installCopyPaste();
-            createPopupMenu();
+            OpenEntityHandler openEntityHandler = new OpenEntityHandler(
+                    termControl, entitiesRegistry,
+                    getViewSite().getActionBars().getStatusLineManager());
+            termControl.addMouseListener(openEntityHandler);
+            createPopupMenu(openEntityHandler);
 
             content.layout();
             if (scrollLockAction != null && scrollLockAction.isChecked())
@@ -670,7 +678,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             canvas.getDisplay().addFilter(SWT.KeyDown, ctrlCFilter);
         }
 
-        private void createPopupMenu() {
+        private void createPopupMenu(OpenEntityHandler openEntityHandler) {
             if (termControl == null || termControl.isDisposed()) return;
             final ITerminalViewControl control = termControl;
             Control canvas = control.getControl();
@@ -679,6 +687,18 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 			String modKey = Activator.isMacOS() ? "\u2318" : "Ctrl";
 			MenuManager mgr = new MenuManager();
             ISharedImages sharedImages = PlatformUI.getWorkbench().getSharedImages();
+            DisablingAction openAction = new DisablingAction("&Open", null, null) {
+                @Override public void run() {
+                    // Deliberate selection - don't strip edges.
+                    openEntityHandler.openEntity(control.getSelection(), false);
+                }
+                @Override public void updateEnabled() {
+                    String sel = control.getSelection();
+                    setEnabled(sel != null && !sel.isEmpty());
+                }
+            };
+            mgr.add(openAction);
+            mgr.add(new Separator());
             DisablingAction copyAction = new DisablingAction("&Copy\t" + modKey + "+C",
                     sharedImages.getImageDescriptor(ISharedImages.IMG_TOOL_COPY),
                     sharedImages.getImageDescriptor(ISharedImages.IMG_TOOL_COPY_DISABLED)) {
@@ -705,6 +725,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             };
             mgr.add(pasteAction);
             mgr.addMenuListener(manager -> {
+                openAction.updateEnabled();
                 copyAction.updateEnabled();
                 pasteAction.updateEnabled();
             });
