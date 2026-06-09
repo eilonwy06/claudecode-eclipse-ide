@@ -2,6 +2,7 @@ package com.anthropic.claudecode.eclipse.resolvers;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 import org.eclipse.core.runtime.Platform;
 
@@ -21,27 +22,10 @@ public class EntitiesRegistry {
 	public EntitiesRegistry() {
 		addResolver(new WebLinkEntityResolver());
 		addResolver(new FileEntityResolver());
-		addJavaResolverIfAvailable();
-	}
-
-	/**
-	 * Registers the JDT-backed {@link JavaIdentifierEntityResolver}, but only when JDT is actually
-	 * installed. The bundle check gates the {@code new}, so the JDT-referencing resolver class is never
-	 * loaded (and so never link-fails) on an Eclipse without JDT — this is what keeps JDT an
-	 * <em>optional</em> dependency (declared {@code resolution:=optional} in {@code MANIFEST.MF}). The
-	 * {@code catch} covers the rare case of JDT being present but not wired to us (e.g. a version outside
-	 * our range): the resolver is simply skipped rather than breaking the whole registry.
-	 */
-	private void addJavaResolverIfAvailable() {
-		if (Platform.getBundle("org.eclipse.jdt.core") == null
-				|| Platform.getBundle("org.eclipse.jdt.ui") == null) {
-			return;
-		}
-		try {
-			addResolver(new JavaIdentifierEntityResolver());
-		} catch (LinkageError | RuntimeException e) {
-			Activator.logError("JDT present but Java identifier resolver could not be created; skipping", e);
-		}
+		addResolverIfAvailable(JavaIdentifierEntityResolver::new,
+				"org.eclipse.jdt.core", "org.eclipse.jdt.ui");
+		addResolverIfAvailable(PythonIdentifierEntityResolver::new,
+				"org.python.pydev", "org.python.pydev.core", "org.python.pydev.ast", "com.python.pydev.analysis");
 	}
 
 	/**
@@ -69,5 +53,24 @@ public class EntitiesRegistry {
 	
 	private void addResolver(IEntityResolver resolver) {
 		resolvers.add(resolver);
+	}
+
+	/**
+	 * Registers the resolver produced by {@code factory}, but only when every bundle in {@code bundleIds}
+	 * is installed. The bundle checks gate the {@code factory.get()} call, so the resolver class is never
+	 * loaded (and so never link-fails) on an Eclipse missing an optional dependency — this is what keeps
+	 * those dependencies optional (declared {@code resolution:=optional} in {@code MANIFEST.MF}). The
+	 * {@code catch} covers the rare case of a dependency being present but not wired to us (e.g. a version
+	 * outside our range): the resolver is simply skipped rather than breaking the whole registry.
+	 */
+	private void addResolverIfAvailable(Supplier<IEntityResolver> factory, String... bundleIds) {
+		for (String id : bundleIds) {
+			if (Platform.getBundle(id) == null) return;
+		}
+		try {
+			addResolver(factory.get());
+		} catch (LinkageError | RuntimeException e) {
+			Activator.logError("All the necessary bundles are present, but resolver could not be created; skipping", e);
+		}
 	}
 }
