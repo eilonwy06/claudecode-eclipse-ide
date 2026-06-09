@@ -13,18 +13,14 @@ import org.eclipse.core.filesystem.IFileStore;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
-import org.eclipse.core.runtime.Adapters;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.OperationCanceledException;
-import org.eclipse.jface.text.BadLocationException;
-import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.window.Window;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.ide.IDE;
 import org.eclipse.ui.internal.ide.dialogs.OpenResourceDialog;
-import org.eclipse.ui.texteditor.ITextEditor;
 
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.editor.UiHelper;
@@ -236,31 +232,11 @@ public class FileEntityResolver implements IEntityResolver {
 					IFileStore store = EFS.getLocalFileSystem().getStore(Path.of(filePath).toUri());
 					editor = IDE.openEditorOnFileStore(page, store);
 				}
-				goToLine(editor, lineNumber);
+				EntityResolverHelpers.revealLine(editor, lineNumber);
 			} catch (Exception e) {
 				Activator.logError("Failed to open file: " + filePath, e);
 			}
 		});
-	}
-
-	/** Reveals 1-based {@code lineNumber} in {@code editor} when it adapts to a text editor. */
-	private static void goToLine(IEditorPart editor, int lineNumber) {
-		if (lineNumber <= 0) {
-			return;
-		}
-		ITextEditor textEditor = Adapters.adapt(editor, ITextEditor.class);
-		if (textEditor == null) {
-			return;
-		}
-		IDocument document = textEditor.getDocumentProvider().getDocument(textEditor.getEditorInput());
-		if (document == null) {
-			return;
-		}
-		try {
-			textEditor.selectAndReveal(document.getLineOffset(lineNumber - 1), 0);
-		} catch (BadLocationException e) {
-			// Line is outside the document — open the file without navigating.
-		}
 	}
 
 	/**
@@ -286,7 +262,7 @@ public class FileEntityResolver implements IEntityResolver {
 				}
 				for (Object result : dialog.getResult()) {
 					if (result instanceof IFile file) {
-						goToLine(IDE.openEditor(page, file, true), lineNumber);
+						EntityResolverHelpers.revealLine(IDE.openEditor(page, file, true), lineNumber);
 					}
 				}
 			} catch (Exception e) {
