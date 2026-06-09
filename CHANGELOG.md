@@ -251,4 +251,4 @@ All notable changes to Claude Code for Eclipse are documented here.
 ## [0.0.1-alpha] — 2020-06-23
 
 ### Added
-- Initial components as proof-of-concept for an agentic, AI-powered plugin 
+- Initial components as proof-of-concept for an agentic, AI-powered plugin
