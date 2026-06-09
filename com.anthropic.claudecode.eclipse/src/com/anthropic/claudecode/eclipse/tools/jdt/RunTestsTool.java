@@ -279,19 +279,19 @@ public class RunTestsTool implements McpTool {
 		private void countResults(ITestElement[] elements) {
 			for (ITestElement element : elements) {
 				if (element instanceof ITestCaseElement tc) {
+					// ITestElement.Result is a type-safe-enum class, not a Java enum,
+					// so it can't be used in a switch — compare by identity instead.
 					ITestElement.Result result = tc.getTestResult(false);
-					switch (result) {
-						case OK -> passCount++;
-						case FAILURE -> {
-							failCount++;
-							addFailure(tc, "FAILURE");
-						}
-						case ERROR -> {
-							errorCount++;
-							addFailure(tc, "ERROR");
-						}
-						case IGNORED -> skipCount++;
-						default -> {}
+					if (result == ITestElement.Result.OK) {
+						passCount++;
+					} else if (result == ITestElement.Result.FAILURE) {
+						failCount++;
+						addFailure(tc, "FAILURE");
+					} else if (result == ITestElement.Result.ERROR) {
+						errorCount++;
+						addFailure(tc, "ERROR");
+					} else if (result == ITestElement.Result.IGNORED) {
+						skipCount++;
 					}
 				} else if (element instanceof ITestElementContainer container) {
 					countResults(container.getChildren());
