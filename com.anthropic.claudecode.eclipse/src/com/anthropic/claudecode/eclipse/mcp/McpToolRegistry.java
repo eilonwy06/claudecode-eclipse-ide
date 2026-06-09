@@ -3,6 +3,9 @@ package com.anthropic.claudecode.eclipse.mcp;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import org.eclipse.core.runtime.Platform;
+
+import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.tools.AcceptDiffTool;
 import com.anthropic.claudecode.eclipse.tools.CheckDocumentDirtyTool;
 import com.anthropic.claudecode.eclipse.tools.CloseAllDiffTabsTool;
@@ -39,11 +42,41 @@ public class McpToolRegistry {
         register(new SaveDocumentTool());
         register(new GetDiagnosticsTool());
         register(new CloseAllDiffTabsTool());
-        // JDT semantic tools
-        register(new FindReferencesTool());
-        register(new GetTypeHierarchyTool());
-        register(new GetSymbolInfoTool());
-        register(new RunTestsTool());
+        registerJdtToolsIfAvailable();
+    }
+
+    /**
+     * Registers the Java-semantic tools only when JDT is installed. Eclipse is used for many
+     * languages (CDT, PyDev, …) and JDT may be absent, so the JDT bundles are optional
+     * ({@code resolution:=optional}) and these tools are skipped rather than failing the whole
+     * plugin. The classes that reference JDT types are loaded lazily — only the {@code new ...()}
+     * below triggers loading — so the {@link Platform#getBundle} guards keep them off the
+     * classloader entirely when JDT is missing. The {@link LinkageError} catch covers the case
+     * where JDT is present but version-incompatible.
+     */
+    private void registerJdtToolsIfAvailable() {
+        if (Platform.getBundle("org.eclipse.jdt.core") == null) {
+            return; // No Java tooling — leave the Java semantic tools unregistered.
+        }
+        try {
+            register(new FindReferencesTool());
+            register(new GetTypeHierarchyTool());
+            register(new GetSymbolInfoTool());
+        } catch (LinkageError | RuntimeException e) {
+            Activator.logError("JDT present but Java navigation tools could not be created; skipping", e);
+        }
+
+        // runTests additionally needs the JUnit + launching tooling, which can be absent even
+        // when jdt.core is present (e.g. a JDT install without the JUnit feature).
+        if (Platform.getBundle("org.eclipse.jdt.junit.core") == null
+                || Platform.getBundle("org.eclipse.jdt.launching") == null) {
+            return;
+        }
+        try {
+            register(new RunTestsTool());
+        } catch (LinkageError | RuntimeException e) {
+            Activator.logError("JDT JUnit tooling present but runTests tool could not be created; skipping", e);
+        }
     }
 
     private void register(McpTool tool) {
