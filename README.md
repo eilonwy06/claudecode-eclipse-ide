@@ -89,7 +89,7 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 
 > **Open files and links (all platforms):** Claude often references file paths and URLs in its answers. **Ctrl-click** (⌘-click on macOS) any such token in the **Claude CLI** view to jump straight to it — a file opens in an editor, an `http`/`https` URL opens in your browser. You can also select text and choose **Open** from the right-click menu.
 
-> **Font customization (all platforms):** The console font can be changed in **Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude CLI Console Font**. By default it inherits from Eclipse's "Text Font" setting.
+> **Font customization (all platforms):** The console font can be changed in **Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude CLI Console Font**. By default it inherits from Eclipse's "Text Font" setting. **Linux users:** If you see horizontal lines or other rendering artifacts, try setting the font to one commonly used by terminal emulators (e.g., MesloLGS NF, JetBrains Mono, or your terminal's default font).
 
 > **Color customization (all platforms):** The Claude CLI's background/foreground colors — and the Dark/Light theme hint — can be set in **Window → Preferences → Claude Code** ("Claude CLI background", "Claude CLI foreground", and "Claude CLI theme"). These are independent of Eclipse's built-in Terminal colors and apply immediately without restart.
 
