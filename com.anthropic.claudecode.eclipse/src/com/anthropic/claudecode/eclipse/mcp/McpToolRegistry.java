@@ -15,6 +15,10 @@ import com.anthropic.claudecode.eclipse.tools.OpenDiffTool;
 import com.anthropic.claudecode.eclipse.tools.OpenFileTool;
 import com.anthropic.claudecode.eclipse.tools.RejectDiffTool;
 import com.anthropic.claudecode.eclipse.tools.SaveDocumentTool;
+import com.anthropic.claudecode.eclipse.tools.jdt.FindReferencesTool;
+import com.anthropic.claudecode.eclipse.tools.jdt.GetSymbolInfoTool;
+import com.anthropic.claudecode.eclipse.tools.jdt.GetTypeHierarchyTool;
+import com.anthropic.claudecode.eclipse.tools.jdt.RunTestsTool;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
@@ -35,6 +39,11 @@ public class McpToolRegistry {
         register(new SaveDocumentTool());
         register(new GetDiagnosticsTool());
         register(new CloseAllDiffTabsTool());
+        // JDT semantic tools
+        register(new FindReferencesTool());
+        register(new GetTypeHierarchyTool());
+        register(new GetSymbolInfoTool());
+        register(new RunTestsTool());
     }
 
     private void register(McpTool tool) {
