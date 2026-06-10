@@ -169,6 +169,32 @@ public class FileEntityResolver implements IEntityResolver {
 	}
 
 	/**
+	 * Whether {@code token} — after trailing line-suffix and edge-junk trimming — is an existing
+	 * absolute regular file. Used by the terminal click handler to recover a drive path that
+	 * contains spaces (e.g. {@code C:\Users\Windows 10\...}), where it must test candidate spans
+	 * directly rather than via the overridable {@link #fileExists} instance hook. Never throws.
+	 * Public so the click handler in the {@code ...ui} package can call it. */
+	public static boolean existingAbsoluteFile(String token) {
+		if (token == null) {
+			return false;
+		}
+		String t = stripEdges(token);
+		Matcher m = LINE_SUFFIX.matcher(t);
+		if (m.find()) {
+			t = t.substring(0, m.start());
+		}
+		if (t.isEmpty()) {
+			return false;
+		}
+		try {
+			Path p = Path.of(t);
+			return p.isAbsolute() && Files.isRegularFile(p);
+		} catch (InvalidPathException e) {
+			return false;
+		}
+	}
+
+	/**
 	 * Whether {@code absolutePath} points to an existing regular file.
 	 * Has package-private scope so tests can override it without touching the real file system.
 	 */

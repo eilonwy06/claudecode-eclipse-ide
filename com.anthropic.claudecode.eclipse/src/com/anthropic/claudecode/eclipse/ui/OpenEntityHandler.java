@@ -18,6 +18,7 @@ import org.eclipse.terminal.model.ITerminalTextDataReadOnly;
 import com.anthropic.claudecode.eclipse.editor.UiHelper;
 import com.anthropic.claudecode.eclipse.resolvers.EntitiesRegistry;
 import com.anthropic.claudecode.eclipse.resolvers.EntitiesRegistry.NamedResolvedEntity;
+import com.anthropic.claudecode.eclipse.resolvers.FileEntityResolver;
 
 /**
  * Opens an entity from the Claude CLI terminal, either on Ctrl/Cmd + left-click (the hovered
@@ -53,14 +54,119 @@ public class OpenEntityHandler implements ITerminalMouseListener {
 		statusLine.setMessage(null);
 	}
 
+	/** Wrapping / sentence punctuation trimmed from a recovered path's trailing edge. A {@code :NN}
+	 *  line reference is preserved (it has no chars in this set) for {@link FileEntityResolver}. */
+	private static final String TRAILING_PUNCT = ")]}>\"'`,;!?.";
+
 	@Override
 	public void mouseUp(ITerminalTextDataReadOnly terminalText, int line, int column, int button, int stateMask) {
 		// Only Ctrl-click (Cmd on macOS) on the left button; leave normal clicks/selection alone.
 		if ((stateMask & SWT.MODIFIER_MASK) != SWT.MOD1 || button != 1) {
 			return;
 		}
-		// Hovered token may carry wrapping punctuation/quotes → strip edges.
-		openEntity(terminal.getHoverSelection(), true);
+		String hover = terminal.getHoverSelection();
+		// A Windows path containing spaces (C:\Users\Windows 10\...) is split by
+		// getHoverSelection() at every space, so clicking any segment gives only a fragment.
+		// Recover the full path from the drive root before the click. Fully defensive: returns
+		// null on anything unexpected, so the normal hovered-token flow (below) is unchanged.
+		String recovered = recoverSpacedPath(terminalText, line, hover);
+		if (recovered != null) {
+			openEntity(recovered, false);
+		} else {
+			// Hovered token may carry wrapping punctuation/quotes → strip edges.
+			openEntity(hover, true);
+		}
+	}
+
+	/**
+	 * Recovers a space-containing Windows path when {@code getHoverSelection()} split it at the spaces.
+	 * Works for a click on <em>any</em> segment: it finds the drive/UNC root at or before the clicked
+	 * fragment and grows from there, shrinking word-by-word from the right to the longest span that
+	 * names an existing file. The span must still cover the clicked fragment, so clicking trailing
+	 * prose after a path does not open the path. Anchors via string search, not the mouse line/column
+	 * coordinates. Returns {@code null} — caller uses the hovered token unchanged — on any miss or
+	 * error, and never throws.
+	 */
+	private static String recoverSpacedPath(ITerminalTextDataReadOnly term, int line, String hover) {
+		try {
+			if (hover == null || hover.isBlank() || FileEntityResolver.existingAbsoluteFile(hover)) {
+				return null; // nothing to recover, or the hovered token already names a file
+			}
+			String text = lineChars(term, line);
+			if (text == null) {
+				return null;
+			}
+			int hoverStart = text.indexOf(hover);
+			if (hoverStart < 0) {
+				return null; // fragment not on this line (wrapped/scrolled) — don't guess
+			}
+			int hoverEnd = hoverStart + hover.length();
+			int start = drivePathStart(text, hoverStart);
+			if (start < 0) {
+				return null; // no drive/UNC root before the click
+			}
+			String candidate = text.substring(start).stripTrailing();
+			while (!candidate.isEmpty()) {
+				String probe = trimTrailingPunct(candidate);
+				if (FileEntityResolver.existingAbsoluteFile(probe)) {
+					// Accept only if the file span still covers the clicked fragment.
+					return start + probe.length() >= hoverEnd ? probe : null;
+				}
+				int sp = candidate.lastIndexOf(' ');
+				if (sp < 0) {
+					break;
+				}
+				candidate = candidate.substring(0, sp).stripTrailing();
+			}
+			return null;
+		} catch (RuntimeException e) {
+			return null; // recovery must never break a click
+		}
+	}
+
+	/**
+	 * Index of the drive ({@code C:\} / {@code C:/}) or UNC ({@code \\}) root closest to but not after
+	 * {@code beforeIndex}, i.e. the start of the absolute path containing the click; {@code -1} if none.
+	 * Only roots are matched (not interior {@code /}), so a forward-slash path resolves to its drive.
+	 */
+	private static int drivePathStart(String line, int beforeIndex) {
+		int best = -1;
+		int limit = Math.min(beforeIndex, line.length() - 2);
+		for (int i = 0; i <= limit; i++) {
+			char a = line.charAt(i);
+			char b = line.charAt(i + 1);
+			if (b == ':' && Character.isLetter(a) && i + 2 < line.length()
+					&& (line.charAt(i + 2) == '\\' || line.charAt(i + 2) == '/')) {
+				best = i;
+			} else if (a == '\\' && b == '\\') {
+				best = i;
+			}
+		}
+		return best;
+	}
+
+	/** The full text of {@code line} (NUL cells rendered as spaces), or {@code null} if out of range. */
+	private static String lineChars(ITerminalTextDataReadOnly term, int line) {
+		if (term == null || line < 0 || line >= term.getHeight()) {
+			return null;
+		}
+		char[] cs = term.getChars(line);
+		if (cs == null) {
+			return null;
+		}
+		StringBuilder sb = new StringBuilder(cs.length);
+		for (char c : cs) {
+			sb.append(c == 0 ? ' ' : c);
+		}
+		return sb.toString();
+	}
+
+	private static String trimTrailingPunct(String s) {
+		int end = s.length();
+		while (end > 0 && TRAILING_PUNCT.indexOf(s.charAt(end - 1)) >= 0) {
+			end--;
+		}
+		return s.substring(0, end);
 	}
 
 	/**
