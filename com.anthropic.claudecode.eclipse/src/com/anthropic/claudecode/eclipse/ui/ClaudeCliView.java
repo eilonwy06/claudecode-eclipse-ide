@@ -376,6 +376,31 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         return false;
     }
 
+    /**
+     * Types {@code text} into the active terminal session as if pasted, so it
+     * lands at Claude's prompt. Brings the view forward and focuses the session.
+     * Returns {@code false} if there is no live session to receive the text.
+     */
+    public boolean sendTextToActiveSession(String text) {
+        if (text == null || text.isEmpty()) return false;
+        if (tabFolder == null || tabFolder.isDisposed()) return false;
+        CTabItem item = tabFolder.getSelection();
+        if (item == null) return false;
+        TerminalSession session = (TerminalSession) item.getData();
+        if (session == null) return false;
+        getSite().getPage().activate(this);
+        return session.sendText(text);
+    }
+
+    /** Working directory of the active session, or {@code null} if none. */
+    public String getActiveSessionCwd() {
+        if (tabFolder == null || tabFolder.isDisposed()) return null;
+        CTabItem item = tabFolder.getSelection();
+        if (item == null) return null;
+        TerminalSession session = (TerminalSession) item.getData();
+        return session != null ? session.getCwd() : null;
+    }
+
     public void disconnectAllSessions() {
         if (tabFolder == null || tabFolder.isDisposed()) return;
         for (CTabItem item : tabFolder.getItems()) {
@@ -477,6 +502,21 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         private PreferenceStore prefStore;
         private Listener ctrlCFilter;
 
+        /** Pastes text into the terminal (lands at Claude's prompt). False if not live. */
+        boolean sendText(String text) {
+            if (disposed || termControl == null || termControl.isDisposed()) return false;
+            termControl.pasteString(text);
+            focus();
+            return true;
+        }
+
+        /** This session's working directory (custom cwd, else the workspace root). */
+        String getCwd() {
+            return (customCwd != null && !customCwd.isEmpty())
+                    ? customCwd
+                    : ResourcesPlugin.getWorkspace().getRoot().getLocation().toOSString();
+        }
+
         TerminalSession(CTabItem tabItem, Composite content, String cwd, String[] extraArgs) {
             this.tabItem = tabItem;
             this.content = content;
@@ -523,6 +563,12 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                     if (e != null && !e.isEmpty()) env.add(e);
                 }
             }
+            // Claude CLI auto-connects to the IDE's MCP server when CLAUDE_CODE_SSE_PORT
+            // is set; it then reads the auth token + workspace folders from the lock file
+            // (~/.claude/ide/<port>.lock) and connects to http://127.0.0.1:<port>/sse.
+            // The auth-token/name env vars below are ignored by current CLI builds (auth
+            // comes from the lock file) but kept for older releases that used CLAUDE_IDE_*.
+            env.add("CLAUDE_CODE_SSE_PORT=" + port);
             env.add("CLAUDE_IDE_PORT=" + port);
             env.add("CLAUDE_IDE_AUTH_TOKEN=" + authToken);
             env.add("CLAUDE_IDE_NAME=" + Constants.IDE_NAME);

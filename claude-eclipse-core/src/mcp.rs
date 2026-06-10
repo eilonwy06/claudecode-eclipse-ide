@@ -82,6 +82,16 @@ fn handle_initialize(state: Arc<AppState>, sender: UnboundedSender<SseEvent>, id
     });
     send_result(&sender, &id, result);
 
+    // Replay the last known editor selection so Claude knows the active file the
+    // moment it connects — without the user having to move the cursor first. The
+    // cached message is already in the CLI's "selection_changed" shape.
+    if let Some(sel) = state.last_selection.lock().unwrap().clone() {
+        let _ = sender.send(SseEvent {
+            event_type: "message".to_string(),
+            data: sel,
+        });
+    }
+
     // A new MCP client just connected — close any Eclipse diff tabs that were
     // left open from a previous session (same as what happens when the user
     // types a new command and Claude calls closeAllDiffTabs at the turn start).

@@ -54,6 +54,9 @@ pub struct AppState {
     pub auth_token: String,
     pub tool_callback: Mutex<Option<ToolCallbackRef>>,
     pub preferred_port: Option<u16>,
+    /// Last "selection_changed" notification JSON, cached so a CLI that connects
+    /// after a selection happened can be replayed it on initialize.
+    pub last_selection: Mutex<Option<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +111,7 @@ impl Server {
             auth_token,
             tool_callback: Mutex::new(None),
             preferred_port,
+            last_selection: Mutex::new(None),
         });
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -207,7 +211,8 @@ impl Server {
     }
 
     /// Called from Java on every raw selection event.
-    /// Debounces 50 ms then broadcasts a notifications/selectionChanged message to all SSE clients.
+    /// Debounces 50 ms, caches the latest state, then broadcasts a "selection_changed"
+    /// message to all connected SSE clients.
     pub fn notify_selection(
         &self,
         file_path: String,
@@ -231,33 +236,46 @@ impl Server {
         let join_handle = self.runtime.spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-            // Only bother broadcasting if there are connected clients.
-            if state.clients.lock().unwrap().is_empty() {
-                return;
-            }
-
+            // Claude CLI ingests live editor context from a bare "selection_changed"
+            // notification (snake_case) shaped { selection:{start,end}, text, filePath }.
+            // It does NOT listen for the MCP-style "notifications/selectionChanged", so
+            // the old name/shape was silently dropped and Claude never saw the active
+            // file/selection. Lines here are 0-based (LSP/VS Code convention); the Java
+            // tracker passes 1-based, so subtract one. Columns aren't tracked → 0.
+            // A bare cursor (no highlighted text) is sent as a null range so Claude
+            // still learns the active file via filePath.
+            let selection = if args.is_empty {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!({
+                    "start": { "line": (args.start_line - 1).max(0), "character": 0 },
+                    "end":   { "line": (args.end_line - 1).max(0),   "character": 0 }
+                })
+            };
             let json = serde_json::json!({
                 "jsonrpc": "2.0",
-                "method": "notifications/selectionChanged",
+                "method": "selection_changed",
                 "params": {
-                    "selection": {
-                        "filePath": args.file_path,
-                        "text": args.text,
-                        "startLine": args.start_line,
-                        "endLine": args.end_line,
-                        "startColumn": 0,
-                        "endColumn": 0,
-                        "isEmpty": args.is_empty
-                    }
+                    "selection": selection,
+                    "text": args.text,
+                    "filePath": args.file_path
                 }
             })
             .to_string();
 
+            // Cache for replay to clients that connect later (open file -> start
+            // Claude). Stored even when no client is connected yet.
+            *state.last_selection.lock().unwrap() = Some(json.clone());
+
+            // Broadcast to any currently-connected clients.
+            let mut clients = state.clients.lock().unwrap();
+            if clients.is_empty() {
+                return;
+            }
             let event = SseEvent {
                 event_type: "message".to_string(),
                 data: json,
             };
-            let mut clients = state.clients.lock().unwrap();
             clients.retain(|_, tx| tx.send(event.clone()).is_ok());
         });
 

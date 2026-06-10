@@ -10,7 +10,13 @@ import org.eclipse.ui.handlers.HandlerUtil;
 import org.eclipse.ui.texteditor.ITextEditor;
 
 import com.anthropic.claudecode.eclipse.Activator;
+import com.anthropic.claudecode.eclipse.ui.ClaudeCliView;
 
+/**
+ * Sends the active editor's selection to Claude by typing an
+ * {@code @<path>#L<start>-<end>} mention into the embedded CLI terminal.
+ * Shares the view/path helpers with {@link AddFileHandler}.
+ */
 public class SendSelectionHandler extends AbstractHandler {
 
     @Override
@@ -24,12 +30,21 @@ public class SendSelectionHandler extends AbstractHandler {
                 return null;
             }
 
-            // The selection is already tracked and available to Claude via the
-            // getCurrentSelection/getLatestSelection MCP tools.
-            // This handler acts as a user-initiated "attention" signal.
-            Activator.log("Selection sent to Claude context: "
-                    + textSelection.getText().length() + " chars");
+            String filePath = AddFileHandler.filePathOf(editor.getEditorInput());
+            if (filePath == null) return null;
 
+            ClaudeCliView view = AddFileHandler.showView(event);
+            if (view == null) return null;
+
+            // ITextSelection lines are 0-based; Claude's #L references are 1-based.
+            int start = textSelection.getStartLine() + 1;
+            int end = textSelection.getEndLine() + 1;
+            String lines = start == end ? "#L" + start : "#L" + start + "-" + end;
+            String mention = "@" + AddFileHandler.mentionPath(filePath, view) + lines + " ";
+
+            if (view.sendTextToActiveSession(mention)) {
+                Activator.log("Selection sent to Claude: " + mention.trim());
+            }
         } catch (Exception e) {
             Activator.logError("Failed to send selection", e);
         }
