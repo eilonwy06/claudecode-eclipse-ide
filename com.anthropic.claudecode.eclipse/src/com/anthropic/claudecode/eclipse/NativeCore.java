@@ -102,11 +102,14 @@ public final class NativeCore {
     public static native int serverGetClientCount(long handle);
 
     /**
-     * Notifies the native server of a selection change.
-     * Rust debounces 50 ms then broadcasts notifications/selectionChanged to all SSE clients.
+     * Notifies the native server of a selection change. Lines are 1-based editor labels and
+     * columns are 0-based offsets within their line (the CLI treats an end column of 0 as
+     * "selection stops before this line"). Rust debounces 50 ms then broadcasts a
+     * selection_changed notification to all SSE clients.
      */
     public static native void serverNotifySelection(long handle, String filePath, String text,
-                                                    int startLine, int endLine, boolean isEmpty);
+                                                    int startLine, int endLine,
+                                                    int startColumn, int endColumn, boolean isEmpty);
 
     /**
      * Registers the Java object that handles MCP tool calls.

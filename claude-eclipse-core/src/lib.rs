@@ -189,6 +189,8 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_serverNo
     text: JString,
     start_line: jint,
     end_line: jint,
+    start_col: jint,
+    end_col: jint,
     is_empty: jboolean,
 ) {
     if handle == 0 {
@@ -197,7 +199,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_serverNo
     let server = unsafe { &*(handle as *const Server) };
     let fp: String = env.get_string(&file_path).map(|s| s.into()).unwrap_or_default();
     let t: String = env.get_string(&text).map(|s| s.into()).unwrap_or_default();
-    server.notify_selection(fp, t, start_line, end_line, is_empty != 0);
+    server.notify_selection(fp, t, start_line, end_line, start_col, end_col, is_empty != 0);
 }
 
 /// Registers the Java ToolCallback object.  From this point, tool calls

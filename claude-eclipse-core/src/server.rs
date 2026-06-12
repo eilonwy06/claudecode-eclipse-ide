@@ -69,6 +69,8 @@ struct SelectionArgs {
     text: String,
     start_line: i32,
     end_line: i32,
+    start_col: i32,
+    end_col: i32,
     is_empty: bool,
 }
 
@@ -219,6 +221,8 @@ impl Server {
         text: String,
         start_line: i32,
         end_line: i32,
+        start_col: i32,
+        end_col: i32,
         is_empty: bool,
     ) {
         if !self.running.load(Ordering::Relaxed) {
@@ -230,7 +234,7 @@ impl Server {
             handle.abort();
         }
 
-        let args = SelectionArgs { file_path, text, start_line, end_line, is_empty };
+        let args = SelectionArgs { file_path, text, start_line, end_line, start_col, end_col, is_empty };
         let state = Arc::clone(&self.state);
 
         let join_handle = self.runtime.spawn(async move {
@@ -238,18 +242,23 @@ impl Server {
 
             // Claude CLI ingests live editor context from a bare "selection_changed"
             // notification (snake_case) shaped { selection:{start,end}, text, filePath }.
-            // It does NOT listen for the MCP-style "notifications/selectionChanged", so
-            // the old name/shape was silently dropped and Claude never saw the active
-            // file/selection. Lines here are 0-based (LSP/VS Code convention); the Java
-            // tracker passes 1-based, so subtract one. Columns aren't tracked → 0.
+            // Verified against the v2.1.173 binary, the CLI's consumer is:
+            //     lineCount = end.line - start.line + 1;
+            //     if (end.character === 0) lineCount--;      // ended at a line start
+            //     lineStart = start.line;                     // displayed AS-IS (no +1)
+            //     lineEnd   = lineStart + lineCount - 1;
+            // So lines must be 1-based editor labels (passed through from Java
+            // unchanged) and columns must be REAL 0-based offsets — hardcoding
+            // character 0 made every selection lose its last line, and an extra -1
+            // here shifted the whole range down one.
             // A bare cursor (no highlighted text) is sent as a null range so Claude
             // still learns the active file via filePath.
             let selection = if args.is_empty {
                 serde_json::Value::Null
             } else {
                 serde_json::json!({
-                    "start": { "line": (args.start_line - 1).max(0), "character": 0 },
-                    "end":   { "line": (args.end_line - 1).max(0),   "character": 0 }
+                    "start": { "line": args.start_line, "character": args.start_col },
+                    "end":   { "line": args.end_line,   "character": args.end_col }
                 })
             };
             let json = serde_json::json!({

@@ -52,8 +52,10 @@ public class HttpSseServer {
         if (running) NativeCore.serverBroadcast(handle, message);
     }
 
-    public void notifySelection(String filePath, String text, int startLine, int endLine, boolean isEmpty) {
-        if (running) NativeCore.serverNotifySelection(handle, filePath, text, startLine, endLine, isEmpty);
+    public void notifySelection(String filePath, String text, int startLine, int endLine,
+                                int startColumn, int endColumn, boolean isEmpty) {
+        if (running) NativeCore.serverNotifySelection(handle, filePath, text,
+                startLine, endLine, startColumn, endColumn, isEmpty);
     }
 
     public boolean isRunning() {
