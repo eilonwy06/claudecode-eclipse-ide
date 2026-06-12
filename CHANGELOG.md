@@ -4,7 +4,23 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.4.3] — 2026-06-06 *(current)*
+## [2.4.4] — 2026-06-12 *(current)*
+
+### Fixed
+- **Claude now auto-connects to the IDE** — sessions export the auto-connect variable current CLIs actually read (`CLAUDE_CODE_SSE_PORT`); previous releases set only legacy variables, so the IDE integration could silently never connect (the legacy `CLAUDE_IDE_*` variables are still exported for older CLIs)
+- **Claude sees your active file and selection in real time** — selection changes are pushed in the exact notification format the CLI consumes, and the latest selection is replayed when a session connects, so Claude knows the current file immediately without you clicking in the editor first
+- **Selection line numbers are exact** — reported ranges were off by 1–2 lines; selections now carry true line and column positions (a selection ending at a line start correctly excludes that line)
+- **Ctrl-click works on paths containing spaces** — absolute paths (`C:\Users\My Name\…`), workspace-relative paths (`Project\src\my dir\File.java`), and paths wrapped across terminal rows all open from any clicked segment; every candidate is validated against the filesystem before opening
+- **Ctrl-click works on file names with spaces mentioned in prose** — clicking `My File.java` in a sentence finds and opens the file via the workspace search
+- **Ctrl-clicking ordinary text is quiet now** — no more "Unable to recognize entity" status-bar error on every non-link word; the right-click **Open** action still reports misses
+- **Multiple Eclipse instances now coexist** — launching the CLI no longer deletes other instances' lock files (reverses the 2.3.13 workaround; the CLI pins to the correct instance by port), and internal relay ports are assigned per instance from the MCP port range instead of fixed ports
+
+### Changed
+- **Send Selection (`Ctrl+Alt+S`) and Add File (`Ctrl+Alt+A`) now insert an `@file` mention** (with a `#Lstart-end` line range for selections) at the Claude prompt — previously these actions had no visible effect
+
+---
+
+## [2.4.3] — 2026-06-06
 
 ### Added
 - **Stop button in Claude Chat** — Send button transforms to a red Stop (■) button while processing; click it or press Escape to cancel the current request; Enter key disabled during streaming to prevent accidental cancellation
