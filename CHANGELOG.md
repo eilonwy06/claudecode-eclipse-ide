@@ -11,7 +11,7 @@ All notable changes to Claude Code for Eclipse are documented here.
 - **Claude sees your active file and selection in real time** — selection changes are pushed in the exact notification format the CLI consumes, and the latest selection is replayed when a session connects, so Claude knows the current file immediately without you clicking in the editor first
 - **Selection line numbers are exact** — reported ranges were off by 1–2 lines; selections now carry true line and column positions (a selection ending at a line start correctly excludes that line)
 - **Ctrl-click works on paths containing spaces** — absolute paths (`C:\Users\My Name\…`), workspace-relative paths (`Project\src\my dir\File.java`), and paths wrapped across terminal rows all open from any clicked segment; every candidate is validated against the filesystem before opening
-- **Ctrl-click works on file names with spaces mentioned in prose** — clicking `My File.java` in a sentence finds and opens the file via the workspace search
+- **Ctrl-click works on file names with spaces mentioned in prose** — clicking `Sample File.java` in a sentence finds and opens the file via the workspace search
 - **Ctrl-clicking ordinary text is quiet now** — no more "Unable to recognize entity" status-bar error on every non-link word; the right-click **Open** action still reports misses
 - **Multiple Eclipse instances now coexist** — launching the CLI no longer deletes other instances' lock files (reverses the 2.3.13 workaround; the CLI pins to the correct instance by port), and internal relay ports are assigned per instance from the MCP port range instead of fixed ports
 
