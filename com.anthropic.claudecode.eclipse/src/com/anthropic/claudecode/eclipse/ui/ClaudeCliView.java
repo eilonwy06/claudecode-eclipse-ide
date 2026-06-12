@@ -536,7 +536,9 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             int port = activator.getHttpSseServer().getPort();
             String authToken = activator.getHttpSseServer().getAuthToken();
 
-            NativeCore.lockFileRemoveOthers(port);
+            // Do not delete other instances' lock files here: the CLI pins
+            // selection to CLAUDE_CODE_SSE_PORT, and live locks belong to
+            // other running IDEs. writeLockFile prunes dead-PID locks.
             activator.getLockFileManager().writeLockFile(port, authToken);
 
             String claudeCmd = activator.getPreferenceStore().getString(Constants.PREF_CLAUDE_CMD);
