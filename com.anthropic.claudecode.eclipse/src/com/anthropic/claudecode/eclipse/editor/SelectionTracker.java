@@ -2,6 +2,7 @@ package com.anthropic.claudecode.eclipse.editor;
 
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.text.ITextSelection;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.ui.IEditorInput;
@@ -26,7 +27,8 @@ public class SelectionTracker {
      * MCP tool can retrieve it on demand without needing Gson in the hot path.
      */
     private record SelectionData(String filePath, String text,
-                                  int startLine, int endLine, boolean isEmpty) {}
+                                  int startLine, int endLine,
+                                  int startColumn, int endColumn, boolean isEmpty) {}
 
     private final AtomicReference<SelectionData> latestSelection = new AtomicReference<>();
 
@@ -57,8 +59,8 @@ public class SelectionTracker {
         sel.addProperty("text", d.text());
         sel.addProperty("startLine", d.startLine());
         sel.addProperty("endLine", d.endLine());
-        sel.addProperty("startColumn", 0);
-        sel.addProperty("endColumn", 0);
+        sel.addProperty("startColumn", d.startColumn());
+        sel.addProperty("endColumn", d.endColumn());
         sel.addProperty("isEmpty", d.isEmpty());
         return sel;
     }
@@ -112,17 +114,39 @@ public class SelectionTracker {
         String filePath = getFilePath(input);
         if (filePath == null) return;
 
+        // Lines are 1-based editor labels; columns are 0-based offsets in their line.
+        // Computed from the document so the end position is exact: the CLI shows the
+        // line numbers as-is and treats endColumn == 0 as "the selection stops before
+        // this line", so a hardcoded 0 silently dropped the last selected line.
         int startLine = textSelection.getStartLine() + 1;
         int endLine   = textSelection.getEndLine()   + 1;
+        int startCol  = 0;
+        int endCol    = 0;
+        try {
+            IDocument doc = textEditor.getDocumentProvider().getDocument(input);
+            if (doc != null) {
+                int startOffset = textSelection.getOffset();
+                int endOffset   = startOffset + Math.max(0, textSelection.getLength());
+                int sl0 = doc.getLineOfOffset(startOffset);
+                int el0 = doc.getLineOfOffset(endOffset);
+                startLine = sl0 + 1;
+                endLine   = el0 + 1;
+                startCol  = startOffset - doc.getLineOffset(sl0);
+                endCol    = endOffset - doc.getLineOffset(el0);
+            }
+        } catch (Exception e) {
+            // Document unavailable / stale offsets — keep the ITextSelection lines, columns 0.
+        }
         boolean empty = textSelection.isEmpty();
         String  text  = textSelection.getText();
 
         // Store for getLatestSelection() tool queries.
-        latestSelection.set(new SelectionData(filePath, text, startLine, endLine, empty));
+        latestSelection.set(new SelectionData(filePath, text, startLine, endLine,
+                startCol, endCol, empty));
 
         // Debounce (50 ms) and broadcast happen entirely in Rust.
         if (server != null) {
-            server.notifySelection(filePath, text, startLine, endLine, empty);
+            server.notifySelection(filePath, text, startLine, endLine, startCol, endCol, empty);
         }
     }
 

@@ -14,24 +14,56 @@ if ($argc === 4 && !empty($argv[3])) {
 }
 
 if ($argc < 3 || $argc > 4) {
-    fwrite(STDERR, "Usage: php bridge.php <port_a> <port_b> [ready_file]\n");
+    fwrite(STDERR, "Usage: php bridge.php <port_min> <port_max> [ready_file]\n");
     exit(1);
 }
 
-$portA = (int) $argv[1];
-$portB = (int) $argv[2];
+$portMin = (int) $argv[1];
+$portMax = (int) $argv[2];
 $readyFile = ($argc === 4) ? $argv[3] : null;
 
-$serverA = @stream_socket_server("tcp://127.0.0.1:$portA", $errno, $errstr);
-if (!$serverA) {
-    fwrite(STDERR, "Failed to bind port $portA: $errstr\n");
-    exit(1);
+// PHP's stream_socket_server() sets SO_REUSEADDR, which on Windows lets a
+// bind succeed even when another process already listens on the port. A
+// failed bind therefore isn't a reliable "port taken" signal: probe with a
+// connect first and skip any port that answers.
+function port_in_use(int $port): bool
+{
+    $probe = @stream_socket_client("tcp://127.0.0.1:$port", $errno, $errstr, 0.2);
+    if ($probe) {
+        fclose($probe);
+        return true;
+    }
+    return false;
 }
 
-$serverB = @stream_socket_server("tcp://127.0.0.1:$portB", $errno, $errstr);
-if (!$serverB) {
-    fwrite(STDERR, "Failed to bind port $portB: $errstr\n");
-    fclose($serverA);
+// Scan the range and bind the first two free ports, so concurrent IDE
+// instances each get their own pair instead of colliding on fixed ports.
+$serverA = null;
+$serverB = null;
+$portA = 0;
+$portB = 0;
+for ($p = $portMin; $p <= $portMax; $p++) {
+    if (port_in_use($p)) {
+        continue;
+    }
+    $sock = @stream_socket_server("tcp://127.0.0.1:$p", $errno, $errstr);
+    if (!$sock) {
+        continue;
+    }
+    if ($serverA === null) {
+        $serverA = $sock;
+        $portA = $p;
+    } else {
+        $serverB = $sock;
+        $portB = $p;
+        break;
+    }
+}
+if ($serverA === null || $serverB === null) {
+    fwrite(STDERR, "No two free ports in range $portMin-$portMax\n");
+    if ($serverA !== null) {
+        fclose($serverA);
+    }
     exit(1);
 }
 

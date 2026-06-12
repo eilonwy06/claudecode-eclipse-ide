@@ -194,14 +194,18 @@ fn run_turn(
     }
 
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
-        // Connect Claude to this instance's MCP server.
-        cmd.env("CLAUDE_IDE_PORT", mcp_port.to_string())
+        // Connect Claude to this instance's MCP server. The CLI auto-connects when
+        // CLAUDE_CODE_SSE_PORT is set, then reads the auth token from the lock file.
+        // CLAUDE_IDE_* are ignored by current CLI builds but kept for older releases.
+        cmd.env("CLAUDE_CODE_SSE_PORT", mcp_port.to_string())
+           .env("CLAUDE_IDE_PORT", mcp_port.to_string())
            .env("CLAUDE_IDE_AUTH_TOKEN", mcp_auth_token)
            .env("CLAUDE_IDE_NAME", "Eclipse");
     } else {
         // No MCP server running — remove any inherited IDE env vars so Claude
         // does not try to connect to another instance's server and hang.
-        cmd.env_remove("CLAUDE_IDE_PORT")
+        cmd.env_remove("CLAUDE_CODE_SSE_PORT")
+           .env_remove("CLAUDE_IDE_PORT")
            .env_remove("CLAUDE_IDE_AUTH_TOKEN")
            .env_remove("CLAUDE_IDE_NAME");
     }

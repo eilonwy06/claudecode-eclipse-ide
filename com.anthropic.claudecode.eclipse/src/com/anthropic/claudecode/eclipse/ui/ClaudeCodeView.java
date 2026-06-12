@@ -84,17 +84,7 @@ public class ClaudeCodeView extends ViewPart {
         }
 
         startPhpBridge();
-
-        // Show bridge info for Windows/Linux, or override message for macOS
-        if (phpBridge != null && phpBridge.isOverridden()) {
-            appendLog("macOS detected, direct protocol active.\n\n");
-        } else if (phpBridge != null && phpBridge.isRunning()) {
-            String phpMsg = phpBridge.getPhpMessage();
-            if (phpMsg != null && !phpMsg.isEmpty()) {
-                appendLog(phpMsg + "\n");
-            }
-            appendLog("Bridge relay ports: " + phpBridge.getPortA() + " ↔ " + phpBridge.getPortB() + "\n\n");
-        }
+        logBridgeInfo();
         appendLog("Click 'Launch Claude Terminal' to open the Claude CLI.\n\n");
 
         updateStatus();
@@ -237,6 +227,7 @@ public class ClaudeCodeView extends ViewPart {
                 phpBridge.stop();
             }
             startPhpBridge();
+            logBridgeInfo();
             updateStatus();
 
             // Restart all CLI sessions so they reconnect with new MCP credentials
@@ -277,6 +268,19 @@ public class ClaudeCodeView extends ViewPart {
 
     public void restartClaude(String... extraArgs) {
         startClaude(extraArgs);
+    }
+
+    // Show bridge info for Windows/Linux, or override message for macOS
+    private void logBridgeInfo() {
+        if (phpBridge != null && phpBridge.isOverridden()) {
+            appendLog("macOS detected, direct protocol active.\n\n");
+        } else if (phpBridge != null && phpBridge.isRunning()) {
+            String phpMsg = phpBridge.getPhpMessage();
+            if (phpMsg != null && !phpMsg.isEmpty()) {
+                appendLog(phpMsg + "\n");
+            }
+            appendLog("Bridge relay ports: " + phpBridge.getPortA() + " ↔ " + phpBridge.getPortB() + "\n\n");
+        }
     }
 
     private void startPhpBridge() {

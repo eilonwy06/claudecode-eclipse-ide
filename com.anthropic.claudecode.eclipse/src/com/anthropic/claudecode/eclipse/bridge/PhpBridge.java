@@ -21,12 +21,16 @@ import com.anthropic.claudecode.eclipse.Constants;
 
 public final class PhpBridge {
 
-    private static final int PORT_A = 19801;
-    private static final int PORT_B = 19802;
+    // The bridge shares the MCP server's port range (portMin/portMax prefs).
+    // The script scans the range and binds the first two free ports itself,
+    // so concurrent IDE instances can never end up on the same relay pair;
+    // the assigned ports come back via the READY line.
     private static final long STARTUP_TIMEOUT_MS = 5000;
 
     private Process process;
     private Socket socketB;
+    private int portA;
+    private int portB;
     private Thread readerThread;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean overridden = new AtomicBoolean(false);
@@ -77,13 +81,19 @@ public final class PhpBridge {
             Path script = extractScript();
             debugLog("[Bridge] Script: " + script.toAbsolutePath());
 
+            int portMin = Constants.PORT_RANGE_MIN;
+            int portMax = Constants.PORT_RANGE_MAX;
+            try {
+                portMin = Activator.getDefault().getPreferenceStore().getInt(Constants.PREF_PORT_MIN);
+                portMax = Activator.getDefault().getPreferenceStore().getInt(Constants.PREF_PORT_MAX);
+            } catch (Exception ignored) {}
+            debugLog("[Bridge] Port range: " + portMin + "-" + portMax);
+
             // Use file-based ready signal (works around macOS pipe buffering)
             Path readyFile = Files.createTempFile("cb_ready_", ".txt");
             readyFile.toFile().deleteOnExit();
             Files.deleteIfExists(readyFile); // PHP will create it
             debugLog("[Bridge] Ready file: " + readyFile.toAbsolutePath());
-
-            int[] ports = new int[2];
 
             String osName = System.getProperty("os.name", "");
             debugLog("[Bridge] os.name = " + osName);
@@ -94,7 +104,7 @@ public final class PhpBridge {
                 String cmd = String.format("'%s' '%s' %d %d '%s'",
                     binary.toAbsolutePath().toString(),
                     script.toAbsolutePath().toString(),
-                    PORT_A, PORT_B,
+                    portMin, portMax,
                     readyFile.toAbsolutePath().toString());
                 pb = new ProcessBuilder("/bin/sh", "-c", cmd);
                 debugLog("[Bridge] Shell command: " + cmd);
@@ -102,8 +112,8 @@ public final class PhpBridge {
                 pb = new ProcessBuilder(
                     binary.toAbsolutePath().toString(),
                     script.toAbsolutePath().toString(),
-                    String.valueOf(PORT_A),
-                    String.valueOf(PORT_B),
+                    String.valueOf(portMin),
+                    String.valueOf(portMax),
                     readyFile.toAbsolutePath().toString()
                 );
             }
@@ -157,8 +167,8 @@ public final class PhpBridge {
                         debugLog("[Bridge] Ready file content: " + firstLine);
                         String[] parts = firstLine.split(" ");
                         if (parts.length == 3) {
-                            ports[0] = Integer.parseInt(parts[1]);
-                            ports[1] = Integer.parseInt(parts[2]);
+                            portA = Integer.parseInt(parts[1]);
+                            portB = Integer.parseInt(parts[2]);
                             gotReady = true;
                             // Log PHP confirmation message if present
                             if (lines.length > 1) {
@@ -184,9 +194,9 @@ public final class PhpBridge {
                 }
                 return false;
             }
-            debugLog("[Bridge] Got READY, connecting to port " + ports[1]);
+            debugLog("[Bridge] Got READY, connecting to port " + portB);
 
-            socketB = new Socket("127.0.0.1", ports[1]);
+            socketB = new Socket("127.0.0.1", portB);
             running.set(true);
 
             readerThread = new Thread(this::readLoop, "bridge-reader");
@@ -222,6 +232,8 @@ public final class PhpBridge {
 
     public synchronized void stop() {
         running.set(false);
+        portA = 0;
+        portB = 0;
 
         if (socketB != null) {
             try { socketB.close(); } catch (IOException ignored) {}
@@ -254,12 +266,14 @@ public final class PhpBridge {
         return overridden.get();
     }
 
+    /** Port assigned by the relay for the Rust side; valid only after a successful start(). */
     public int getPortA() {
-        return PORT_A;
+        return portA;
     }
 
+    /** Port assigned by the relay for the Java side; valid only after a successful start(). */
     public int getPortB() {
-        return PORT_B;
+        return portB;
     }
 
     public String getPhpMessage() {
