@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.List;
 
 import org.eclipse.jdt.core.IJavaElement;
+import org.eclipse.ui.dialogs.SearchPattern;
 import org.junit.jupiter.api.Test;
 
 import com.anthropic.claudecode.eclipse.resolvers.IEntityResolver.IResolvedEntity;
@@ -128,5 +129,27 @@ class JavaIdentifierEntityResolverTest {
 
 		assertNotNull(resolver.resolve("(java.util.List).", true), "strip mode must recognize the wrapped token");
 		assertTrue(resolver.findCalled);
+	}
+
+	// ---- dialog filtering (fqnMatches: substring over the fully qualified name) -----------------
+
+	/** Whether the chooser's substring filter would keep an element whose FQN is {@code fqn} for {@code pattern}. */
+	private static boolean filters(String pattern, String fqn) {
+		SearchPattern matcher = new SearchPattern(
+				SearchPattern.DEFAULT_MATCH_RULES | SearchPattern.RULE_SUBSTRING_MATCH);
+		matcher.setPattern(pattern);
+		return JavaIdentifierEntityResolver.fqnMatches(matcher, fqn);
+	}
+
+	@Test
+	void substringMatchesAnyFragmentOfTheQualifiedName() {
+		String fqn = "java.util.HashMap.put(Object, Object)";
+		assertTrue(filters("HashMap", fqn), "a type fragment must match");
+		assertTrue(filters("hashmap", fqn), "matching is case-insensitive");
+		assertTrue(filters("*Map*", fqn), "an explicit *...* wildcard must match");
+		assertTrue(filters("put", fqn), "a member fragment must match");
+		assertTrue(filters("HashMap.put", fqn), "a dotted run must match");
+		assertTrue(filters("util.Hash", fqn), "a package-anchored fragment must match");
+		assertFalse(filters("xyz", fqn), "an absent fragment must not match");
 	}
 }

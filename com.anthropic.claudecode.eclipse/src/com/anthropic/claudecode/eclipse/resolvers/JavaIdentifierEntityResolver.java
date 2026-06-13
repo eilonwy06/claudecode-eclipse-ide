@@ -1,10 +1,14 @@
 package com.anthropic.claudecode.eclipse.resolvers;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Pattern;
 
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.Status;
 import org.eclipse.jdt.core.IField;
 import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IMethod;
@@ -16,13 +20,18 @@ import org.eclipse.jdt.core.search.SearchPattern;
 import org.eclipse.jdt.core.search.TypeNameMatch;
 import org.eclipse.jdt.core.search.TypeNameMatchRequestor;
 import org.eclipse.jdt.ui.JavaElementLabelProvider;
+import org.eclipse.jdt.ui.JavaElementLabels;
 import org.eclipse.jdt.ui.JavaUI;
+import org.eclipse.jface.dialogs.IDialogSettings;
+import org.eclipse.jface.viewers.StyledString;
 import org.eclipse.jface.window.Window;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.PartInitException;
-import org.eclipse.ui.dialogs.ElementListSelectionDialog;
+import org.eclipse.ui.dialogs.FilteredItemsSelectionDialog;
 
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.editor.UiHelper;
@@ -76,7 +85,7 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 
 	@Override
 	public String getName() {
-		return "Java Indentifier";
+		return "Java Identifier";
 	}
 
 	@Override
@@ -207,7 +216,7 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 
 	/**
 	 * Pops a selection dialog listing every matched element so the user picks which to open — the Java
-	 * analog of {@link FileEntityResolver#openResourceDialog}. The shared 1-based {@code line} (if any)
+	 * analog of {@link PythonIdentifierEntityResolver#openChooser}. The shared 1-based {@code line} (if any)
 	 * is applied to whichever elements are chosen. Package-private for tests.
 	 */
 	void openChooser(List<IJavaElement> matches, int line) {
@@ -217,15 +226,7 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 				return;
 			}
 			Shell shell = page.getWorkbenchWindow().getShell();
-			ElementListSelectionDialog dialog = new ElementListSelectionDialog(shell,
-					new JavaElementLabelProvider(
-							JavaElementLabelProvider.SHOW_DEFAULT      // overlay icons + parameter types
-							| JavaElementLabelProvider.SHOW_QUALIFIED  // fully-qualified declaring type prefix
-							| JavaElementLabelProvider.SHOW_ROOT));    // " - <project>/<src folder>" suffix
-			dialog.setTitle("Open Java Element");
-			dialog.setMessage("Several Java elements match. Select one or more to open:");
-			dialog.setMultipleSelection(true);
-			dialog.setElements(matches.toArray());
+			JavaElementSelectionDialog dialog = new JavaElementSelectionDialog(shell, matches);
 			if (dialog.open() != Window.OK) {
 				return;
 			}
@@ -233,6 +234,169 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 				doOpen((IJavaElement) selected, line);
 			}
 		});
+	}
+
+	/**
+	 * The fully qualified, human-readable label of {@code element} — the declaring type/package, the simple
+	 * name, and (for methods) the parameter types, e.g. {@code com.foo.Bar.baz(int)}. This is both what
+	 * {@link #fqnMatches} filters against and what the chooser sorts and de-duplicates by, so the displayed
+	 * label and the narrowing logic stay in sync. Touches JDT.
+	 */
+	static String fqnOf(IJavaElement element) {
+		return JavaElementLabels.getTextLabel(element, JavaElementLabels.ALL_FULLY_QUALIFIED | JavaElementLabels.M_PARAMETER_TYPES);
+	}
+
+	/**
+	 * Whether a matched element's {@link #fqnOf fully qualified name} matches {@code matcher}. When
+	 * {@code matcher} is built with {@code DEFAULT_MATCH_RULES | RULE_SUBSTRING_MATCH} (as
+	 * {@link JavaElementSelectionDialog}'s filter is) this is case-insensitive substring matching with
+	 * {@code *}/{@code ?} wildcards, so typing any fragment of what the list shows — {@code List},
+	 * {@code *List*}, {@code Map.put} — narrows to it. Pure (no JDT) so it is unit-testable; the JDT-touching
+	 * {@link #fqnOf} is the seam.
+	 */
+	static boolean fqnMatches(org.eclipse.ui.dialogs.SearchPattern matcher, String fqn) {
+		return matcher.matches(fqn);
+	}
+
+	/**
+	 * Selection dialog for several matched Java elements, the Java analog of
+	 * {@link PythonIdentifierEntityResolver.PythonElementSelectionDialog}. The list rows use a
+	 * {@link ColoredListLabelProvider} — JDT's own {@link JavaElementLabelProvider} for the per-type icon,
+	 * with the styled label re-rendered through {@link JavaElementLabels#COLORIZE} so the qualifier and root
+	 * path are greyed like JDT's Open Type dialog and the Python chooser (the plain provider leaves them in
+	 * the default colour). The bottom details panel uses a fuller plain provider. The Help button is
+	 * suppressed by {@link #isHelpAvailable()}.
+	 *
+	 * <p>The filter box matches the {@link #fqnOf fully qualified name} by case-insensitive substring (with
+	 * {@code *}/{@code ?} wildcards): its {@code patternMatcher} is built with
+	 * {@link org.eclipse.ui.dialogs.SearchPattern#RULE_SUBSTRING_MATCH}, so typing any fragment of what's shown — {@code List},
+	 * {@code *List*}, {@code Map.put} — narrows to it. See {@code createFilter} and {@link #fqnMatches}.
+	 */
+	static final class JavaElementSelectionDialog extends FilteredItemsSelectionDialog {
+
+		private static final String DIALOG_SETTINGS =
+				"com.anthropic.claudecode.eclipse.resolvers.JavaElementSelectionDialog";
+
+		private final List<IJavaElement> matches;
+
+		JavaElementSelectionDialog(Shell shell, List<IJavaElement> matches) {
+			super(shell, true);
+			this.matches = matches;
+			setTitle("Open Java Element");
+			setMessage("Multiple Java elements match. Select one or more to open.\n"
+					 + "Filter elements by name prefix or pattern (*, ?, or camel case):");
+			setListLabelProvider(new ColoredListLabelProvider());
+			setDetailsLabelProvider(new JavaElementLabelProvider(
+					JavaElementLabelProvider.SHOW_QUALIFIED
+					| JavaElementLabelProvider.SHOW_ROOT
+					| JavaElementLabelProvider.SHOW_PARAMETERS
+					| JavaElementLabelProvider.SHOW_RETURN_TYPE));
+		}
+
+		/** Suppresses the Help ('?') button */
+		@Override
+		public boolean isHelpAvailable() {
+			return false;
+		}
+
+		@Override
+		protected Control createExtendedContentArea(Composite parent) {
+			return null;
+		}
+
+		@Override
+		protected IDialogSettings getDialogSettings() {
+			IDialogSettings settings = Activator.getDefault().getDialogSettings().getSection(DIALOG_SETTINGS);
+			if (settings == null) {
+				settings = Activator.getDefault().getDialogSettings().addNewSection(DIALOG_SETTINGS);
+			}
+			return settings;
+		}
+
+		@Override
+		public String getElementName(Object item) {
+			return fqnOf((IJavaElement) item);
+		}
+
+		@Override
+		protected IStatus validateItem(Object item) {
+			return Status.OK_STATUS;
+		}
+
+		@Override
+		protected Comparator<IJavaElement> getItemsComparator() {
+			return Comparator.comparing(JavaIdentifierEntityResolver::fqnOf);
+		}
+
+		@Override
+		protected ItemsFilter createFilter() {
+			// Filter by the fully qualified name shown in the list via fqnMatches: the patternMatcher is built
+			// with RULE_SUBSTRING_MATCH so typing any fragment of what's displayed (List, *List*, Map.put)
+			// narrows to it. Built once per filter — FISD makes a fresh filter per keystroke — and reused for
+			// every item, rather than per item.
+			return new ItemsFilter(new org.eclipse.ui.dialogs.SearchPattern(
+					org.eclipse.ui.dialogs.SearchPattern.DEFAULT_MATCH_RULES
+					| org.eclipse.ui.dialogs.SearchPattern.RULE_SUBSTRING_MATCH)) {
+				// FilteredItemsSelectionDialog skips filtering entirely (FilterJob guards filterContent()
+				// with getPattern().length() != 0) when the pattern is empty — so an empty box, on open or
+				// when cleared, shows nothing. Our list is small and already narrowed, so we want empty to
+				// show every match instead: capture the empty state and present a non-empty pattern so the
+				// filter runs, then match all. matchItem(...) below still matches the real text via
+				// patternMatcher, so typed filtering is unaffected.
+				private final boolean matchAll = super.getPattern().isEmpty();
+
+				@Override
+				public String getPattern() {
+					return matchAll ? " " : super.getPattern();
+				}
+
+				@Override
+				public boolean matchItem(Object item) {
+					return matchAll || fqnMatches(patternMatcher, fqnOf((IJavaElement) item));
+				}
+
+				@Override
+				public boolean isConsistentItem(Object item) {
+					return true;
+				}
+			};
+		}
+
+		@Override
+		protected void fillContentProvider(AbstractContentProvider contentProvider, ItemsFilter itemsFilter,
+				IProgressMonitor progressMonitor) {
+			for (IJavaElement match : matches) {
+				contentProvider.add(match, itemsFilter);
+			}
+			if (progressMonitor != null) {
+				progressMonitor.done();
+			}
+		}
+	}
+
+	/**
+	 * List-row label provider for {@link JavaElementSelectionDialog}: JDT's {@link JavaElementLabelProvider}
+	 * for the per-type icon, but with the styled text re-rendered through {@link JavaElementLabels#COLORIZE}
+	 * so the post-qualifier and root path are greyed (the {@code SHOW_*} int flags the base provider takes
+	 * don't carry {@code COLORIZE}, so its {@code getStyledText} leaves them the default colour). Produces the
+	 * "{@code Name} - {@code package.Declaring} - {@code project/src}" form of JDT's Open Type dialog and the
+	 * Python chooser. The greyed parts are still in the text, so the dialog's substring filter is unaffected.
+	 */
+	static final class ColoredListLabelProvider extends JavaElementLabelProvider {
+
+		/** Name, then greyed post-qualifier and appended root path; {@code COLORIZE} is what greys them. */
+		private static final long FLAGS = JavaElementLabels.ALL_POST_QUALIFIED
+				| JavaElementLabels.M_PARAMETER_TYPES | JavaElementLabels.APPEND_ROOT_PATH
+				| JavaElementLabels.COLORIZE;
+
+		ColoredListLabelProvider() {
+			super(SHOW_OVERLAY_ICONS | SHOW_SMALL_ICONS); // drives getImage; getStyledText is overridden below
+		}
+
+		@Override
+		public StyledString getStyledText(Object element) {
+			return JavaElementLabels.getStyledTextLabel(element, FLAGS);
+		}
 	}
 
 	/**
