@@ -67,8 +67,8 @@ public class ClaudeCodeView extends ViewPart {
         createButtonRow(container);
         createLogArea(container, display);
 
-        appendLog("Claude Code for Eclipse v2.4.4\n");
-        appendLog("─────────────────────────────────\n\n");
+        appendLog("Claude Code for Eclipse v2.4.5\n");
+        appendLog("â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {
             appendLog("Starting HTTP+SSE server...\n");
@@ -279,7 +279,7 @@ public class ClaudeCodeView extends ViewPart {
             if (phpMsg != null && !phpMsg.isEmpty()) {
                 appendLog(phpMsg + "\n");
             }
-            appendLog("Bridge relay ports: " + phpBridge.getPortA() + " ↔ " + phpBridge.getPortB() + "\n\n");
+            appendLog("Bridge relay ports: " + phpBridge.getPortA() + " â†” " + phpBridge.getPortB() + "\n\n");
         }
     }
 

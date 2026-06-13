@@ -4,7 +4,6 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -12,9 +11,7 @@ import java.util.regex.Pattern;
 import org.eclipse.core.filesystem.EFS;
 import org.eclipse.core.filesystem.IFileStore;
 import org.eclipse.core.resources.IFile;
-import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
-import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.OperationCanceledException;
@@ -169,90 +166,6 @@ public class FileEntityResolver implements IEntityResolver {
 		return fullPath.endsWith(needle)
 				&& (fullPath.length() == needle.length()
 						|| fullPath.charAt(fullPath.length() - needle.length() - 1) == '/');
-	}
-
-	/**
-	 * Whether {@code token} — after trailing line-suffix and edge-junk trimming — is an existing
-	 * absolute regular file. Used by the terminal click handler to recover a drive path that
-	 * contains spaces (e.g. {@code C:\Users\Windows 10\...}), where it must test candidate spans
-	 * directly rather than via the overridable {@link #fileExists} instance hook. Never throws.
-	 * Public so the click handler in the {@code ...ui} package can call it. */
-	public static boolean existingAbsoluteFile(String token) {
-		if (token == null) {
-			return false;
-		}
-		String t = stripEdges(token);
-		Matcher m = LINE_SUFFIX.matcher(t);
-		if (m.find()) {
-			t = t.substring(0, m.start());
-		}
-		if (t.isEmpty()) {
-			return false;
-		}
-		try {
-			Path p = Path.of(t);
-			return p.isAbsolute() && Files.isRegularFile(p);
-		} catch (InvalidPathException e) {
-			return false;
-		}
-	}
-
-	/**
-	 * Whether {@code token} — after the same trailing line-suffix and edge trimming as
-	 * {@link #existingAbsoluteFile} — names an existing regular file when resolved against the
-	 * workspace root or an open project's location (or that location's parent). Lets the terminal
-	 * click handler recover workspace-relative paths containing spaces, e.g.
-	 * {@code Sample\src\aaa bbb\file.java}. Public for the {@code ...ui} package; never throws.
-	 */
-	public static boolean existingWorkspaceRelativeFile(String token) {
-		if (token == null) {
-			return false;
-		}
-		String t = stripEdges(token);
-		Matcher m = LINE_SUFFIX.matcher(t);
-		if (m.find()) {
-			t = t.substring(0, m.start());
-		}
-		if (t.isEmpty()) {
-			return false;
-		}
-		try {
-			Path rel = Path.of(t);
-			if (rel.isAbsolute()) {
-				return false;
-			}
-			for (Path base : relativeLookupBases()) {
-				if (Files.isRegularFile(base.resolve(rel))) {
-					return true;
-				}
-			}
-		} catch (Exception e) {
-			// Invalid path characters, workspace unavailable, … — not a resolvable path.
-		}
-		return false;
-	}
-
-	/** Workspace root + open project locations (and their parents) as filesystem lookup bases. */
-	private static List<Path> relativeLookupBases() {
-		LinkedHashSet<Path> bases = new LinkedHashSet<>();
-		try {
-			IWorkspaceRoot root = ResourcesPlugin.getWorkspace().getRoot();
-			if (root.getLocation() != null) {
-				bases.add(Path.of(root.getLocation().toOSString()));
-			}
-			for (IProject project : root.getProjects()) {
-				if (project.isOpen() && project.getLocation() != null) {
-					Path loc = Path.of(project.getLocation().toOSString());
-					bases.add(loc);
-					if (loc.getParent() != null) {
-						bases.add(loc.getParent());
-					}
-				}
-			}
-		} catch (Exception e) {
-			// Workspace not running — no bases to resolve against.
-		}
-		return new ArrayList<>(bases);
 	}
 
 	/**

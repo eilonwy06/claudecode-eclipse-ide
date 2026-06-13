@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.4.4] — 2026-06-12 *(current)*
+## [2.4.5] — 2026-06-13 *(current)*
+
+### Changed
+- **Reverted the spaced-path Ctrl+click heuristics introduced in 2.4.4** — entity recognition is back to the previous simple behavior. Thanks to [@xgsa](https://github.com/xgsa) for the analysis and feedback.
+
+---
+
+## [2.4.4] — 2026-06-12
 
 ### Fixed
 - **Claude now auto-connects to the IDE** — sessions export the auto-connect variable current CLIs actually read (`CLAUDE_CODE_SSE_PORT`); previous releases set only legacy variables, so the IDE integration could silently never connect (the legacy `CLAUDE_IDE_*` variables are still exported for older CLIs)
