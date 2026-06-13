@@ -67,6 +67,21 @@ public class EntitiesRegistry {
 		return result;
 	}
 	
+	/**
+	 * The display names of the registered resolvers, in registration order (e.g. for a hint that
+	 * enumerates the recognizable entity kinds). Reflects the JDT-optional gating: the Java resolver's
+	 * name is only present when {@link #addJavaResolverIfAvailable()} actually registered it.
+	 *
+	 * @see IEntityResolver#getName()
+	 */
+	public List<String> getResolverNames() {
+		List<String> names = new ArrayList<>();
+		for (IEntityResolver resolver : resolvers) {
+			names.add(resolver.getName());
+		}
+		return names;
+	}
+
 	private void addResolver(IEntityResolver resolver) {
 		resolvers.add(resolver);
 	}
