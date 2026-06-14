@@ -4,7 +4,18 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.4.5] — 2026-06-13 *(current)*
+## [2.4.6] — 2026-06-14 *(current)*
+
+### Added
+- **Ctrl+Click to open Python identifiers** — clicking a Python class, function, or variable name in the Claude CLI view now resolves and opens its definition, alongside a matcher for accurate identifier recognition ([@xgsa](https://github.com/xgsa), PR #52)
+- **One-time Ctrl+Click hint bar** — a dismissable hint shown once in the Claude CLI view lets you know identifiers and paths can be opened with Ctrl+Click ([@xgsa](https://github.com/xgsa), PR #54)
+
+### Changed
+- **Improved Java identifier resolver dialog** — clearer disambiguation when a clicked Java identifier matches multiple candidates ([@xgsa](https://github.com/xgsa), PR #53)
+
+---
+
+## [2.4.5] — 2026-06-13
 
 ### Changed
 - **Reverted the spaced-path Ctrl+click heuristics introduced in 2.4.4** — entity recognition is back to the previous simple behavior. Thanks to [@xgsa](https://github.com/xgsa) for the analysis and feedback.
