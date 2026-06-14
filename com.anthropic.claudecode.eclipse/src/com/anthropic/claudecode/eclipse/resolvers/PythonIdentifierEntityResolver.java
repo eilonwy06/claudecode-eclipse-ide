@@ -500,7 +500,7 @@ public class PythonIdentifierEntityResolver implements IEntityResolver {
 			if (text == null || text.isBlank()) {
 				return null;
 			}
-			String s = allowStripEdges ? stripEdges(text) : text;
+			String s = allowStripEdges ? IdentifierUtils.stripEdges(text, LEADING_JUNK, TRAILING_PLAIN, OPENERS, CLOSERS) : text;
 			if (s.isEmpty()) {
 				return null;
 			}
@@ -532,44 +532,6 @@ public class PythonIdentifierEntityResolver implements IEntityResolver {
 		/** Whether {@code s} is a dotted Python identifier — each segment starts with a letter/underscore. */
 		private static boolean isDottedIdentifier(String s) {
 			return DOTTED_IDENTIFIER.matcher(s).matches();
-		}
-
-		/**
-		 * Trims wrapping junk: leading characters in {@link #LEADING_JUNK}, then trailing characters in
-		 * {@link #TRAILING_PLAIN} plus closing brackets that have no matching opener in the remaining span
-		 * (so a balanced {@code (a, b)} survives while a wrapping {@code )} is removed).
-		 */
-		private static String stripEdges(String s) {
-			int start = 0;
-			int end = s.length();
-			while (start < end && LEADING_JUNK.indexOf(s.charAt(start)) >= 0) {
-				start++;
-			}
-			while (end > start) {
-				char c = s.charAt(end - 1);
-				if (TRAILING_PLAIN.indexOf(c) >= 0) {
-					end--;
-					continue;
-				}
-				int closerIdx = CLOSERS.indexOf(c);
-				if (closerIdx >= 0 && count(s, OPENERS.charAt(closerIdx), start, end) < count(s, c, start, end)) {
-					end--;
-					continue;
-				}
-				break;
-			}
-			return s.substring(start, end);
-		}
-
-		/** Number of occurrences of {@code c} within {@code s[from, to)}. */
-		private static int count(String s, char c, int from, int to) {
-			int n = 0;
-			for (int i = from; i < to; i++) {
-				if (s.charAt(i) == c) {
-					n++;
-				}
-			}
-			return n;
 		}
 	}
 }

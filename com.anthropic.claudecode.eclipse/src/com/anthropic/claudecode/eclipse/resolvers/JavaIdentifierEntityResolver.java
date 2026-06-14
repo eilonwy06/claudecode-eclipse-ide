@@ -464,7 +464,7 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 			if (text == null || text.isBlank()) {
 				return null;
 			}
-			String s = allowStripEdges ? stripEdges(text) : text;
+			String s = allowStripEdges ? IdentifierUtils.stripEdges(text, LEADING_JUNK, TRAILING_PLAIN, OPENERS, CLOSERS) : text;
 			if (s.isEmpty()) {
 				return null;
 			}
@@ -472,7 +472,7 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 				int hash = s.indexOf('#');
 				String afterHash = s.substring(hash + 1);
 				String member = afterHash.substring(0, afterHash.indexOf('(')).trim();
-				return build(Kind.METHOD, s.substring(0, hash), member, countParams(argsOf(s)), 0);
+				return build(Kind.METHOD, s.substring(0, hash), member, IdentifierUtils.countParams(argsOf(s)), 0);
 			}
 			if (MEMBER.matcher(s).matches()) {
 				int hash = s.indexOf('#');
@@ -485,7 +485,7 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 					return null; // a bare "method(...)" has no type to resolve against
 				}
 				return build(Kind.METHOD, qualified.substring(0, lastDot), qualified.substring(lastDot + 1),
-						countParams(argsOf(s)), 0);
+						IdentifierUtils.countParams(argsOf(s)), 0);
 			}
 			if (TYPE.matcher(s).matches()) {
 				return build(Kind.TYPE, s, null, -1, 0);
@@ -516,72 +516,6 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 			int open = s.indexOf('(');
 			int close = s.lastIndexOf(')');
 			return open >= 0 && close > open ? s.substring(open + 1, close) : "";
-		}
-
-		/**
-		 * Number of top-level parameters in an argument list (the text inside the outer parentheses):
-		 * {@code 0} when empty or the bare ellipsis placeholder {@code ...} (so {@code method(...)} resolves
-		 * exactly like {@code method()}), otherwise one more than the count of commas not nested inside
-		 * {@code () <> []} — so generics ({@code Map<K,V>}) and arrays don't inflate the arity.
-		 */
-		private static int countParams(String args) {
-			String inner = args.trim();
-			if (inner.isEmpty() || inner.equals("...")) {
-				return 0;
-			}
-			int depth = 0;
-			int count = 1;
-			for (int i = 0; i < inner.length(); i++) {
-				switch (inner.charAt(i)) {
-					case '(', '<', '[' -> depth++;
-					case ')', '>', ']' -> depth--;
-					case ',' -> {
-						if (depth == 0) {
-							count++;
-						}
-					}
-					default -> { /* not a delimiter */ }
-				}
-			}
-			return count;
-		}
-
-		/**
-		 * Trims wrapping junk: leading characters in {@link #LEADING_JUNK}, then trailing characters in
-		 * {@link #TRAILING_PLAIN} plus closing brackets that have no matching opener in the remaining span
-		 * (so a balanced {@code (x)} survives while a wrapping {@code )} is removed).
-		 */
-		private static String stripEdges(String s) {
-			int start = 0;
-			int end = s.length();
-			while (start < end && LEADING_JUNK.indexOf(s.charAt(start)) >= 0) {
-				start++;
-			}
-			while (end > start) {
-				char c = s.charAt(end - 1);
-				if (TRAILING_PLAIN.indexOf(c) >= 0) {
-					end--;
-					continue;
-				}
-				int closerIdx = CLOSERS.indexOf(c);
-				if (closerIdx >= 0 && count(s, OPENERS.charAt(closerIdx), start, end) < count(s, c, start, end)) {
-					end--;
-					continue;
-				}
-				break;
-			}
-			return s.substring(start, end);
-		}
-
-		/** Number of occurrences of {@code c} within {@code s[from, to)}. */
-		private static int count(String s, char c, int from, int to) {
-			int n = 0;
-			for (int i = from; i < to; i++) {
-				if (s.charAt(i) == c) {
-					n++;
-				}
-			}
-			return n;
 		}
 	}
 }
