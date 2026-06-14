@@ -39,7 +39,10 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Listener;
+import org.eclipse.swt.widgets.ToolBar;
+import org.eclipse.swt.widgets.ToolItem;
 import org.eclipse.ui.ISharedImages;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.part.IShowInTarget;
@@ -140,6 +143,9 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         tabFolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         tabFolder.setTabHeight(24);
 
+        // Bottom hint bar (shown once per workspace) advertising Ctrl+Click navigation.
+        showCtrlClickHintIfNeeded(container);
+
         configureActionBars();
 
         tabFolder.addCTabFolder2Listener(new CTabFolder2Adapter() {
@@ -202,6 +208,58 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             if (session != null) session.updateTheme();
         }
         if (oldBg != null && !oldBg.isDisposed()) oldBg.dispose();
+    }
+
+    private static String getModKey() {
+        return Activator.isMacOS() ? "\u2318" : "Ctrl";
+    }
+
+    /**
+     * Builds the one-time hint bar at the bottom of {@code container}, advertising the
+     * (otherwise invisible) Ctrl+Click (Cmd+Click on macOS) - entity navigation and enumerating the
+     * recognizable entity kinds. Does nothing once the user has dismissed it in this workspace
+     * ({@link Constants#PREF_CLI_CTRLCLICK_HINT_DISMISSED}).
+     */
+    private void showCtrlClickHintIfNeeded(Composite container) {
+        if (Activator.getDefault().getPreferenceStore().getBoolean(Constants.PREF_CLI_CTRLCLICK_HINT_DISMISSED)) {
+            return;
+        }
+        Display display = container.getDisplay();
+        Color infoBg = display.getSystemColor(SWT.COLOR_INFO_BACKGROUND);
+        Color infoFg = display.getSystemColor(SWT.COLOR_INFO_FOREGROUND);
+
+        final Composite hintBanner = new Composite(container, SWT.NONE);
+        hintBanner.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        hintBanner.setBackground(infoBg);
+        GridLayout bannerLayout = new GridLayout(3, false);
+        bannerLayout.marginHeight = 3;
+        bannerLayout.marginWidth = 5;
+        hintBanner.setLayout(bannerLayout);
+
+        ISharedImages sharedImages = PlatformUI.getWorkbench().getSharedImages();
+
+        String kinds = String.join(", ", entitiesRegistry.getResolverNames());
+        Label message = new Label(hintBanner, SWT.WRAP);
+        message.setBackground(infoBg);
+        message.setForeground(infoFg);
+        message.setText("✨ Tip: hold " + getModKey() + " and click on " + kinds + " in the output to open it");
+        message.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        ToolBar closeBar = new ToolBar(hintBanner, SWT.FLAT);
+        closeBar.setBackground(infoBg);
+        closeBar.setLayoutData(new GridData(SWT.END, SWT.CENTER, false, false));
+        ToolItem closeItem = new ToolItem(closeBar, SWT.PUSH);
+        closeItem.setImage(sharedImages.getImage(ISharedImages.IMG_ELCL_REMOVE));
+        closeItem.setToolTipText("Dismiss");
+        closeItem.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> {
+			Activator.getDefault().getPreferenceStore()
+			        .setValue(Constants.PREF_CLI_CTRLCLICK_HINT_DISMISSED, true);
+			if (hintBanner != null && !hintBanner.isDisposed()) {
+			    Composite parent = hintBanner.getParent();
+			    hintBanner.dispose();
+			    if (parent != null && !parent.isDisposed()) parent.layout(true, true);
+			}
+		}));
     }
 
     private void configureActionBars() {
@@ -732,7 +790,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             Control canvas = control.getControl();
             if (canvas == null || canvas.isDisposed()) return;
 
-			String modKey = Activator.isMacOS() ? "\u2318" : "Ctrl";
+			String modKey = getModKey();
 			MenuManager mgr = new MenuManager();
             ISharedImages sharedImages = PlatformUI.getWorkbench().getSharedImages();
             DisablingAction openAction = new DisablingAction("&Open", null, null) {

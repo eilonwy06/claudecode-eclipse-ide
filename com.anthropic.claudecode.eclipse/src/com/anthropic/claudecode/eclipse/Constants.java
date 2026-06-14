@@ -21,6 +21,9 @@ public final class Constants {
     public static final String PREF_AUTO_LAUNCH_CLI = "autoLaunchCli";
     public static final String PREF_DEBUG_MODE = "debugMode";
 
+    /** Set once the user dismisses the Ctrl+Click hint bar in the Claude CLI view (per-workspace). */
+    public static final String PREF_CLI_CTRLCLICK_HINT_DISMISSED = "cliCtrlClickHintDismissed";
+
     public static final String PREF_HTTP_PROXY = "httpProxy";
     public static final String PREF_HTTPS_PROXY = "httpsProxy";
     public static final String PREF_NO_PROXY = "noProxy";
