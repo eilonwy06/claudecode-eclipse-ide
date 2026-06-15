@@ -2,7 +2,6 @@ package com.anthropic.claudecode.eclipse.resolvers;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Supplier;
 
 import org.eclipse.core.runtime.Platform;
 
@@ -22,9 +21,9 @@ public class EntitiesRegistry {
 	public EntitiesRegistry() {
 		addResolver(new WebLinkEntityResolver());
 		addResolver(new FileEntityResolver());
-		addResolverIfAvailable(JavaIdentifierEntityResolver::new,
+		addResolverIfAvailable("JavaIdentifierEntityResolver",
 				"org.eclipse.jdt.core", "org.eclipse.jdt.ui");
-		addResolverIfAvailable(PythonIdentifierEntityResolver::new,
+		addResolverIfAvailable("PythonIdentifierEntityResolver",
 				"org.python.pydev", "org.python.pydev.core", "org.python.pydev.ast", "com.python.pydev.analysis");
 	}
 
@@ -53,8 +52,8 @@ public class EntitiesRegistry {
 	
 	/**
 	 * The display names of the registered resolvers, in registration order (e.g. for a hint that
-	 * enumerates the recognizable entity kinds). Reflects the JDT-optional gating: the Java resolver's
-	 * name is only present when {@link #addJavaResolverIfAvailable()} actually registered it.
+	 * enumerates the recognizable entity kinds). Reflects the optional gating: an optional resolver's
+	 * name is only present when {@link #addResolverIfAvailable(String, String...)} actually registered it.
 	 *
 	 * @see IEntityResolver#getName()
 	 */
@@ -71,21 +70,34 @@ public class EntitiesRegistry {
 	}
 
 	/**
-	 * Registers the resolver produced by {@code factory}, but only when every bundle in {@code bundleIds}
-	 * is installed. The bundle checks gate the {@code factory.get()} call, so the resolver class is never
-	 * loaded (and so never link-fails) on an Eclipse missing an optional dependency — this is what keeps
-	 * those dependencies optional (declared {@code resolution:=optional} in {@code MANIFEST.MF}). The
-	 * {@code catch} covers the rare case of a dependency being present but not wired to us (e.g. a version
+	 * Registers the resolver named (by simple class name, in this package) by {@code resolverClassName}, but
+	 * only when every bundle in {@code bundleIds} is installed. This is what keeps those dependencies optional
+	 * (declared {@code resolution:=optional} in {@code MANIFEST.MF}): the bundle checks gate the reflective
+	 * {@link Class#forName(String) Class.forName}, so on an Eclipse missing an optional dependency the resolver
+	 * class is never loaded and so never link-fails.
+	 *
+	 * <p><b>Why a class-name string, not a {@code Supplier}/{@code Resolver::new} method reference.</b> A
+	 * compile-time {@code Resolver::new} puts a {@code MethodHandle} to the resolver's constructor in <em>this</em>
+	 * class's constant pool; executing that {@code invokedynamic} (which happens while evaluating the argument,
+	 * <em>before</em> this method runs) eagerly loads <em>and verifies</em> the resolver. Verification loads the
+	 * exception types in the resolver's {@code catch} clauses — e.g. {@code MisconfigurationException} — so on an
+	 * Eclipse missing the optional bundle it throws {@link NoClassDefFoundError} <em>past</em> the guard below.
+	 * Naming the class by string keeps the only reference to it a plain {@code String}, so it is first touched by
+	 * {@code Class.forName} — inside the guard. <b>Do not reintroduce a method reference here.</b>
+	 *
+	 * <p>The {@code catch} covers the rare case of a dependency being present but not wired to us (e.g. a version
 	 * outside our range): the resolver is simply skipped rather than breaking the whole registry.
 	 */
-	private void addResolverIfAvailable(Supplier<IEntityResolver> factory, String... bundleIds) {
+	private void addResolverIfAvailable(String resolverClassName, String... bundleIds) {
 		for (String id : bundleIds) {
 			if (Platform.getBundle(id) == null) return;
 		}
 		try {
-			addResolver(factory.get());
-		} catch (LinkageError | RuntimeException e) {
-			Activator.logError("All the necessary bundles are present, but resolver could not be created; skipping", e);
+			Class<?> clazz = Class.forName(EntitiesRegistry.class.getPackageName() + "." + resolverClassName);
+			addResolver((IEntityResolver) clazz.getDeclaredConstructor().newInstance());
+		} catch (LinkageError | ReflectiveOperationException | RuntimeException e) {
+			Activator.logError("All the necessary bundles are present, but " + resolverClassName + 
+					" could not be created; skipping", e);
 		}
 	}
 }
