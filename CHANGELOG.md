@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.4.6] — 2026-06-14 *(current)*
+## [2.4.7] — 2026-06-15 *(current)*
+
+### Fixed
+- **Optional language tooling dependencies** — PyDev and JDT are now truly optional; the plugin no longer fails to load when either is absent ([@xgsa](https://github.com/xgsa), PR #57)
+
+---
+
+## [2.4.6] — 2026-06-14
 
 ### Added
 - **Ctrl+Click to open Python identifiers** — clicking a Python class, function, or variable name in the Claude CLI view now resolves and opens its definition, alongside a matcher for accurate identifier recognition ([@xgsa](https://github.com/xgsa), PR #52)
