@@ -3,6 +3,7 @@ package com.anthropic.claudecode.eclipse.ui;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
@@ -238,11 +239,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
         ISharedImages sharedImages = PlatformUI.getWorkbench().getSharedImages();
 
-        String kinds = String.join(", ", entitiesRegistry.getResolverNames());
         Label message = new Label(hintBanner, SWT.WRAP);
         message.setBackground(infoBg);
         message.setForeground(infoFg);
-        message.setText("✨ Tip: hold " + getModKey() + " and click on " + kinds + " in the output to open it");
+        message.setText(buildCtrlClickHintText());
         message.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
         ToolBar closeBar = new ToolBar(hintBanner, SWT.FLAT);
@@ -260,6 +260,40 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 			    if (parent != null && !parent.isDisposed()) parent.layout(true, true);
 			}
 		}));
+    }
+
+    /**
+     * Renders the Ctrl+Click hint sentence from the live {@link EntitiesRegistry}, so it names exactly the
+     * kinds the registry can resolve (the language resolvers are gated on JDT/PyDev/CDT being installed).
+     * The resolver display names are partitioned: the language ones — by convention named {@code "<Lang>
+     * Identifier"} — are collapsed into a single {@code "identifier (Java, Python, …)"} phrase to avoid
+     * repeating the word, while every other name is lowercased as-is (so {@code "Web Link"} stays the
+     * precise "web link", not a vague "link"). The phrases are joined with an Oxford "or".
+     */
+    private String buildCtrlClickHintText() {
+        List<String> kinds = new ArrayList<>();   // non-identifier kinds, lowercased, in registration order
+        List<String> langs = new ArrayList<>();   // languages stripped from the "<Lang> Identifier" resolvers
+        for (String name : entitiesRegistry.getResolverNames()) {
+            if (name.endsWith(" Identifier")) {
+                langs.add(name.substring(0, name.length() - " Identifier".length()));
+            } else {
+                kinds.add(name.toLowerCase(Locale.ROOT));
+            }
+        }
+        if (!langs.isEmpty()) {
+            kinds.add("code identifier (" + String.join(", ", langs) + ")");
+        }
+        return "✨ Tip: Hold " + getModKey() + " and click on a " + joinWithOr(kinds) + " in the output to open it";
+    }
+
+    /** Joins items into an Oxford-comma list ending in "or": {@code [a]}→"a", {@code [a,b]}→"a or b",
+     *  {@code [a,b,c]}→"a, b, or c". */
+    private static String joinWithOr(List<String> items) {
+        int n = items.size();
+        if (n == 0) return "";
+        if (n == 1) return items.get(0);
+        if (n == 2) return items.get(0) + " or " + items.get(1);
+        return String.join(", ", items.subList(0, n - 1)) + ", or " + items.get(n - 1);
     }
 
     private void configureActionBars() {
