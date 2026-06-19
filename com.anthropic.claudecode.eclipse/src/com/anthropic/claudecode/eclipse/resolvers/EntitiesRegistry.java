@@ -25,6 +25,8 @@ public class EntitiesRegistry {
 				"org.eclipse.jdt.core", "org.eclipse.jdt.ui");
 		addResolverIfAvailable("PythonIdentifierEntityResolver",
 				"org.python.pydev", "org.python.pydev.core", "org.python.pydev.ast", "com.python.pydev.analysis");
+		addResolverIfAvailable("CppIdentifierEntityResolver",
+				"org.eclipse.cdt.core", "org.eclipse.cdt.ui");
 	}
 
 	/**
