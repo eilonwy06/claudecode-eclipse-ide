@@ -200,9 +200,16 @@ public class FileEntityResolver implements IEntityResolver {
 	List<IFile> browseWorkspaceFiles(String pathSuffix) {
 		List<IFile> out = new ArrayList<>();
 		String needle = pathSuffix; // already path-normalized by resolve()
+		// Optimization: a match requires the file's own name to equal the needle's last segment (since
+		// matchesSuffix demands the full path end with the needle on a segment boundary). Checking the
+		// cheap, already-loaded res.getName() first lets us skip getLocation() + the normalizeSep() Path
+		// allocation for the vast majority of files, which is the real per-file cost on a large workspace.
+		// Safe because resolve() normalizes the needle to a file suffix with no trailing separator.
+		String lastSegment = needle.substring(needle.lastIndexOf('/') + 1);
 		try {
 			ResourcesPlugin.getWorkspace().getRoot().accept(res -> {
-				if (res.getType() == IResource.FILE && res.getLocation() != null
+				if (res.getType() == IResource.FILE && res.getName().equals(lastSegment)
+						&& res.getLocation() != null
 						&& matchesSuffix(normalizeSep(res.getLocation().toOSString()), needle)) {
 					out.add((IFile) res);
 				}
