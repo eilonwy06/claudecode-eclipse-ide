@@ -104,19 +104,23 @@ public class PythonIdentifierEntityResolver implements IEntityResolver {
 	 *
 	 * <p>PyDev is searched by simple name only — a method {@code ClassName.method_name} is indexed as an
 	 * INNER token named {@code method_name} with path {@code ClassName} — so a bare name search returns
-	 * every same-named token regardless of class/module. The qualifier filter restores the precision a
-	 * dotted reference asks for: when a qualifier is written it is enforced strictly, so a dotted reference
-	 * whose qualifier matches no hit's container yields a miss rather than every same-named token.
+	 * every same-named token regardless of class/module. The qualifier filter (applied inline, per hit, as
+	 * {@link #filterByQualifier} would) restores the precision a dotted reference asks for: when a qualifier
+	 * is written it is enforced strictly, so a dotted reference whose qualifier matches no hit's container
+	 * yields a miss rather than every same-named token. Filtering during the gather, rather than collecting
+	 * every same-named hit and filtering afterwards, keeps a wrapper allocation only for the kept hits — the
+	 * discarded majority of a common simple name's stdlib/project hits never get wrapped.
 	 */
 	void findMatches(PythonReference ref, List<AdditionalInfoAndIInfo> matches) {
-		List<AdditionalInfoAndIInfo> hits = new ArrayList<>();
+		String qualifier = qualifierOf(ref);
 		for (AbstractAdditionalTokensInfo info : gatherInfos()) {
 			for (IInfo hit : info.getTokensEqualTo(ref.name(),
 					AbstractAdditionalTokensInfo.TOP_LEVEL | AbstractAdditionalTokensInfo.INNER)) {
-				hits.add(new AdditionalInfoAndIInfo(info, hit));
+				if (qualifier == null || containerMatchesQualifier(hit, qualifier)) {
+					matches.add(new AdditionalInfoAndIInfo(info, hit));
+				}
 			}
 		}
-		matches.addAll(filterByQualifier(hits, qualifierOf(ref)));
 	}
 
 	/** The dotted qualifier preceding the simple name ({@code os.path} for {@code os.path.join}), or
