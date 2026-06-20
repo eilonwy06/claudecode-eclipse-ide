@@ -4,7 +4,6 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -15,19 +14,12 @@ import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
-import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.Status;
-import org.eclipse.jface.dialogs.IDialogSettings;
 import org.eclipse.jface.viewers.LabelProvider;
 import org.eclipse.jface.viewers.StyledString;
 import org.eclipse.jface.window.Window;
 import org.eclipse.swt.graphics.Image;
-import org.eclipse.swt.widgets.Composite;
-import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.IWorkbenchPage;
-import org.eclipse.ui.dialogs.FilteredItemsSelectionDialog;
 import org.eclipse.ui.dialogs.SearchPattern;
 import org.eclipse.ui.ide.IDE;
 import org.eclipse.ui.model.WorkbenchLabelProvider;
@@ -328,109 +320,25 @@ public class FileEntityResolver implements IEntityResolver {
 	 * {@code matches}. The list rows use a {@link StyledFileLabelProvider} — the platform's
 	 * {@link WorkbenchLabelProvider} for the per-type file icon, with the styled label re-rendered as the
 	 * file name plus a greyed containing-folder path (the "{@code Foo.java} - {@code /Project/src}" form
-	 * of the Open Resource dialog). The details panel shows the file's full filesystem location. The Help
-	 * button is suppressed by {@link #isHelpAvailable()}.
+	 * of the Open Resource dialog). The details panel shows the file's full filesystem location.
 	 *
-	 * <p>The filter box matches the {@link #pathOf workspace path} by case-insensitive substring (with
-	 * {@code *}/{@code ?} wildcards): its {@code patternMatcher} is built with
-	 * {@link SearchPattern#RULE_SUBSTRING_MATCH}, so typing any fragment of what's shown — the file name
-	 * ({@code Foo.java}, {@code *Foo*}) or a folder ({@code src}, {@code src/Foo}) — narrows to it. See
-	 * {@code createFilter} and {@link #pathMatches}.
+	 * <p>The shared {@link EntitySelectionDialog} base provides the FISD plumbing (the empty-pattern
+	 * workaround, the suppressed Help button, dialog settings, content); this subclass filters and sorts by
+	 * the {@link #pathOf workspace path} (see {@link #filterText} and {@link #pathMatches}).
 	 */
-	static final class FileSelectionDialog extends FilteredItemsSelectionDialog {
-
-		private static final String DIALOG_SETTINGS =
-				"com.anthropic.claudecode.eclipse.resolvers.FileSelectionDialog";
-
-		private final List<IFile> matches;
+	static final class FileSelectionDialog extends EntitySelectionDialog<IFile> {
 
 		FileSelectionDialog(Shell shell, List<IFile> matches) {
-			super(shell, true);
-			this.matches = matches;
-			setTitle("Open File");
-			setMessage("Multiple files match. Select one or more to open.\n"
-					 + "Filter files by name prefix or pattern (*, ?, or camel case):");
-			setListLabelProvider(new StyledFileLabelProvider());
-			setDetailsLabelProvider(new FileLocationLabelProvider());
-		}
-
-		/** Suppresses the Help ('?') button. */
-		@Override
-		public boolean isHelpAvailable() {
-			return false;
+			super(shell, "com.anthropic.claudecode.eclipse.resolvers.FileSelectionDialog",
+					"Open File",
+					"Multiple files match. Select one or more to open.\n"
+							+ "Filter files by name prefix or pattern (*, ?, or camel case):",
+					matches, new StyledFileLabelProvider(), new FileLocationLabelProvider());
 		}
 
 		@Override
-		protected Control createExtendedContentArea(Composite parent) {
-			return null;
-		}
-
-		@Override
-		protected IDialogSettings getDialogSettings() {
-			IDialogSettings settings = Activator.getDefault().getDialogSettings().getSection(DIALOG_SETTINGS);
-			if (settings == null) {
-				settings = Activator.getDefault().getDialogSettings().addNewSection(DIALOG_SETTINGS);
-			}
-			return settings;
-		}
-
-		@Override
-		public String getElementName(Object item) {
-			return pathOf((IFile) item);
-		}
-
-		@Override
-		protected IStatus validateItem(Object item) {
-			return Status.OK_STATUS;
-		}
-
-		@Override
-		protected Comparator<IFile> getItemsComparator() {
-			return Comparator.comparing(FileEntityResolver::pathOf);
-		}
-
-		@Override
-		protected ItemsFilter createFilter() {
-			// Filter by the workspace path shown in the list via pathMatches: the patternMatcher is built
-			// with RULE_SUBSTRING_MATCH so typing any fragment of what's displayed (Foo.java, *Foo*, src,
-			// src/Foo) narrows to it. Built once per filter — FISD makes a fresh filter per keystroke — and
-			// reused for every item, rather than per item.
-			return new ItemsFilter(new SearchPattern(
-					SearchPattern.DEFAULT_MATCH_RULES | SearchPattern.RULE_SUBSTRING_MATCH)) {
-				// FilteredItemsSelectionDialog skips filtering entirely (FilterJob guards filterContent()
-				// with getPattern().length() != 0) when the pattern is empty — so an empty box, on open or
-				// when cleared, shows nothing. Our list is small and already narrowed, so we want empty to
-				// show every match instead: capture the empty state and present a non-empty pattern so the
-				// filter runs, then match all. matchItem(...) below still matches the real text via
-				// patternMatcher, so typed filtering is unaffected.
-				private final boolean matchAll = super.getPattern().isEmpty();
-
-				@Override
-				public String getPattern() {
-					return matchAll ? " " : super.getPattern();
-				}
-
-				@Override
-				public boolean matchItem(Object item) {
-					return matchAll || pathMatches(patternMatcher, pathOf((IFile) item));
-				}
-
-				@Override
-				public boolean isConsistentItem(Object item) {
-					return true;
-				}
-			};
-		}
-
-		@Override
-		protected void fillContentProvider(AbstractContentProvider contentProvider, ItemsFilter itemsFilter,
-				IProgressMonitor progressMonitor) {
-			for (IFile match : matches) {
-				contentProvider.add(match, itemsFilter);
-			}
-			if (progressMonitor != null) {
-				progressMonitor.done();
-			}
+		protected String filterText(IFile item) {
+			return pathOf(item);
 		}
 	}
 
