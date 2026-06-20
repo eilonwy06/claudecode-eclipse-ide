@@ -154,10 +154,16 @@ public class CppIdentifierEntityResolver implements IEntityResolver {
 		List<IIndexBinding> arityMatched = new ArrayList<>();
 		List<IIndexBinding> allFunctions = new ArrayList<>();
 		List<IIndexBinding> nonFunctions = new ArrayList<>();
+		// A bare (one-segment, non-global) reference keeps every same-named binding: findBindings already
+		// matched the exact simple name, which is the last segment of each candidate's qualified name, so
+		// qualifierMatches is unconditionally true. Skip computing it then — getQualifiedName() walks the
+		// binding's owner chain through the PDOM per hit, the dominant per-candidate cost for a common name
+		// in a large project. Qualified/global references still take the full narrowing path below.
+		boolean bareName = ref.segments().size() == 1 && !ref.globalScope();
 		// filescope=false: also return bindings nested in namespaces/classes (e.g. ns::Foo, Foo::bar) — the
 		// 3-arg findBindings convenience overload forces filescope=true, which only finds global-scope names.
 		for (IIndexBinding binding : index.findBindings(simpleName.toCharArray(), false, IndexFilter.ALL_DECLARED, monitor)) {
-			if (!qualifierMatches(binding.getQualifiedName(), ref.segments(), ref.globalScope())) {
+			if (!bareName && !qualifierMatches(binding.getQualifiedName(), ref.segments(), ref.globalScope())) {
 				continue;
 			}
 			if (binding instanceof IFunction function) {
