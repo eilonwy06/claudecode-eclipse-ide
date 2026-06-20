@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.eclipse.core.runtime.Platform;
+import org.eclipse.core.runtime.jobs.Job;
+import org.eclipse.core.runtime.jobs.JobGroup;
 
 import com.anthropic.claudecode.eclipse.Activator;
 
@@ -35,6 +37,17 @@ public class EntitiesRegistry {
 	 * the result holds one {@link NamedResolvedEntity} per successful match (possibly empty, never
 	 * {@code null}).
 	 *
+	 * <p>The resolvers run <b>in parallel</b>, each on its own platform {@link Job} joined together through a
+	 * single {@link JobGroup}: a single token is commonly heavy for several of them at once (e.g.
+	 * {@code com.foo.Bar} drives both {@code FileEntityResolver}'s full workspace tree walk and a JDT
+	 * type-index search), and they are all independent read-only lookups, so overlapping them cuts the
+	 * wall-clock cost from the sum of the heavy resolvers to their max. Platform Jobs run on the IDE's shared,
+	 * kept-warm worker pool, so there is no private thread pool to size or shut down. This method
+	 * <b>blocks</b> until every resolver finishes, so it must be called off the SWT thread (its caller,
+	 * {@code OpenEntityHandler}, already hosts it in a background {@code Job}). A resolver that throws is
+	 * logged and treated as no match rather than failing the whole resolve. The returned list is still in
+	 * resolver registration order.
+	 *
 	 * @param text            the candidate text to inspect
 	 * @param allowStripEdges when {@code true}, resolvers may trim surrounding junk before matching; when
 	 *                        {@code false} the text must be <em>exactly</em> the entity
@@ -42,11 +55,41 @@ public class EntitiesRegistry {
 	 * @see IEntityResolver#resolve(String, boolean)
 	 */
 	public List<NamedResolvedEntity> resolve(String text, boolean allowStripEdges) {
+		// Each resolver writes its own slot (index-aligned with the resolvers list); the group join below
+		// establishes a happens-before with each job's completion, so the writes are visible afterwards.
+		NamedResolvedEntity[] results = new NamedResolvedEntity[resolvers.size()];
+		JobGroup group = new JobGroup("Resolving entity", 0 /* no thread cap */, resolvers.size());
+		for (int i = 0; i < resolvers.size(); i++) {
+			IEntityResolver resolver = resolvers.get(i);
+			int slot = i;
+			Job job = Job.create("Resolving entity with " + resolver.getName(), monitor -> {
+				try {
+					IEntityResolver.IResolvedEntity entity = resolver.resolve(text, allowStripEdges);
+					if (entity != null) {
+						results[slot] = new NamedResolvedEntity(resolver.getName(), entity);
+					}
+				} catch (RuntimeException | Error e) {
+					// Isolate a misbehaving resolver: log and leave the slot null (no match) rather than
+					// letting it abort the whole resolve (and the caller's outer Job).
+					Activator.logError("Resolver " + resolver.getName() + " failed on \"" + text + "\"", e);
+				}
+			});
+			job.setSystem(true); // internal machinery — keep out of the Progress view
+			job.setPriority(Job.INTERACTIVE);
+			job.setJobGroup(group);
+			job.schedule();
+		}
+		try {
+			group.join(0L /* no timeout */, null);
+		} catch (InterruptedException e) {
+			// Superseded/cancelled: stop waiting and return what completed so far (the caller drops it
+			// via its monitor.isCanceled() check). Restore the interrupt flag for callers up the stack.
+			Thread.currentThread().interrupt();
+		}
 		List<NamedResolvedEntity> result = new ArrayList<>();
-		for (IEntityResolver resolver : resolvers) {
-			IEntityResolver.IResolvedEntity entity = resolver.resolve(text, allowStripEdges);
+		for (NamedResolvedEntity entity : results) {
 			if (entity != null) {
-				result.add(new NamedResolvedEntity(resolver.getName(), entity));
+				result.add(entity);
 			}
 		}
 		return result;
