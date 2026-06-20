@@ -116,8 +116,12 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 			}
 		}
 		// A dotted name like "Outer.member" or "com.foo.Bar.CONSTANT" may instead be a member of the type
-		// formed by the preceding segments. Only for qualified names; a bare simple name stays a type-only match.
-		if (ref.kind() == Kind.TYPE && ref.packageName() != null) {
+		// formed by the preceding segments. Only for qualified names; a bare simple name stays a type-only
+		// match. Gated on no type having resolved: when the name is a real type that type is the answer, so
+		// the second full workspace search is wasted (this halves the searches for the common qualified-type
+		// case). The fallback only ever contributes when the last segment is not a type — and then the type
+		// search above returns nothing — so this preserves it. Mirrors the empty-arity guard below.
+		if (ref.kind() == Kind.TYPE && ref.packageName() != null && matches.isEmpty()) {
 			int lastDot = ref.packageName().lastIndexOf('.');
 			String memberPackage = lastDot < 0 ? null : ref.packageName().substring(0, lastDot);
 			String memberType = lastDot < 0 ? ref.packageName() : ref.packageName().substring(lastDot + 1);
