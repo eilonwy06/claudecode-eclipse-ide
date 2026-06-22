@@ -4,7 +4,20 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.4.7] — 2026-06-15 *(current)*
+## [2.4.8] — 2026-06-22 *(current)*
+
+### Added
+- **Ctrl+Click to open C/C++ identifiers** — clicking a C or C++ type, function, or symbol name in the Claude CLI view now resolves and opens its definition (when CDT is installed) ([@xgsa](https://github.com/xgsa), PR #58)
+
+### Changed
+- **Clearer Ctrl+Click hint bar message** — the one-time hint now reads more naturally ([@xgsa](https://github.com/xgsa), PR #59)
+
+### Security
+- **Hardened local server access** — tightened validation so the plugin's local MCP server only accepts connections originating from this machine
+
+---
+
+## [2.4.7] — 2026-06-15
 
 ### Fixed
 - **Optional language tooling dependencies** — PyDev and JDT are now truly optional; the plugin no longer fails to load when either is absent ([@xgsa](https://github.com/xgsa), PR #57)
