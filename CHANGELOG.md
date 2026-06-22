@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.4.8] — 2026-06-22 *(current)*
+## [2.4.9] — 2026-06-22 *(current)*
+
+### Changed
+- **Unified file-open dialog and faster Ctrl+Click resolution** — the multiple-files open dialog now shares the common entity-selection dialog used by the other resolvers, and identifier/file resolution is faster (resolvers run in parallel, with optimized workspace traversal) ([@xgsa](https://github.com/xgsa), PR #61)
+
+---
+
+## [2.4.8] — 2026-06-22
 
 ### Added
 - **Ctrl+Click to open C/C++ identifiers** — clicking a C or C++ type, function, or symbol name in the Claude CLI view now resolves and opens its definition (when CDT is installed) ([@xgsa](https://github.com/xgsa), PR #58)
