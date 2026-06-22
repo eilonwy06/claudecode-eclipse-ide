@@ -1,7 +1,6 @@
 package com.anthropic.claudecode.eclipse.resolvers;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -24,18 +23,12 @@ import org.eclipse.cdt.internal.ui.viewsupport.CUILabelProvider;
 import org.eclipse.cdt.internal.ui.viewsupport.IndexUI;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
-import org.eclipse.core.runtime.Status;
-import org.eclipse.jface.dialogs.IDialogSettings;
 import org.eclipse.jface.window.Window;
-import org.eclipse.swt.widgets.Composite;
-import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.PartInitException;
-import org.eclipse.ui.dialogs.FilteredItemsSelectionDialog;
 import org.eclipse.ui.dialogs.SearchPattern;
 
 import com.anthropic.claudecode.eclipse.Activator;
@@ -161,10 +154,16 @@ public class CppIdentifierEntityResolver implements IEntityResolver {
 		List<IIndexBinding> arityMatched = new ArrayList<>();
 		List<IIndexBinding> allFunctions = new ArrayList<>();
 		List<IIndexBinding> nonFunctions = new ArrayList<>();
+		// A bare (one-segment, non-global) reference keeps every same-named binding: findBindings already
+		// matched the exact simple name, which is the last segment of each candidate's qualified name, so
+		// qualifierMatches is unconditionally true. Skip computing it then — getQualifiedName() walks the
+		// binding's owner chain through the PDOM per hit, the dominant per-candidate cost for a common name
+		// in a large project. Qualified/global references still take the full narrowing path below.
+		boolean bareName = ref.segments().size() == 1 && !ref.globalScope();
 		// filescope=false: also return bindings nested in namespaces/classes (e.g. ns::Foo, Foo::bar) — the
 		// 3-arg findBindings convenience overload forces filescope=true, which only finds global-scope names.
 		for (IIndexBinding binding : index.findBindings(simpleName.toCharArray(), false, IndexFilter.ALL_DECLARED, monitor)) {
-			if (!qualifierMatches(binding.getQualifiedName(), ref.segments(), ref.globalScope())) {
+			if (!bareName && !qualifierMatches(binding.getQualifiedName(), ref.segments(), ref.globalScope())) {
 				continue;
 			}
 			if (binding instanceof IFunction function) {
@@ -341,111 +340,29 @@ public class CppIdentifierEntityResolver implements IEntityResolver {
 	 * {@link CElementLabels#M_APP_RETURNTYPE} — omitting the file-path suffix. The public
 	 * {@link org.eclipse.cdt.ui.CElementLabelProvider} is not used because its {@code getTextFlags()}
 	 * silently drops {@code SHOW_QUALIFIED}, so qualified names would be missing from the details strip.
-	 * The Help button is suppressed by {@link #isHelpAvailable()}.
 	 *
-	 * <p>The filter box matches that same {@link #fqnOf label} by case-insensitive substring (with
-	 * {@code *}/{@code ?} wildcards): its {@code patternMatcher} is built with
-	 * {@link SearchPattern#RULE_SUBSTRING_MATCH}, so typing any fragment of what's shown — the name
-	 * ({@code Foo}, {@code *Foo*}, {@code Foo::bar}) or the file path ({@code main.cpp}) — narrows to it.
-	 * See {@code createFilter} and {@link #fqnMatches}.
+	 * <p>The shared {@link EntitySelectionDialog} base provides the FISD plumbing (the empty-pattern
+	 * workaround, the suppressed Help button, dialog settings, content); this subclass filters and sorts by
+	 * that same {@link #fqnOf label} (see {@link #filterText} and {@link #fqnMatches}).
 	 */
-	static final class CElementSelectionDialog extends FilteredItemsSelectionDialog {
-
-		private static final String DIALOG_SETTINGS =
-				"com.anthropic.claudecode.eclipse.resolvers.CElementSelectionDialog";
-
-		private final List<ICElement> matches;
+	static final class CElementSelectionDialog extends EntitySelectionDialog<ICElement> {
 
 		CElementSelectionDialog(Shell shell, List<ICElement> matches) {
-			super(shell, true);
-			this.matches = matches;
-			setTitle("Open C/C++ Element");
-			setMessage("Multiple C/C++ elements match. Select one or more to open.\n"
-					 + "Filter elements by name prefix or pattern (*, ?, or camel case):");
-			setListLabelProvider(new CUILabelProvider(LABEL_FLAGS,
-					CElementImageProvider.OVERLAY_ICONS | CElementImageProvider.SMALL_ICONS));
-			setDetailsLabelProvider(new CUILabelProvider(
-					CElementLabels.ALL_FULLY_QUALIFIED | CElementLabels.M_PARAMETER_TYPES | CElementLabels.M_APP_RETURNTYPE,
-					CElementImageProvider.OVERLAY_ICONS | CElementImageProvider.SMALL_ICONS));
-		}
-
-		/** Suppresses the Help ('?') button. */
-		@Override
-		public boolean isHelpAvailable() {
-			return false;
+			super(shell, "com.anthropic.claudecode.eclipse.resolvers.CElementSelectionDialog",
+					"Open C/C++ Element",
+					"Multiple C/C++ elements match. Select one or more to open.\n"
+							+ "Filter elements by name prefix or pattern (*, ?, or camel case):",
+					matches,
+					new CUILabelProvider(LABEL_FLAGS,
+							CElementImageProvider.OVERLAY_ICONS | CElementImageProvider.SMALL_ICONS),
+					new CUILabelProvider(
+							CElementLabels.ALL_FULLY_QUALIFIED | CElementLabels.M_PARAMETER_TYPES | CElementLabels.M_APP_RETURNTYPE,
+							CElementImageProvider.OVERLAY_ICONS | CElementImageProvider.SMALL_ICONS));
 		}
 
 		@Override
-		protected Control createExtendedContentArea(Composite parent) {
-			return null;
-		}
-
-		@Override
-		protected IDialogSettings getDialogSettings() {
-			IDialogSettings settings = Activator.getDefault().getDialogSettings().getSection(DIALOG_SETTINGS);
-			if (settings == null) {
-				settings = Activator.getDefault().getDialogSettings().addNewSection(DIALOG_SETTINGS);
-			}
-			return settings;
-		}
-
-		@Override
-		public String getElementName(Object item) {
-			return fqnOf((ICElement) item);
-		}
-
-		@Override
-		protected IStatus validateItem(Object item) {
-			return Status.OK_STATUS;
-		}
-
-		@Override
-		protected Comparator<ICElement> getItemsComparator() {
-			return Comparator.comparing(CppIdentifierEntityResolver::fqnOf);
-		}
-
-		@Override
-		protected ItemsFilter createFilter() {
-			// Filter by the label shown in the list via fqnMatches: the patternMatcher is built with
-			// RULE_SUBSTRING_MATCH so typing any fragment of what's displayed (Foo, *Foo*, Foo::bar, or the
-			// file path main.cpp) narrows to it. Built once per filter — FISD makes a fresh filter per
-			// keystroke — and reused for every item, rather than per item.
-			return new ItemsFilter(new SearchPattern(
-					SearchPattern.DEFAULT_MATCH_RULES | SearchPattern.RULE_SUBSTRING_MATCH)) {
-				// FilteredItemsSelectionDialog skips filtering entirely (FilterJob guards filterContent()
-				// with getPattern().length() != 0) when the pattern is empty — so an empty box, on open or
-				// when cleared, shows nothing. Our list is small and already narrowed, so we want empty to
-				// show every match instead: capture the empty state and present a non-empty pattern so the
-				// filter runs, then match all. matchItem(...) below still matches the real text via
-				// patternMatcher, so typed filtering is unaffected.
-				private final boolean matchAll = super.getPattern().isEmpty();
-
-				@Override
-				public String getPattern() {
-					return matchAll ? " " : super.getPattern();
-				}
-
-				@Override
-				public boolean matchItem(Object item) {
-					return matchAll || fqnMatches(patternMatcher, fqnOf((ICElement) item));
-				}
-
-				@Override
-				public boolean isConsistentItem(Object item) {
-					return true;
-				}
-			};
-		}
-
-		@Override
-		protected void fillContentProvider(AbstractContentProvider contentProvider, ItemsFilter itemsFilter,
-				IProgressMonitor progressMonitor) {
-			for (ICElement match : matches) {
-				contentProvider.add(match, itemsFilter);
-			}
-			if (progressMonitor != null) {
-				progressMonitor.done();
-			}
+		protected String filterText(ICElement item) {
+			return fqnOf(item);
 		}
 	}
 

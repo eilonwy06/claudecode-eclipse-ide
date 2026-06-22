@@ -7,10 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.eclipse.core.resources.IFile;
+import org.eclipse.ui.dialogs.SearchPattern;
 import org.junit.jupiter.api.Test;
 
 import com.anthropic.claudecode.eclipse.resolvers.IEntityResolver.IResolvedEntity;
@@ -18,8 +21,11 @@ import com.anthropic.claudecode.eclipse.resolvers.IEntityResolver.IResolvedEntit
 /**
  * Tests for {@link FileEntityResolver#resolve(String, boolean)}. Lives in the production package so it
  * can subclass the resolver and override its protected hooks ({@code fileExists},
- * {@code browseWorkspaceFiles}) and stubs ({@code locate}, {@code openResourceDialog}) to run without a
- * file system or a live Eclipse workspace.
+ * {@code browseWorkspaceFiles}) and open seams ({@code locate}, {@code open}, {@code openChooser}) to run
+ * without a file system or a live Eclipse workspace. Like the identifier resolver tests, it asserts
+ * routing (miss / absolute open / single workspace open / chooser) and the navigation line; the matched
+ * files are irrelevant (the overridden open seams never dereference them), so the recorder uses
+ * {@code null} placeholders and asserts the normalized suffix the search was given instead.
  *
  * <p>Inputs model a single space-delimited token cut from a Claude Code answer, so none contain
  * internal whitespace.
@@ -29,15 +35,19 @@ class FileEntityResolverTest {
 	/** Records which branch {@code resolve} chose and with what arguments. */
 	private static final class Recorder extends FileEntityResolver {
 		final Set<String> existing = new HashSet<>();
-		List<String> workspaceMatches = new ArrayList<>();
+		List<IFile> workspaceMatches = new ArrayList<>();
+		String searchedSuffix;
 
 		boolean located;
 		String locatedPath;
 		int locatedLine = -1;
 
-		boolean dialogOpened;
-		String dialogPattern;
-		int dialogLine = -1;
+		boolean opened;
+		int openedLine = -1;
+
+		boolean chooserOpened;
+		int chooserCount = -1;
+		int chooserLine = -1;
 
 		@Override
 		boolean fileExists(String absolutePath) {
@@ -45,7 +55,8 @@ class FileEntityResolverTest {
 		}
 
 		@Override
-		List<String> browseWorkspaceFiles(String pathSuffix, int maxFilesCount) {
+		List<IFile> browseWorkspaceFiles(String pathSuffix) {
+			searchedSuffix = pathSuffix;
 			return workspaceMatches;
 		}
 
@@ -57,14 +68,25 @@ class FileEntityResolverTest {
 		}
 
 		@Override
-		void openResourceDialog(String filePattern, int lineNumber) {
-			dialogOpened = true;
-			dialogPattern = filePattern;
-			dialogLine = lineNumber;
+		void open(IFile file, int lineNumber) {
+			opened = true;
+			openedLine = lineNumber;
+		}
+
+		@Override
+		void openChooser(List<IFile> matches, int lineNumber) {
+			chooserOpened = true;
+			chooserCount = matches.size();
+			chooserLine = lineNumber;
 		}
 	}
 
 	private final Recorder resolver = new Recorder();
+
+	/** A list of {@code count} null placeholder files — the open seams never dereference them. */
+	private static List<IFile> nullMatches(int count) {
+		return new ArrayList<>(Collections.nCopies(count, null));
+	}
 
 	/** Resolves and fires the resulting entity so the chosen branch is recorded; asserts a hit. */
 	private void resolveAndFire(String text, boolean allowStripEdges) {
@@ -97,13 +119,13 @@ class FileEntityResolverTest {
 
 	@Test
 	void unknownRelativePathWithNoWorkspaceMatchMisses() {
-		resolver.workspaceMatches = List.of();
+		resolver.workspaceMatches = nullMatches(0);
 		assertNull(resolver.resolve("src/Missing.java", false));
 	}
 
 	@Test
 	void absoluteButNonexistentAndNoWorkspaceMatchMisses() {
-		resolver.workspaceMatches = List.of();
+		resolver.workspaceMatches = nullMatches(0);
 		assertNull(resolver.resolve("/no/such/file.txt", false));
 	}
 
@@ -172,32 +194,33 @@ class FileEntityResolverTest {
 	// --- workspace branch ---------------------------------------------------------------------
 
 	@Test
-	void singleWorkspaceMatchLocatesItWithParsedLine() {
-		resolver.workspaceMatches = List.of("/workspace/proj/src/Foo.java");
+	void singleWorkspaceMatchOpensItWithParsedLine() {
+		resolver.workspaceMatches = nullMatches(1);
 		resolveAndFire("src/Foo.java:7", false);
-		assertTrue(resolver.located);
-		assertFalse(resolver.dialogOpened);
-		assertEquals("/workspace/proj/src/Foo.java", resolver.locatedPath);
-		assertEquals(7, resolver.locatedLine);
+		assertTrue(resolver.opened);
+		assertFalse(resolver.chooserOpened);
+		assertEquals("src/Foo.java", resolver.searchedSuffix);
+		assertEquals(7, resolver.openedLine);
 	}
 
 	@Test
 	void ftpUrlCanAlsoBeMatchedIfItIsAPath() {
-		resolver.workspaceMatches = List.of("ftp://host/file.txt");
+		resolver.workspaceMatches = nullMatches(1);
 		resolveAndFire("ftp://host/file.txt", false);
-		assertTrue(resolver.located);
-		assertFalse(resolver.dialogOpened);
-		assertEquals("ftp://host/file.txt", resolver.locatedPath);
-		assertEquals(0, resolver.locatedLine);
+		assertTrue(resolver.opened);
+		assertFalse(resolver.chooserOpened);
+		assertEquals(0, resolver.openedLine);
 	}
-	
+
 	@Test
-	void multipleWorkspaceMatchesOpenTheResourceDialogWithLineStrippedPattern() {
-		resolver.workspaceMatches = List.of("/a/src/Foo.java", "/b/src/Foo.java");
+	void multipleWorkspaceMatchesOpenTheChooserWithStrippedLine() {
+		resolver.workspaceMatches = nullMatches(2);
 		resolveAndFire("src/Foo.java:7", false);
-		assertTrue(resolver.dialogOpened);
-		assertFalse(resolver.located);
-		assertEquals("src/Foo.java", resolver.dialogPattern);
+		assertTrue(resolver.chooserOpened);
+		assertFalse(resolver.opened);
+		assertEquals(2, resolver.chooserCount);
+		assertEquals("src/Foo.java", resolver.searchedSuffix);
+		assertEquals(7, resolver.chooserLine);
 	}
 
 	// --- edge stripping -----------------------------------------------------------------------
@@ -211,9 +234,10 @@ class FileEntityResolverTest {
 
 	@Test
 	void quotedTokenIsStrippedWhenAllowed() {
-		resolver.workspaceMatches = List.of("/workspace/src/Foo.java");
+		resolver.workspaceMatches = nullMatches(1);
 		resolveAndFire("\"src/Foo.java\"", true);
-		assertEquals("/workspace/src/Foo.java", resolver.locatedPath);
+		assertTrue(resolver.opened);
+		assertEquals("src/Foo.java", resolver.searchedSuffix);
 	}
 
 	@Test
@@ -227,36 +251,36 @@ class FileEntityResolverTest {
 	@Test
 	void leadingDotInDotfileIsKeptWhenStripping() {
 		// Ctrl-click on a dotfile: the leading '.' must survive so the suffix matches on a '/' boundary.
-		resolver.workspaceMatches = List.of("/proj/.gitignore");
+		resolver.workspaceMatches = nullMatches(1);
 		resolveAndFire(".gitignore", true);
-		assertTrue(resolver.located);
-		assertEquals("/proj/.gitignore", resolver.locatedPath);
+		assertTrue(resolver.opened);
+		assertEquals(".gitignore", resolver.searchedSuffix);
 	}
 
 	@Test
 	void leadingDotSlashRelativePathIsKeptWhenStripping() {
-		resolver.workspaceMatches = List.of("/workspace/proj/src/Foo.java");
+		resolver.workspaceMatches = nullMatches(1);
 		resolveAndFire("./src/Foo.java", true);
-		assertTrue(resolver.located);
-		assertEquals("/workspace/proj/src/Foo.java", resolver.locatedPath);
+		assertTrue(resolver.opened);
+		assertEquals("src/Foo.java", resolver.searchedSuffix);
 	}
 
 	@Test
-	void leadingParentRelativePathSurvivesStrippingIntoThePickerPattern() {
+	void leadingParentRelativePathSurvivesStrippingIntoTheChooserSearch() {
 		// Leading ".." is kept while the wrapping '(' and trailing ').' are still trimmed.
-		resolver.workspaceMatches = List.of("/a/src/Foo.java", "/b/src/Foo.java");
+		resolver.workspaceMatches = nullMatches(2);
 		resolveAndFire("(../src/Foo.java).", true);
-		assertTrue(resolver.dialogOpened);
-		assertEquals("../src/Foo.java", resolver.dialogPattern);
+		assertTrue(resolver.chooserOpened);
+		assertEquals("../src/Foo.java", resolver.searchedSuffix);
 	}
 
 	@Test
 	void trailingPeriodIsStillTrimmedForADotfileWhenStripping() {
 		// Leading '.' kept, but a sentence-ending trailing '.' is still removed.
-		resolver.workspaceMatches = List.of("/proj/.env");
+		resolver.workspaceMatches = nullMatches(1);
 		resolveAndFire(".env.", true);
-		assertTrue(resolver.located);
-		assertEquals("/proj/.env", resolver.locatedPath);
+		assertTrue(resolver.opened);
+		assertEquals(".env", resolver.searchedSuffix);
 	}
 
 	// --- path normalization ------------------------------------------------------------------
@@ -287,38 +311,39 @@ class FileEntityResolverTest {
 
 	@Test
 	void leadingDotSlashIsNormalizedBeforeWorkspaceLookup() {
-		resolver.workspaceMatches = List.of("/workspace/proj/src/Foo.java");
+		resolver.workspaceMatches = nullMatches(1);
 		resolveAndFire("./src/Foo.java", false);
-		assertTrue(resolver.located);
-		assertEquals("/workspace/proj/src/Foo.java", resolver.locatedPath);
+		assertTrue(resolver.opened);
+		assertEquals("src/Foo.java", resolver.searchedSuffix);
 	}
 
 	@Test
-	void redundantSegmentsAreNormalizedInTheResourcePickerPattern() {
+	void redundantSegmentsAreNormalizedBeforeWorkspaceLookup() {
 		for (String token : new String[] { "src//Foo.java", "src/./Foo.java", "src/x/../Foo.java" }) {
 			Recorder r = new Recorder();
-			r.workspaceMatches = List.of("/a/src/Foo.java", "/b/src/Foo.java");
+			r.workspaceMatches = nullMatches(2);
 			IResolvedEntity entity = r.resolve(token, false);
 			assertNotNull(entity, () -> "expected a match for: " + token);
 			entity.locate();
-			assertTrue(r.dialogOpened);
-			assertEquals("src/Foo.java", r.dialogPattern, () -> "normalized pattern for: " + token);
+			assertTrue(r.chooserOpened);
+			assertEquals("src/Foo.java", r.searchedSuffix, () -> "normalized suffix for: " + token);
 		}
 	}
 
 	@Test
-	void leadingParentIsKeptInTheResourcePickerPattern() {
-		resolver.workspaceMatches = List.of("/a/src/Foo.java", "/b/src/Foo.java");
+	void leadingParentIsKeptInTheWorkspaceLookup() {
+		resolver.workspaceMatches = nullMatches(2);
 		resolveAndFire("../src/Foo.java", false);
-		assertTrue(resolver.dialogOpened);
-		assertEquals("../src/Foo.java", resolver.dialogPattern);
+		assertTrue(resolver.chooserOpened);
+		assertEquals("../src/Foo.java", resolver.searchedSuffix);
 	}
 
 	@Test
 	void backslashTokenStillResolves() {
-		resolver.workspaceMatches = List.of("/workspace/proj/src/Foo.java");
+		resolver.workspaceMatches = nullMatches(1);
 		resolveAndFire("src\\Foo.java", false);
-		assertEquals("/workspace/proj/src/Foo.java", resolver.locatedPath);
+		assertTrue(resolver.opened);
+		assertEquals("src/Foo.java", resolver.searchedSuffix);
 	}
 
 	@Test
@@ -333,5 +358,27 @@ class FileEntityResolverTest {
 		assertTrue(FileEntityResolver.matchesSuffix("/proj/ui/Foo.java", "ui/Foo.java"));
 		assertTrue(FileEntityResolver.matchesSuffix("/proj/ui/Foo.java", "/proj/ui/Foo.java"));
 		assertFalse(FileEntityResolver.matchesSuffix("/proj/gui/Foo.java", "ui/Foo.java"));
+	}
+
+	// --- chooser filtering (pathMatches: substring over the workspace path) --------------------
+
+	/** Whether the chooser's substring filter would keep a file whose path is {@code path} for {@code pattern}. */
+	private static boolean filters(String pattern, String path) {
+		SearchPattern matcher = new SearchPattern(
+				SearchPattern.DEFAULT_MATCH_RULES | SearchPattern.RULE_SUBSTRING_MATCH);
+		matcher.setPattern(pattern);
+		return FileEntityResolver.pathMatches(matcher, path);
+	}
+
+	@Test
+	void substringMatchesAnyFragmentOfTheWorkspacePath() {
+		String path = "/proj/src/Foo.java";
+		assertTrue(filters("Foo", path), "a file-name fragment must match");
+		assertTrue(filters("foo", path), "matching is case-insensitive");
+		assertTrue(filters("*Foo*", path), "an explicit *...* wildcard must match");
+		assertTrue(filters("Foo.java", path), "the full file name must match");
+		assertTrue(filters("src", path), "a folder fragment must match");
+		assertTrue(filters("src/Foo", path), "a folder-anchored path fragment must match");
+		assertFalse(filters("xyz", path), "an absent fragment must not match");
 	}
 }

@@ -1,14 +1,10 @@
 package com.anthropic.claudecode.eclipse.resolvers;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Pattern;
 
-import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
-import org.eclipse.core.runtime.Status;
 import org.eclipse.jdt.core.IField;
 import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IMethod;
@@ -22,16 +18,12 @@ import org.eclipse.jdt.core.search.TypeNameMatchRequestor;
 import org.eclipse.jdt.ui.JavaElementLabelProvider;
 import org.eclipse.jdt.ui.JavaElementLabels;
 import org.eclipse.jdt.ui.JavaUI;
-import org.eclipse.jface.dialogs.IDialogSettings;
 import org.eclipse.jface.viewers.StyledString;
 import org.eclipse.jface.window.Window;
-import org.eclipse.swt.widgets.Composite;
-import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.PartInitException;
-import org.eclipse.ui.dialogs.FilteredItemsSelectionDialog;
 
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.editor.UiHelper;
@@ -124,8 +116,12 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 			}
 		}
 		// A dotted name like "Outer.member" or "com.foo.Bar.CONSTANT" may instead be a member of the type
-		// formed by the preceding segments. Only for qualified names; a bare simple name stays a type-only match.
-		if (ref.kind() == Kind.TYPE && ref.packageName() != null) {
+		// formed by the preceding segments. Only for qualified names; a bare simple name stays a type-only
+		// match. Gated on no type having resolved: when the name is a real type that type is the answer, so
+		// the second full workspace search is wasted (this halves the searches for the common qualified-type
+		// case). The fallback only ever contributes when the last segment is not a type — and then the type
+		// search above returns nothing — so this preserves it. Mirrors the empty-arity guard below.
+		if (ref.kind() == Kind.TYPE && ref.packageName() != null && matches.isEmpty()) {
 			int lastDot = ref.packageName().lastIndexOf('.');
 			String memberPackage = lastDot < 0 ? null : ref.packageName().substring(0, lastDot);
 			String memberType = lastDot < 0 ? ref.packageName() : ref.packageName().substring(lastDot + 1);
@@ -264,113 +260,29 @@ public class JavaIdentifierEntityResolver implements IEntityResolver {
 	 * {@link ColoredListLabelProvider} — JDT's own {@link JavaElementLabelProvider} for the per-type icon,
 	 * with the styled label re-rendered through {@link JavaElementLabels#COLORIZE} so the qualifier and root
 	 * path are greyed like JDT's Open Type dialog and the Python chooser (the plain provider leaves them in
-	 * the default colour). The bottom details panel uses a fuller plain provider. The Help button is
-	 * suppressed by {@link #isHelpAvailable()}.
+	 * the default colour). The bottom details panel uses a fuller plain provider.
 	 *
-	 * <p>The filter box matches the {@link #fqnOf fully qualified name} by case-insensitive substring (with
-	 * {@code *}/{@code ?} wildcards): its {@code patternMatcher} is built with
-	 * {@link org.eclipse.ui.dialogs.SearchPattern#RULE_SUBSTRING_MATCH}, so typing any fragment of what's shown — {@code List},
-	 * {@code *List*}, {@code Map.put} — narrows to it. See {@code createFilter} and {@link #fqnMatches}.
+	 * <p>The shared {@link EntitySelectionDialog} base provides the FISD plumbing (the empty-pattern
+	 * workaround, the suppressed Help button, dialog settings, content); this subclass filters and sorts by
+	 * the {@link #fqnOf fully qualified name} (see {@link #filterText} and {@link #fqnMatches}).
 	 */
-	static final class JavaElementSelectionDialog extends FilteredItemsSelectionDialog {
-
-		private static final String DIALOG_SETTINGS =
-				"com.anthropic.claudecode.eclipse.resolvers.JavaElementSelectionDialog";
-
-		private final List<IJavaElement> matches;
+	static final class JavaElementSelectionDialog extends EntitySelectionDialog<IJavaElement> {
 
 		JavaElementSelectionDialog(Shell shell, List<IJavaElement> matches) {
-			super(shell, true);
-			this.matches = matches;
-			setTitle("Open Java Element");
-			setMessage("Multiple Java elements match. Select one or more to open.\n"
-					 + "Filter elements by name prefix or pattern (*, ?, or camel case):");
-			setListLabelProvider(new ColoredListLabelProvider());
-			setDetailsLabelProvider(new JavaElementLabelProvider(
-					JavaElementLabelProvider.SHOW_QUALIFIED
-					| JavaElementLabelProvider.SHOW_ROOT
-					| JavaElementLabelProvider.SHOW_PARAMETERS
-					| JavaElementLabelProvider.SHOW_RETURN_TYPE));
-		}
-
-		/** Suppresses the Help ('?') button */
-		@Override
-		public boolean isHelpAvailable() {
-			return false;
+			super(shell, "com.anthropic.claudecode.eclipse.resolvers.JavaElementSelectionDialog",
+					"Open Java Element",
+					"Multiple Java elements match. Select one or more to open.\n"
+							+ "Filter elements by name prefix or pattern (*, ?, or camel case):",
+					matches, new ColoredListLabelProvider(), new JavaElementLabelProvider(
+							JavaElementLabelProvider.SHOW_QUALIFIED
+							| JavaElementLabelProvider.SHOW_ROOT
+							| JavaElementLabelProvider.SHOW_PARAMETERS
+							| JavaElementLabelProvider.SHOW_RETURN_TYPE));
 		}
 
 		@Override
-		protected Control createExtendedContentArea(Composite parent) {
-			return null;
-		}
-
-		@Override
-		protected IDialogSettings getDialogSettings() {
-			IDialogSettings settings = Activator.getDefault().getDialogSettings().getSection(DIALOG_SETTINGS);
-			if (settings == null) {
-				settings = Activator.getDefault().getDialogSettings().addNewSection(DIALOG_SETTINGS);
-			}
-			return settings;
-		}
-
-		@Override
-		public String getElementName(Object item) {
-			return fqnOf((IJavaElement) item);
-		}
-
-		@Override
-		protected IStatus validateItem(Object item) {
-			return Status.OK_STATUS;
-		}
-
-		@Override
-		protected Comparator<IJavaElement> getItemsComparator() {
-			return Comparator.comparing(JavaIdentifierEntityResolver::fqnOf);
-		}
-
-		@Override
-		protected ItemsFilter createFilter() {
-			// Filter by the fully qualified name shown in the list via fqnMatches: the patternMatcher is built
-			// with RULE_SUBSTRING_MATCH so typing any fragment of what's displayed (List, *List*, Map.put)
-			// narrows to it. Built once per filter — FISD makes a fresh filter per keystroke — and reused for
-			// every item, rather than per item.
-			return new ItemsFilter(new org.eclipse.ui.dialogs.SearchPattern(
-					org.eclipse.ui.dialogs.SearchPattern.DEFAULT_MATCH_RULES
-					| org.eclipse.ui.dialogs.SearchPattern.RULE_SUBSTRING_MATCH)) {
-				// FilteredItemsSelectionDialog skips filtering entirely (FilterJob guards filterContent()
-				// with getPattern().length() != 0) when the pattern is empty — so an empty box, on open or
-				// when cleared, shows nothing. Our list is small and already narrowed, so we want empty to
-				// show every match instead: capture the empty state and present a non-empty pattern so the
-				// filter runs, then match all. matchItem(...) below still matches the real text via
-				// patternMatcher, so typed filtering is unaffected.
-				private final boolean matchAll = super.getPattern().isEmpty();
-
-				@Override
-				public String getPattern() {
-					return matchAll ? " " : super.getPattern();
-				}
-
-				@Override
-				public boolean matchItem(Object item) {
-					return matchAll || fqnMatches(patternMatcher, fqnOf((IJavaElement) item));
-				}
-
-				@Override
-				public boolean isConsistentItem(Object item) {
-					return true;
-				}
-			};
-		}
-
-		@Override
-		protected void fillContentProvider(AbstractContentProvider contentProvider, ItemsFilter itemsFilter,
-				IProgressMonitor progressMonitor) {
-			for (IJavaElement match : matches) {
-				contentProvider.add(match, itemsFilter);
-			}
-			if (progressMonitor != null) {
-				progressMonitor.done();
-			}
+		protected String filterText(IJavaElement item) {
+			return fqnOf(item);
 		}
 	}
 

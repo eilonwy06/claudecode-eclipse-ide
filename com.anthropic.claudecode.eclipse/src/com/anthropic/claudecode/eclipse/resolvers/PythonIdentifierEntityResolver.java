@@ -6,18 +6,11 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Pattern;
 
-import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.Status;
-import org.eclipse.jface.dialogs.IDialogSettings;
 import org.eclipse.jface.viewers.DelegatingStyledCellLabelProvider.IStyledLabelProvider;
 import org.eclipse.jface.viewers.StyledString;
 import org.eclipse.jface.window.Window;
-import org.eclipse.swt.widgets.Composite;
-import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.IWorkbenchPage;
-import org.eclipse.ui.dialogs.FilteredItemsSelectionDialog;
 import org.eclipse.ui.dialogs.SearchPattern;
 import org.python.pydev.ast.codecompletion.revisited.CompletionState;
 import org.python.pydev.ast.interpreter_managers.InterpreterManagersAPI;
@@ -111,19 +104,23 @@ public class PythonIdentifierEntityResolver implements IEntityResolver {
 	 *
 	 * <p>PyDev is searched by simple name only — a method {@code ClassName.method_name} is indexed as an
 	 * INNER token named {@code method_name} with path {@code ClassName} — so a bare name search returns
-	 * every same-named token regardless of class/module. The qualifier filter restores the precision a
-	 * dotted reference asks for: when a qualifier is written it is enforced strictly, so a dotted reference
-	 * whose qualifier matches no hit's container yields a miss rather than every same-named token.
+	 * every same-named token regardless of class/module. The qualifier filter (applied inline, per hit, as
+	 * {@link #filterByQualifier} would) restores the precision a dotted reference asks for: when a qualifier
+	 * is written it is enforced strictly, so a dotted reference whose qualifier matches no hit's container
+	 * yields a miss rather than every same-named token. Filtering during the gather, rather than collecting
+	 * every same-named hit and filtering afterwards, keeps a wrapper allocation only for the kept hits — the
+	 * discarded majority of a common simple name's stdlib/project hits never get wrapped.
 	 */
 	void findMatches(PythonReference ref, List<AdditionalInfoAndIInfo> matches) {
-		List<AdditionalInfoAndIInfo> hits = new ArrayList<>();
+		String qualifier = qualifierOf(ref);
 		for (AbstractAdditionalTokensInfo info : gatherInfos()) {
 			for (IInfo hit : info.getTokensEqualTo(ref.name(),
 					AbstractAdditionalTokensInfo.TOP_LEVEL | AbstractAdditionalTokensInfo.INNER)) {
-				hits.add(new AdditionalInfoAndIInfo(info, hit));
+				if (qualifier == null || containerMatchesQualifier(hit, qualifier)) {
+					matches.add(new AdditionalInfoAndIInfo(info, hit));
+				}
 			}
 		}
-		matches.addAll(filterByQualifier(hits, qualifierOf(ref)));
 	}
 
 	/** The dotted qualifier preceding the simple name ({@code os.path} for {@code os.path.join}), or
@@ -180,16 +177,24 @@ public class PythonIdentifierEntityResolver implements IEntityResolver {
 	}
 
 	/**
-	 * Whether {@code info}'s fully qualified name — the {@link #containerOf container} plus the simple name
-	 * ({@code main.LRUCacheManager.update_cache}) — matches {@code matcher}. When {@code matcher} is built with
-	 * {@code DEFAULT_MATCH_RULES | RULE_SUBSTRING_MATCH} (as {@link PythonElementSelectionDialog}'s filter is)
-	 * this is case-insensitive substring matching with {@code *}/{@code ?} wildcards, so typing any fragment of
-	 * what the list shows — {@code LRU}, {@code *LRU*}, {@code LRUCacheManager.update} — narrows to it.
+	 * The fully qualified name of a token — the {@link #containerOf container} plus the simple name
+	 * ({@code main.LRUCacheManager.update_cache}; just the simple name when the container is unknown). This is
+	 * both what the chooser's filter matches against (see {@link #fqnMatches}) and the plain-text form of what
+	 * its list rows show, so the displayed label and the narrowing logic stay in sync.
+	 */
+	static String fqnOf(IInfo info) {
+		String container = containerOf(info);
+		return container.isEmpty() ? info.getName() : container + "." + info.getName();
+	}
+
+	/**
+	 * Whether {@code info}'s {@link #fqnOf fully qualified name} matches {@code matcher}. When {@code matcher}
+	 * is built with {@code DEFAULT_MATCH_RULES | RULE_SUBSTRING_MATCH} (as {@link PythonElementSelectionDialog}'s
+	 * filter is) this is case-insensitive substring matching with {@code *}/{@code ?} wildcards, so typing any
+	 * fragment of what the list shows — {@code LRU}, {@code *LRU*}, {@code LRUCacheManager.update} — narrows to it.
 	 */
 	static boolean fqnMatches(SearchPattern matcher, IInfo info) {
-		String container = containerOf(info);
-		String fqn = container.isEmpty() ? info.getName() : container + "." + info.getName();
-		return matcher.matches(fqn);
+		return matcher.matches(fqnOf(info));
 	}
 
 	/**
@@ -318,49 +323,27 @@ public class PythonIdentifierEntityResolver implements IEntityResolver {
 	 * (its Globals Browser). Unlike PyDev's, it lists only the resolver's already-narrowed {@code matches} rather
 	 * than the whole index. Reuses PyDev's {@link NameIInfoLabelProvider} (for the per-type icon) and
 	 * {@link ModuleIInfoLabelProvider} (for the bottom details panel), and styles the container qualifier grey via
-	 * {@link StyledListLabelProvider}. The Help button is suppressed by {@link #isHelpAvailable()}.
+	 * {@link StyledListLabelProvider}.
 	 *
-	 * <p>The filter box matches the fully qualified name displayed in the list (container + simple name) by
-	 * case-insensitive substring (with {@code *}/{@code ?} wildcards): its {@code patternMatcher} is built with
-	 * {@link SearchPattern#RULE_SUBSTRING_MATCH}, so typing any fragment of what's shown — {@code LRU},
-	 * {@code *LRU*}, {@code LRUCacheManager.update} — narrows to it. See {@code createFilter} and
-	 * {@link #fqnMatches}.
+	 * <p>The shared {@link EntitySelectionDialog} base provides the FISD plumbing (the empty-pattern workaround,
+	 * the suppressed Help button, dialog settings, content). Unlike the other resolvers' choosers, the three
+	 * label roles differ here, so two base defaults are overridden: rows are filtered by the {@link #fqnOf full
+	 * qualified name} (see {@link #filterText} and {@link #fqnMatches}), but {@link #getElementName} is the bare
+	 * simple name and the sort is by simple name then declaring module — mirroring PyDev's Globals Browser.
 	 */
-	static final class PythonElementSelectionDialog extends FilteredItemsSelectionDialog {
-
-		private static final String DIALOG_SETTINGS =
-				"com.anthropic.claudecode.eclipse.resolvers.PythonElementSelectionDialog";
-
-		private final List<AdditionalInfoAndIInfo> matches;
+	static final class PythonElementSelectionDialog extends EntitySelectionDialog<AdditionalInfoAndIInfo> {
 
 		PythonElementSelectionDialog(Shell shell, List<AdditionalInfoAndIInfo> matches) {
-			super(shell, true);
-			this.matches = matches;
-			setTitle("Open Python Element");
-			setMessage("Multiple Python elements match. Select one or more to open.\n"
-					 + "Filter elements by name prefix or pattern (*, ?, or camel case):");
-			setListLabelProvider(new StyledListLabelProvider());
-			setDetailsLabelProvider(new ModuleIInfoLabelProvider());
-		}
-
-		/** Suppresses the Help ('?') button — mirrors PyDev's Globals Browser. */
-		@Override
-		public boolean isHelpAvailable() {
-			return false;
+			super(shell, "com.anthropic.claudecode.eclipse.resolvers.PythonElementSelectionDialog",
+					"Open Python Element",
+					"Multiple Python elements match. Select one or more to open.\n"
+							+ "Filter elements by name prefix or pattern (*, ?, or camel case):",
+					matches, new StyledListLabelProvider(), new ModuleIInfoLabelProvider());
 		}
 
 		@Override
-		protected Control createExtendedContentArea(Composite parent) {
-			return null;
-		}
-
-		@Override
-		protected IDialogSettings getDialogSettings() {
-			IDialogSettings settings = Activator.getDefault().getDialogSettings().getSection(DIALOG_SETTINGS);
-			if (settings == null) {
-				settings = Activator.getDefault().getDialogSettings().addNewSection(DIALOG_SETTINGS);
-			}
-			return settings;
+		protected String filterText(AdditionalInfoAndIInfo item) {
+			return fqnOf(item.info);
 		}
 
 		@Override
@@ -369,60 +352,11 @@ public class PythonIdentifierEntityResolver implements IEntityResolver {
 		}
 
 		@Override
-		protected IStatus validateItem(Object item) {
-			return Status.OK_STATUS;
-		}
-
-		@Override
 		protected Comparator<AdditionalInfoAndIInfo> getItemsComparator() {
 			return Comparator
 					.comparing((AdditionalInfoAndIInfo m) -> m.info.getName())
 					.thenComparing(m -> m.info.getDeclaringModuleName(),
 							Comparator.nullsFirst(Comparator.naturalOrder()));
-		}
-
-		@Override
-		protected ItemsFilter createFilter() {
-			// Filter by the fully qualified name shown in the list (container + simple name) via fqnMatches:
-			// the patternMatcher is built with RULE_SUBSTRING_MATCH so typing any fragment of what's
-			// displayed (LRU, *LRU*, LRUCacheManager.update) narrows to it. Built once per filter — FISD
-			// makes a fresh filter per keystroke — and reused for every item, rather than per item.
-			return new ItemsFilter(new SearchPattern(
-					SearchPattern.DEFAULT_MATCH_RULES | SearchPattern.RULE_SUBSTRING_MATCH)) {
-				// FilteredItemsSelectionDialog skips filtering entirely (FilterJob guards filterContent()
-				// with getPattern().length() != 0) when the pattern is empty — so an empty box, on open or
-				// when cleared, shows nothing. Our list is small and already narrowed, so we want empty to
-				// show every match instead: capture the empty state and present a non-empty pattern so the
-				// filter runs, then match all. matchItem(...) below still matches the real text via
-				// patternMatcher, so typed filtering is unaffected.
-				private final boolean matchAll = super.getPattern().isEmpty();
-
-				@Override
-				public String getPattern() {
-					return matchAll ? " " : super.getPattern();
-				}
-
-				@Override
-				public boolean matchItem(Object item) {
-					return matchAll || fqnMatches(patternMatcher, ((AdditionalInfoAndIInfo) item).info);
-				}
-
-				@Override
-				public boolean isConsistentItem(Object item) {
-					return true;
-				}
-			};
-		}
-
-		@Override
-		protected void fillContentProvider(AbstractContentProvider contentProvider, ItemsFilter itemsFilter,
-				IProgressMonitor progressMonitor) {
-			for (AdditionalInfoAndIInfo match : matches) {
-				contentProvider.add(match, itemsFilter);
-			}
-			if (progressMonitor != null) {
-				progressMonitor.done();
-			}
 		}
 	}
 
