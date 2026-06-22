@@ -22,6 +22,16 @@ $portMin = (int) $argv[1];
 $portMax = (int) $argv[2];
 $readyFile = ($argc === 4) ? $argv[3] : null;
 
+// Shared-secret handshake token, passed out-of-band via the environment (never
+// argv, which is world-readable via the process list). Every accepted peer must
+// present it on its first line before being wired through. Fail closed: with no
+// token, refuse to run rather than expose an open relay.
+$expectedToken = getenv('CB_TOKEN');
+if ($expectedToken === false || $expectedToken === '') {
+    fwrite(STDERR, "Missing handshake token; refusing to start.\n");
+    exit(1);
+}
+
 // PHP's stream_socket_server() sets SO_REUSEADDR, which on Windows lets a
 // bind succeed even when another process already listens on the port. A
 // failed bind therefore isn't a reliable "port taken" signal: probe with a
@@ -34,6 +44,31 @@ function port_in_use(int $port): bool
         return true;
     }
     return false;
+}
+
+// Accept a connection on $server only if it presents the expected token on its
+// first line within a short window; otherwise drop it and keep listening. This
+// is what prevents any other local process from attaching to the relay.
+function accept_authed($server, string $expectedToken)
+{
+    $conn = @stream_socket_accept($server, 0);
+    if (!$conn) {
+        return null;
+    }
+    stream_set_blocking($conn, true);
+    stream_set_timeout($conn, 2);
+    $line = fgets($conn, 4096);
+    $got = ($line === false) ? '' : trim($line);
+    if (!hash_equals($expectedToken, $got)) {
+        // Surfaced as [PhpBridge STDERR] in the plugin log only when Debug mode
+        // is on (the Java drain gates it); always written here, cheap and rare.
+        fwrite(STDERR, "rejected unauthenticated peer\n");
+        @fclose($conn);
+        return null;
+    }
+    stream_set_blocking($conn, false);
+    fwrite(STDERR, "authenticated peer\n");
+    return $conn;
 }
 
 // Scan the range and bind the first two free ports, so concurrent IDE
@@ -94,17 +129,15 @@ while ($running) {
     }
 
     if (!$clientA) {
-        $conn = @stream_socket_accept($serverA, 0);
+        $conn = accept_authed($serverA, $expectedToken);
         if ($conn) {
             $clientA = $conn;
-            stream_set_blocking($clientA, false);
         }
     }
     if (!$clientB) {
-        $conn = @stream_socket_accept($serverB, 0);
+        $conn = accept_authed($serverB, $expectedToken);
         if ($conn) {
             $clientB = $conn;
-            stream_set_blocking($clientB, false);
         }
     }
 

@@ -8,11 +8,18 @@ fn stream_holder() -> &'static Arc<Mutex<Option<TcpStream>>> {
     BRIDGE_STREAM.get_or_init(|| Arc::new(Mutex::new(None)))
 }
 
-pub fn connect(port: u16) -> bool {
+pub fn connect(port: u16, token: &str) -> bool {
     let addr = format!("127.0.0.1:{}", port);
     match TcpStream::connect(&addr) {
-        Ok(stream) => {
+        Ok(mut stream) => {
             stream.set_nodelay(true).ok();
+            // Authenticate to the relay before it will wire this side through.
+            // The relay drops any peer that does not present the matching token
+            // on its first line, so an unauthorized local process cannot attach.
+            if stream.write_all(format!("{}\n", token).as_bytes()).is_err() {
+                return false;
+            }
+            stream.flush().ok();
             *stream_holder().lock().unwrap() = Some(stream);
             true
         }

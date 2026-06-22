@@ -297,7 +297,9 @@ public final class NativeCore {
      */
     public static native void browserActivateInput(long hwnd);
 
-    public static native boolean bridgeConnect(int port);
+    /** Generates a fresh random handshake token for one relay session. */
+    public static native String bridgeGenerateToken();
+    public static native boolean bridgeConnect(int port, String token);
     public static native void bridgeDisconnect();
     public static native boolean bridgeIsConnected();
     public static native boolean bridgeSend(String data);

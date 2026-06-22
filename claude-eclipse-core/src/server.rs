@@ -346,8 +346,54 @@ struct SessionQuery {
     session_id: Option<String>,
 }
 
+/// True only if the request targets a loopback `Host` and carries no foreign
+/// `Origin`. This is the security boundary for the local MCP server: it blocks
+/// DNS-rebinding / browser-based access (a malicious page rebinding its domain
+/// to 127.0.0.1 sends `Host: attacker.tld`, which is rejected). The Claude CLI
+/// sends `Host: 127.0.0.1:<port>` and no `Origin`, so real clients are unaffected.
+fn is_loopback_host(value: &str) -> bool {
+    // Strip a trailing :port, then compare the host part.
+    let host = value.rsplit_once(':').map(|(h, _)| h).unwrap_or(value);
+    host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost")
+}
+
+fn is_local_request(headers: &axum::http::HeaderMap) -> bool {
+    let host_ok = headers
+        .get(axum::http::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .map(is_loopback_host)
+        .unwrap_or(false);
+
+    // A non-browser client (the CLI) sends no Origin, which is allowed. If an
+    // Origin IS present, its host must be loopback too.
+    let origin_ok = match headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|h| h.to_str().ok())
+    {
+        None => true,
+        Some(origin) => {
+            let after_scheme = origin.split("://").nth(1).unwrap_or(origin);
+            let host = after_scheme.split('/').next().unwrap_or(after_scheme);
+            is_loopback_host(host)
+        }
+    };
+
+    host_ok && origin_ok
+}
+
 /// GET /sse — establishes a long-lived Server-Sent Events stream.
-async fn sse_handler(State(state): State<Arc<AppState>>) -> Response {
+async fn sse_handler(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    // Reject anything that isn't a loopback-origin request (DNS-rebinding guard).
+    if !is_local_request(&headers) {
+        if crate::is_debug() {
+            eprintln!("[sse_handler] rejected non-local request (Host/Origin not loopback)");
+        }
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
     let (tx, rx) = mpsc::unbounded_channel::<SseEvent>();
     let session_id = Uuid::new_v4().to_string();
 
@@ -386,8 +432,17 @@ async fn sse_handler(State(state): State<Arc<AppState>>) -> Response {
 async fn messages_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SessionQuery>,
+    headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> Response {
+    // Reject anything that isn't a loopback-origin request (DNS-rebinding guard).
+    if !is_local_request(&headers) {
+        if crate::is_debug() {
+            eprintln!("[messages_handler] rejected non-local request (Host/Origin not loopback)");
+        }
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
     let session_id = match params.session_id {
         Some(id) => id,
         None => return (StatusCode::BAD_REQUEST, "Missing sessionId").into_response(),

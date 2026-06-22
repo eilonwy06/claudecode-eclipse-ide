@@ -649,13 +649,27 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_browserA
 // PHP Bridge JNI entry points
 // ===========================================================================
 
+/// Generates a fresh random handshake token for one relay session.
+/// Java distributes it to the relay (env var) and to its own socket, then
+/// passes it back here via bridgeConnect so the Rust side authenticates too.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeGenerateToken(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    let token = uuid::Uuid::new_v4().to_string();
+    env.new_string(token).unwrap().into_raw()
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeConnect(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     port: jint,
+    token: JString,
 ) -> jboolean {
-    php_bridge::connect(port as u16) as jboolean
+    let token: String = env.get_string(&token).map(|s| s.into()).unwrap_or_default();
+    php_bridge::connect(port as u16, &token) as jboolean
 }
 
 #[no_mangle]

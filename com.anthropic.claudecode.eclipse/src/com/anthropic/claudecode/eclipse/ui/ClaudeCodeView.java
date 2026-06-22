@@ -296,7 +296,7 @@ public class ClaudeCodeView extends ViewPart {
             if (isDebugMode()) {
                 appendLog("Bridge started on port " + phpBridge.getPortA() + "\n");
             }
-            boolean connected = NativeCore.bridgeConnect(phpBridge.getPortA());
+            boolean connected = NativeCore.bridgeConnect(phpBridge.getPortA(), phpBridge.getToken());
             if (isDebugMode()) {
                 if (connected) {
                     appendLog("Rust connected to Bridge.\n\n");

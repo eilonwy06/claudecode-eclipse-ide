@@ -18,6 +18,7 @@ import java.util.function.Consumer;
 
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.Constants;
+import com.anthropic.claudecode.eclipse.NativeCore;
 
 public final class PhpBridge {
 
@@ -37,6 +38,7 @@ public final class PhpBridge {
     private Consumer<byte[]> dataCallback;
     private Path extractDir;
     private String phpMessage;
+    private String token;
 
     public PhpBridge() {}
 
@@ -47,6 +49,11 @@ public final class PhpBridge {
         this.dataCallback = dataCallback;
 
         try {
+            // Per-session handshake secret. The relay refuses any peer that does
+            // not present this on its first line, so no other local process can
+            // attach to either side. Generated in native code (Rust-first).
+            this.token = NativeCore.bridgeGenerateToken();
+
             Path binary;
             // On macOS, try Homebrew PHP paths (Apple removed /usr/bin/php in Monterey)
             if (isMacOS()) {
@@ -118,6 +125,9 @@ public final class PhpBridge {
                 );
             }
             pb.redirectErrorStream(false);
+            // Hand the relay its expected handshake token out-of-band (env, not
+            // argv) so it never appears in the process command line.
+            pb.environment().put("CB_TOKEN", token);
             debugLog("[Bridge] Starting process...");
             process = pb.start();
             debugLog("[Bridge] Process started, waiting for READY...");
@@ -197,6 +207,10 @@ public final class PhpBridge {
             debugLog("[Bridge] Got READY, connecting to port " + portB);
 
             socketB = new Socket("127.0.0.1", portB);
+            // Authenticate this side to the relay before any data flows.
+            OutputStream handshakeOut = socketB.getOutputStream();
+            handshakeOut.write((token + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            handshakeOut.flush();
             running.set(true);
 
             readerThread = new Thread(this::readLoop, "bridge-reader");
@@ -278,6 +292,11 @@ public final class PhpBridge {
 
     public String getPhpMessage() {
         return phpMessage;
+    }
+
+    /** Handshake token for this relay session; valid only after a successful start(). */
+    public String getToken() {
+        return token;
     }
 
     private void readLoop() {
