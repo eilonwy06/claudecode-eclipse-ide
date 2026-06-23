@@ -37,6 +37,20 @@ public final class Constants {
     public static final String PREF_CONSOLE_BG_COLOR = "consoleBgColor";
     public static final String PREF_CONSOLE_FG_COLOR = "consoleFgColor";
 
+    // ── Claude CLI status bar (statusLine) ──────────────────────────────────
+    /** Master switch: inject the statusLine and show the per-tab status bar. */
+    public static final String PREF_STATUSLINE_ENABLED = "statuslineEnabled";
+    /** Per-element visibility toggles (apply live in the bar render path). */
+    public static final String PREF_STATUSLINE_SHOW_MODEL = "statuslineShowModel";
+    public static final String PREF_STATUSLINE_SHOW_EFFORT = "statuslineShowEffort";
+    public static final String PREF_STATUSLINE_SHOW_THINKING = "statuslineShowThinking";
+    public static final String PREF_STATUSLINE_SHOW_CONTEXT = "statuslineShowContext";
+    public static final String PREF_STATUSLINE_SHOW_COST = "statuslineShowCost";
+    public static final String PREF_STATUSLINE_SHOW_SESSION_5H = "statuslineShowSession5h";
+    public static final String PREF_STATUSLINE_SHOW_WEEKLY = "statuslineShowWeekly";
+    /** Claude's idle re-run timer for the statusLine command, in seconds. */
+    public static final String PREF_STATUSLINE_REFRESH_SECONDS = "statuslineRefreshSeconds";
+
     public static final String DEFAULT_CLAUDE_CMD = "claude";
 
     public static final String IMG_CLEAR_REFRESH = "clear_co";
