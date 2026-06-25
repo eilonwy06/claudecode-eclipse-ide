@@ -221,6 +221,53 @@ fn handle_tools_list(sender: UnboundedSender<SseEvent>, id: Option<Value>) {
                 },
                 "required": ["file_path"]
             }
+        },
+        {
+            "name": "approvalPrompt",
+            "description": "Permission prompt: ask the user to approve a tool call before it runs. Returns a JSON string {\"behavior\":\"allow\",\"updatedInput\":<input>} or {\"behavior\":\"deny\",\"message\":\"...\"}.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tool_name": { "type": "string", "description": "Name of the tool requesting permission" },
+                    "input":     { "type": "object", "description": "The input the tool would run with" },
+                    "tool_use_id": { "type": "string", "description": "Identifier for this tool use" }
+                },
+                "required": ["tool_name", "input"]
+            }
+        },
+        {
+            "name": "askUserQuestion",
+            "description": "Ask the user one or more multiple-choice questions and wait for their selection. Use this instead of the built-in AskUserQuestion. Returns the user's chosen answers as text.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "description": "The questions to ask",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "question":    { "type": "string", "description": "The full question text" },
+                                "header":      { "type": "string", "description": "Short tab label (max ~12 chars)" },
+                                "multiSelect": { "type": "boolean", "description": "Allow multiple selections" },
+                                "options": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label":       { "type": "string" },
+                                            "description": { "type": "string" }
+                                        },
+                                        "required": ["label"]
+                                    }
+                                }
+                            },
+                            "required": ["question", "header", "options"]
+                        }
+                    }
+                },
+                "required": ["questions"]
+            }
         }
     ]);
     send_result(&sender, &id, json!({ "tools": tools }));

@@ -4,14 +4,35 @@ use std::path::PathBuf;
 
 /// Compute the Claude CLI project hash for a workspace path.
 ///
-/// The algorithm mirrors what Claude CLI uses:
-///   `C:\Users\Foo\Project` → `C--Users-Foo-Project`
-///   `:` becomes `-`, `\` becomes `-`, `/` becomes `-`.
+/// The algorithm mirrors what Claude CLI uses: every character that is not
+/// ASCII alphanumeric becomes `-` (so `:`, `\`, `/`, spaces, dots, etc. all map
+/// to `-`). Example:
+///   `C:\Users\Windows 10\Project` → `C--Users-Windows-10-Project`
+/// Replacing only `:\/` (the previous behaviour) broke any path containing a
+/// space — e.g. the "Windows 10" home folder — so no sessions were ever found.
 fn workspace_hash(workspace_root: &str) -> String {
     workspace_root
-        .replace(':', "-")
-        .replace('\\', "-")
-        .replace('/', "-")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// Remove a leading `<ide_selection ...>...</ide_selection>` block and/or a
+/// `<ide_context ... />` tag that the GUI injects ahead of the user's message,
+/// so session titles show the real text. No regex crate needed — simple scan.
+fn strip_ide_preamble(s: &str) -> String {
+    let mut t = s.trim_start();
+    if let Some(rest) = t.strip_prefix("<ide_selection") {
+        if let Some(end) = rest.find("</ide_selection>") {
+            t = rest[end + "</ide_selection>".len()..].trim_start();
+        }
+    }
+    if t.starts_with("<ide_context") {
+        if let Some(end) = t.find("/>") {
+            t = t[end + 2..].trim_start();
+        }
+    }
+    t.to_string()
 }
 
 /// Returns the path to `~/.claude/projects/{hash}/`.
@@ -88,9 +109,11 @@ pub fn list_sessions(workspace_root: &str) -> String {
             };
 
             if event["type"].as_str() == Some("user") && !found_user {
-                // Extract display text — first 120 chars of the user message content.
+                // Extract display text — first 120 chars of the user message content,
+                // with any injected <ide_selection>/<ide_context> preamble removed so
+                // the session title is the user's actual text, not the editor context.
                 if let Some(content) = event["message"]["content"].as_str() {
-                    display = content.chars().take(120).collect();
+                    display = strip_ide_preamble(content).chars().take(120).collect();
                 }
                 if let Some(ts) = event["timestamp"].as_str() {
                     timestamp = ts.to_string();

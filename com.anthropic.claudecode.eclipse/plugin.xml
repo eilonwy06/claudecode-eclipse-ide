@@ -15,6 +15,9 @@
             category="com.anthropic.claudecode.eclipse.category"
             allowMultiple="false"
             restorable="true"/>
+      <!-- Claude Chat view DISABLED: superseded by Claude GUI. Unregistered so it
+           can't be opened / doesn't appear in Show View. Code is kept (ClaudeChatView.java). -->
+      <!--
       <view
             id="com.anthropic.claudecode.eclipse.ui.ClaudeChatView"
             name="Claude Chat"
@@ -23,11 +26,20 @@
             category="com.anthropic.claudecode.eclipse.category"
             allowMultiple="false"
             restorable="true"/>
+      -->
       <view
             id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"
             name="Claude CLI"
             icon="icons/claude-16.png"
             class="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"
+            category="com.anthropic.claudecode.eclipse.category"
+            allowMultiple="false"
+            restorable="true"/>
+      <view
+            id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"
+            name="Claude GUI"
+            icon="icons/claude-16.png"
+            class="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"
             category="com.anthropic.claudecode.eclipse.category"
             allowMultiple="false"
             restorable="true"/>

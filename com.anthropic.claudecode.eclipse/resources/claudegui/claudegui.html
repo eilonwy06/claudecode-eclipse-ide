@@ -1,0 +1,1695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude GUI</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #1e1e1e;
+  --bg-soft: #232323;
+  --bg-box: #262626;
+  --bg-chip: #2d2d2d;
+  --bg-code: #1a1a1a;
+  --bg-hover: #2f2f2f;
+  --fg: #d4d4d4;
+  --fg-soft: #c0c0c0;
+  --fg-dim: #8a8a8a;
+  --fg-faint: #6e6e6e;
+  --border: #333333;
+  --border-soft: #2a2a2a;
+  --accent: #d97757;          /* Claude coral */
+  --accent-dim: rgba(217,119,87,.5);
+  --sel: #2d84af;             /* VSCode-style selection blue (cards/answers) */
+  --sel-hover: #3a93bf;
+  --green: #4eb87a;           /* action dots */
+  --green-bg: rgba(78,184,122,.16);
+  --red-bg: rgba(220,90,90,.14);
+  --link: #6fb3ff;
+  --hunk: #9a86d6;
+  /* syntax */
+  --kw: #569cd6; --type: #4ec9b0; --str: #ce9178; --com: #6a9955; --fn: #dcdcaa; --num: #b5cea8;
+}
+html, body { height: 100%; background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; overflow: hidden; }
+.mono { font-family: 'Cascadia Code', 'Consolas', 'Fira Code', monospace; }
+
+#app { display: flex; flex-direction: column; height: 100%; position: relative; }
+
+/* ── Top toolbar (VSCode editor-tab strip) ───────────────── */
+#toolbar { display: flex; align-items: stretch; height: 35px; flex-shrink: 0;
+  background: var(--bg); border-bottom: 1px solid var(--border-soft); }
+#tabs { display: flex; align-items: stretch; height: 100%; overflow-x: auto; }
+#tabs::-webkit-scrollbar { height: 0; }
+.tab { display: flex; align-items: center; gap: 7px; padding: 0 10px; height: 100%; cursor: pointer;
+  background: var(--bg); border-right: 1px solid var(--border-soft); border-top: 2px solid transparent;
+  font-size: 12.5px; color: var(--fg-dim); max-width: 200px; flex-shrink: 0; }
+.tab.active { background: var(--bg-soft); border-top-color: var(--accent); color: var(--fg); }
+.tab .ti { color: var(--accent); display: inline-flex; flex-shrink: 0; }
+.tab .tt { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tab .tab-close { color: var(--fg-dim); margin-left: 2px; cursor: pointer; border-radius: 3px; padding: 1px 3px; flex-shrink: 0; }
+.tab .tab-close:hover { background: var(--bg-hover); color: var(--fg); }
+.pane > .turn:first-child { margin-top: 0; }
+#toolbar .spacer { flex: 1; }
+#toolbar .tools { display: flex; align-items: center; gap: 2px; padding-right: 8px; }
+.tbtn { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border-radius: 5px; color: var(--fg-dim); cursor: pointer; }
+.tbtn:hover { background: var(--bg-hover); color: var(--fg); }
+.tbtn.active { background: #3a3550; color: var(--fg); }
+
+/* ── Conversation header ─────────────────────────────────── */
+#convo-header { display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+#convo-header .title { font-weight: 600; font-size: 13px; color: var(--fg); }
+#convo-header .actions { display: flex; gap: 2px; }
+
+/* ── Messages ────────────────────────────────────────────── */
+#messages { flex: 1; overflow-y: auto; padding: 4px 14px 16px; }
+#messages::-webkit-scrollbar { width: 9px; }
+#messages::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 5px; border: 2px solid var(--bg); }
+#messages::-webkit-scrollbar-track { background: transparent; }
+
+.turn { position: relative; margin: 10px 0; }
+
+/* user bubble */
+.user-msg { position: relative; border: 1px solid var(--border); background: var(--bg-soft);
+  border-radius: 8px; padding: 10px 12px; }
+.user-msg .ctx-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
+  background: var(--bg-chip); border: 1px solid var(--border); border-radius: 5px;
+  padding: 2px 8px; margin-bottom: 8px; font-size: 11.5px; color: var(--fg-dim);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.user-msg .ctx-chip svg { flex-shrink: 0; opacity: .8; }
+.user-msg .body { color: var(--fg); line-height: 1.5; }
+
+/* assistant block — dotted left rail per item */
+.a-item { position: relative; padding-left: 22px; margin: 9px 0; line-height: 1.55; color: var(--fg-soft); }
+.a-item .dot { position: absolute; left: 4px; top: 6px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green); }
+.a-item .dot.gray { background: var(--fg-faint); }
+.a-item .dot.spin { background: transparent; border: 2px solid var(--accent); border-top-color: transparent;
+  width: 11px; height: 11px; left: 2px; top: 4px; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.a-item.muted { color: var(--fg-dim); }
+.a-item strong { color: var(--fg); font-weight: 600; }
+
+/* tool line */
+.tool-line { font-size: 12.5px; }
+.tool-line .tname { font-weight: 600; color: var(--fg); }
+.tool-line .tpath { color: var(--fg-dim); word-break: break-all; }
+.tool-sub { font-size: 11.5px; color: var(--fg-faint); margin-top: 2px; margin-bottom: 6px; }
+
+/* inline code chip */
+code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; background: #2b2b2b;
+  border: 1px solid var(--border-soft); border-radius: 4px; padding: 1px 5px; color: #d8b58c; }
+
+/* ── Code / diff block ───────────────────────────────────── */
+.code-block { margin: 8px 0 8px 22px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-code); overflow: hidden; position: relative; }
+/* nested inside a tool line's .a-item (which already has 22px left padding) */
+.tool-line .code-block { margin-left: 0; }
+.code-block .cb-head { display: flex; align-items: center; justify-content: flex-end;
+  padding: 6px 8px; }
+.code-block .cb-head .copy { color: var(--fg-dim); cursor: pointer; padding: 3px; border-radius: 4px; }
+.code-block .cb-head .copy:hover { background: var(--bg-hover); color: var(--fg); }
+.code-block pre { padding: 2px 0 10px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+.code-block pre::-webkit-scrollbar { height: 8px; }
+.code-block pre::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 4px; }
+.code-block .ln { display: block; padding: 0 12px; white-space: pre; color: var(--fg-soft); }
+.code-block .ln.add { background: var(--green-bg); box-shadow: inset 2px 0 0 var(--green); }
+.code-block .ln.del { background: var(--red-bg); box-shadow: inset 2px 0 0 #dc5a5a; }
+.code-block .ln.hunk { color: var(--hunk); }
+.code-block .ln.meta { color: var(--fg-faint); }
+.code-block .cb-foot { display: flex; justify-content: flex-end; padding: 6px 8px; border-top: 1px solid var(--border-soft); }
+.code-block .expand { font-size: 11.5px; color: var(--fg-dim); background: var(--bg-chip);
+  border: 1px solid var(--border); border-radius: 5px; padding: 3px 9px; cursor: pointer; }
+.code-block .expand:hover { color: var(--fg); }
+/* edit block w/ gutter */
+.code-block.edit pre { display: block; }
+.code-block.edit .gut { display: inline-block; width: 18px; color: var(--fg-faint); user-select: none; }
+/* syntax */
+.kw{color:var(--kw)} .ty{color:var(--type)} .st{color:var(--str)} .cm{color:var(--com)} .fnc{color:var(--fn)} .nm{color:var(--num)}
+
+/* ── Composer ────────────────────────────────────────────── */
+#composer { flex-shrink: 0; padding: 8px 14px 12px; }
+/* usage warning banner (shown above the input near a usage limit) */
+#usage-warn { display: none; align-items: center; gap: 4px; margin-bottom: 8px; padding: 7px 11px;
+  border: 1px solid #b58b2e; background: rgba(181,139,46,.12); border-radius: 8px; color: #d8b66a; font-size: 12px; }
+#usage-warn.show { display: flex; }
+#usage-warn .uw-txt { flex: 1; }
+#usage-warn a { color: var(--link); text-decoration: none; white-space: nowrap; }
+#usage-warn .uw-x { color: #d8b66a; cursor: pointer; padding: 2px; border-radius: 4px; opacity: .7; flex-shrink: 0; margin-left: 6px; }
+#usage-warn .uw-x:hover { opacity: 1; background: rgba(255,255,255,.08); }
+#input-wrap { border: 1px solid var(--accent); border-radius: 10px; background: var(--bg-soft);
+  padding: 8px 10px 6px; transition: border-color .15s; }
+#input-wrap.blur { border-color: var(--border); }
+.input-row { display: flex; align-items: flex-start; gap: 8px; }
+#input { flex: 1; background: transparent; border: none; outline: none; resize: none; color: var(--fg);
+  font-family: inherit; font-size: 13px; line-height: 1.5; max-height: 160px; min-height: 22px; }
+#input::placeholder { color: var(--fg-faint); }
+
+#composer-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+.cb-left, .cb-right { display: flex; align-items: center; gap: 6px; }
+.pill { display: inline-flex; align-items: center; justify-content: center; height: 26px; padding: 0 6px;
+  border-radius: 6px; color: var(--fg-dim); cursor: pointer; }
+.pill:hover { background: var(--bg-hover); color: var(--fg); }
+.file-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px;
+  font-size: 12px; color: var(--fg-dim); border-radius: 6px; cursor: pointer; max-width: 220px; }
+.file-chip:hover { background: var(--bg-hover); color: var(--fg); }
+.file-chip svg { opacity: .8; flex-shrink: 0; }
+.file-chip #ctx-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.file-chip.off { opacity: .55; }
+.file-chip.empty { opacity: .5; cursor: default; }
+.file-chip.empty:hover { background: transparent; color: var(--fg-dim); }
+.modes-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px;
+  border-radius: 6px; color: var(--fg-soft); cursor: pointer; font-size: 12px; }
+.modes-btn:hover { background: var(--bg-hover); }
+#send { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border-radius: 7px; background: var(--accent); color: #fff; cursor: pointer; flex-shrink: 0; }
+#send.disabled { background: #4a3a33; color: #8a7a72; cursor: default; }
+#send.stop { background: var(--accent); }
+
+/* ── Popup menus ─────────────────────────────────────────── */
+.menu { position: absolute; z-index: 40; background: #252526; border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); padding: 6px; min-width: 230px; display: none; }
+.menu.open { display: block; }
+.menu .item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.menu .item:hover { background: #2f3140; }
+.menu .item .ic { margin-top: 1px; color: var(--fg-dim); flex-shrink: 0; }
+.menu .item .txt { display: flex; flex-direction: column; gap: 2px; }
+.menu .item .txt .lbl { color: var(--fg); font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+.menu .item .txt .desc { color: var(--fg-dim); font-size: 11px; line-height: 1.35; }
+.menu .item .check { margin-left: auto; color: var(--accent); }
+.menu .head { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px 6px; }
+.menu .head .h { color: var(--fg-dim); font-size: 11px; text-transform: none; }
+.menu .head .hint { color: var(--fg-faint); font-size: 10.5px; }
+.menu .sep { height: 1px; background: var(--border-soft); margin: 5px 4px; }
+.menu .effort { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; }
+.menu .effort .lbl { color: var(--fg); font-size: 12.5px; display:flex; align-items:center; gap:6px;}
+.slider { width: 84px; height: 16px; position: relative; cursor: pointer; }
+.slider .track { position: absolute; top: 7px; left: 0; right: 0; height: 3px; background: #444; border-radius: 2px; }
+.slider .fill { position: absolute; top: 7px; left: 0; width: 50%; height: 3px; background: var(--accent); border-radius: 2px; }
+.slider .knob { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); width: 12px; height: 12px; border-radius: 50%; background: #ddd; }
+
+/* welcome / empty state */
+.welcome { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 62vh; text-align: center; color: var(--fg-dim); gap: 8px; padding: 30px; }
+.welcome .wc-logo { color: var(--accent); transform: scale(2.2); margin-bottom: 14px; }
+.welcome .wc-h { font-size: 17px; color: var(--fg); font-weight: 600; }
+.welcome .wc-p { font-size: 12.5px; }
+
+/* assistant message body */
+.a-item .a-body { display: inline; }
+/* connecting line between consecutive dots on the left rail (JS adds .linked to
+   every item that is followed by another item — avoids relying on :has()) */
+.a-item.linked::before { content: ''; position: absolute; left: 7px; top: 9px; bottom: -16px;
+  width: 1px; background: var(--border); }
+/* working indicator (sunburst + gerund) shown while Claude is processing */
+.working { display: flex; align-items: center; gap: 9px; padding: 8px 0 8px 2px; color: var(--fg); font-weight: 600; }
+.working .sb { color: var(--accent); display: inline-flex; animation: spin 2.6s linear infinite; }
+
+/* floating decision / question card — sticks to the bottom of the scroll area so
+   messages scroll behind it; full message-column width (like user messages). */
+.card-dock { position: sticky; bottom: 8px; z-index: 30; margin: 16px 0 4px; }
+
+.decision { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft);
+  padding: 12px 12px 10px; box-shadow: 0 6px 22px rgba(0,0,0,.45); }
+.decision .dec-q { color: var(--fg); font-size: 13px; margin-bottom: 10px; line-height: 1.5; word-break: break-all; }
+.decision .dec-q code { font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px; color: #d8b58c; }
+.decision .dec-opt { display: flex; align-items: center; gap: 9px; padding: 8px 11px; border-radius: 6px;
+  cursor: pointer; color: var(--fg-soft); font-size: 12.5px; }
+.decision .dec-opt .num { color: var(--fg-faint); font-size: 11.5px; min-width: 12px; }
+.decision .dec-opt:hover, .decision .dec-opt.sel { background: var(--sel); color: #fff; }
+.decision .dec-opt:hover .num, .decision .dec-opt.sel .num { color: rgba(255,255,255,.75); }
+.decision .dec-instead { display: flex; align-items: center; gap: 9px; padding: 4px 0 0; margin-top: 4px; }
+.decision .dec-instead .num { color: var(--fg-faint); font-size: 11.5px; min-width: 12px; padding-left: 11px; }
+.decision .dec-instead input { flex: 1; background: var(--bg-code); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 10px; color: var(--fg); font-size: 12.5px; outline: none; font-family: inherit; }
+.decision .dec-instead input:focus { border-color: var(--sel); }
+.decision .dec-instead input::placeholder { color: var(--fg-faint); }
+.decision .dec-esc { color: var(--fg-faint); font-size: 11px; padding: 8px 2px 0; }
+
+/* AskUserQuestion card (single/multi question, options + Other) */
+.question-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft);
+  box-shadow: 0 6px 22px rgba(0,0,0,.45); overflow: hidden; }
+.question-card .q-tabs { display: flex; align-items: center; gap: 16px; padding: 11px 14px 0; }
+.question-card .q-tab { padding: 2px 0 8px; color: var(--fg-dim); font-size: 12.5px; cursor: pointer;
+  border-bottom: 2px solid transparent; white-space: nowrap; }
+.question-card .q-tab.active { color: var(--fg); border-bottom-color: var(--sel); }
+.question-card .q-x { margin-left: auto; color: var(--fg-dim); cursor: pointer; padding: 2px; border-radius: 4px; }
+.question-card .q-x:hover { background: var(--bg-hover); color: var(--fg); }
+.question-card .q-sep { height: 1px; background: var(--border-soft); }
+.question-card .q-text { color: var(--fg); font-size: 13px; font-weight: 600; padding: 12px 14px 8px; }
+.question-card .q-opt { display: flex; gap: 11px; padding: 9px 14px; cursor: pointer; align-items: flex-start; }
+.question-card .q-opt:hover { background: var(--bg-hover); }
+.question-card .q-opt.sel { background: var(--bg-hover); }
+.question-card .q-radio { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--fg-faint);
+  flex-shrink: 0; margin-top: 1px; position: relative; }
+.question-card .q-opt.sel .q-radio { border-color: var(--sel); }
+.question-card .q-opt.sel .q-radio::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--sel); }
+.question-card .q-otext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.question-card .q-otitle { color: var(--fg); font-size: 12.5px; font-weight: 600; }
+.question-card .q-odesc { color: var(--fg-dim); font-size: 11.5px; line-height: 1.4; }
+.question-card .q-other-in { margin: 0 14px 6px 41px; }
+.question-card .q-other-in input { width: 100%; background: var(--bg-code); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 10px; color: var(--fg); font-size: 12.5px; outline: none; font-family: inherit; }
+.question-card .q-other-in input:focus { border-color: var(--sel); }
+.question-card .q-submit { display: flex; align-items: center; gap: 8px; margin: 8px 14px 2px; padding: 9px 12px;
+  border-radius: 6px; background: var(--bg-chip); color: var(--fg-dim); font-size: 12.5px; cursor: pointer; }
+.question-card .q-submit.ready { background: var(--sel); color: #fff; }
+.question-card .q-submit .num { font-size: 11.5px; opacity: .85; }
+.question-card .q-esc { color: var(--fg-faint); font-size: 11px; padding: 4px 14px 0; }
+
+/* "User answered:" card left in the flow after responding to a question/decision */
+.answered { border: 1px solid var(--border); background: var(--bg-soft); border-radius: 8px; padding: 9px 12px; }
+.answered .ans-head { color: var(--fg-dim); font-size: 11px; margin-bottom: 5px; }
+.answered .ans-body { color: var(--fg); line-height: 1.5; white-space: pre-wrap; }
+
+/* collapsible "Thought for Ns" block */
+.a-item.think .think-head { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--fg-dim); }
+.a-item.think .think-head:hover { color: var(--fg-soft); }
+.a-item.think .chev { display: inline-flex; transition: transform .15s; opacity: .8; }
+.a-item.think.open .chev { transform: rotate(90deg); }
+.a-item.think.live .think-label { animation: thinkpulse 1.4s ease-in-out infinite; }
+@keyframes thinkpulse { 50% { opacity: .5; } }
+.a-item.think .think-body { display: none; margin-top: 6px; color: var(--fg-dim); font-size: 12.5px;
+  line-height: 1.55; white-space: pre-wrap; }
+.a-item.think.open .think-body { display: block; }
+.a-body p { margin: 4px 0; } .a-body p:first-child { margin-top: 0; }
+.a-body ul, .a-body ol { margin: 4px 0 4px 20px; } .a-body li { margin: 2px 0; }
+.a-body h1,.a-body h2,.a-body h3 { margin: 8px 0 4px; color: var(--fg); }
+.a-body h1 { font-size: 16px; } .a-body h2 { font-size: 14px; } .a-body h3 { font-size: 13px; }
+.a-body a { color: var(--link); text-decoration: none; }
+.a-body pre { margin: 8px 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: var(--bg-code); }
+.a-body pre .cb-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: #181818; font-size: 11px; color: var(--fg-dim); }
+.a-body pre .cb-head button { background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 11px; }
+.a-body pre code { display: block; padding: 10px 12px; overflow-x: auto; white-space: pre; color: var(--fg-soft);
+  font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px; line-height: 1.5; }
+
+/* slash command menu */
+#slash-menu { min-width: 280px; max-height: 260px; overflow-y: auto; }
+#slash-menu .item .cmd { font-family: 'Cascadia Code','Consolas',monospace; color: var(--fg); font-size: 12.5px; }
+#slash-menu .item .d { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
+#slash-menu .item.sel { background: #2f3140; }
+
+/* history panel */
+/* fixed width so the loading state and the loaded list are the same size — otherwise
+   the panel is positioned for the narrow "Loading…" width then grows and clips. */
+#history-panel { width: 360px; max-height: 70vh; overflow: hidden; padding: 6px; }
+#history-panel.open { display: flex; flex-direction: column; }
+.hist-tabs { display: flex; gap: 4px; background: var(--bg-code); border-radius: 7px; padding: 3px; margin-bottom: 6px; }
+.hist-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 8px;
+  border-radius: 5px; color: var(--fg-dim); font-size: 12px; cursor: pointer; }
+.hist-tab.active { background: var(--bg-hover); color: var(--fg); }
+.hist-search { margin-bottom: 4px; }
+.hist-search input { width: 100%; background: var(--bg-code); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 9px; color: var(--fg); font-size: 12px; outline: none; }
+.hist-search input:focus { border-color: var(--accent); }
+#history-list { overflow-y: auto; }
+#history-list .item { align-items: center; gap: 6px; }
+#history-list .h-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+#history-list .h-title { color: var(--fg); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#history-list .h-time { color: var(--fg-faint); font-size: 10.5px; }
+#history-list .h-del { color: var(--fg-faint); padding: 4px; border-radius: 4px; visibility: hidden; flex-shrink: 0; }
+#history-list .item:hover .h-del { visibility: visible; }
+#history-list .h-del:hover { color: #e06c6c; background: var(--bg-hover); }
+.h-empty { color: var(--fg-dim); font-size: 12px; padding: 14px; text-align: center; }
+
+/* model chooser items */
+#model-list .item { align-items: flex-start; }
+#model-list .m-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#model-list .m-title { color: var(--fg); font-size: 12.5px; }
+#model-list .m-desc { color: var(--fg-dim); font-size: 11px; line-height: 1.35; }
+#model-list .item.disabled { opacity: .5; cursor: default; }
+#model-list .item.disabled:hover { background: transparent; }
+#model-list .item .check { margin-left: auto; color: var(--accent); flex-shrink: 0; }
+#actions-slash .item .cmd { font-family: 'Cascadia Code','Consolas',monospace; color: var(--fg); font-size: 12.5px; }
+#actions-slash .item .d { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
+
+/* account & usage window */
+#account-overlay { position: absolute; inset: 0; z-index: 60; background: rgba(0,0,0,.5);
+  display: none; align-items: center; justify-content: center; }
+#account-overlay.open { display: flex; }
+#account-win { width: 380px; max-width: 92%; max-height: 86%; overflow-y: auto;
+  background: #252526; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.6); padding: 16px 18px; }
+#account-win .aw-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+#account-win .aw-head .t { font-size: 14px; font-weight: 600; color: var(--fg); }
+#account-win .aw-head .x { color: var(--fg-dim); cursor: pointer; padding: 3px; border-radius: 4px; }
+#account-win .aw-head .x:hover { background: var(--bg-hover); color: var(--fg); }
+#account-win .aw-sec { color: var(--fg-faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 6px; }
+#account-win .aw-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 12.5px; }
+#account-win .aw-row .k { color: var(--fg-dim); flex-shrink: 0; }
+#account-win .aw-row .v { color: var(--fg); text-align: right; word-break: break-word; }
+#account-win .aw-usage { padding: 6px 0; }
+#account-win .aw-usage .ut { display: flex; justify-content: space-between; font-size: 12px; color: var(--fg-soft); margin-bottom: 4px; }
+#account-win .aw-usage .ut .reset { color: var(--fg-faint); font-size: 11px; }
+#account-win .aw-bar { height: 6px; background: var(--bg-code); border-radius: 3px; overflow: hidden; }
+#account-win .aw-bar > span { display: block; height: 100%; background: var(--accent); }
+#account-win .aw-note { color: var(--fg-faint); font-size: 11px; line-height: 1.45; margin-top: 6px; }
+#account-win a { color: var(--link); text-decoration: none; font-size: 12px; }
+
+/* rewind hover button */
+.rewind-btn { position: absolute; top: -10px; right: 6px; width: 26px; height: 26px; border-radius: 50%;
+  background: #2b2b2b; border: 1px solid var(--border); color: var(--fg-dim);
+  display: none; align-items: center; justify-content: center; cursor: pointer; z-index: 20; }
+.turn:hover .rewind-btn { display: flex; }
+.rewind-btn:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Top toolbar -->
+  <div id="toolbar">
+    <div id="tabs"></div>
+    <div class="spacer"></div>
+    <div class="tools">
+      <div class="tbtn" title="New session" onclick="newSession()">__SUNBURST__</div>
+      <!-- split / lock / more-actions hidden: not wired yet -->
+      <div class="tbtn" title="Split editor" style="display:none">__SPLIT__</div>
+      <div class="tbtn" title="Lock" style="display:none">__LOCK__</div>
+      <div class="tbtn" title="More actions" style="display:none">__DOTS__</div>
+    </div>
+  </div>
+
+  <!-- Conversation header -->
+  <div id="convo-header">
+    <span class="title" id="convo-title">Claude Code</span>
+    <div class="actions">
+      <div class="tbtn" id="history-btn" title="Session history" onclick="toggleHistory(this)">__CLOCK__</div>
+      <div class="tbtn" title="New session" onclick="newSession()">__NEWCHAT__</div>
+    </div>
+  </div>
+
+  <!-- Messages (one .pane per tab, added by JS) -->
+  <div id="messages"></div>
+
+  <!-- Composer -->
+  <div id="composer">
+    <div id="usage-warn"></div>
+    <div id="input-wrap">
+      <div class="input-row">
+        <textarea id="input" rows="1" placeholder="Message Claude…"></textarea>
+      </div>
+      <div id="composer-bar">
+        <div class="cb-left">
+          <span class="pill" id="plus-btn" title="Add context" onclick="toggleMenu('plus-menu', this)" style="display:none">__PLUS__</span>
+          <span class="pill" id="slash-btn" title="Commands" onclick="toggleMenu('actions-menu', this)">__SLASH__</span>
+          <span class="file-chip empty" id="ctx-chip" title="Toggle file context" onclick="toggleContext()"><span id="ctx-ic">__FILEICON__</span> <span id="ctx-label">No file open</span></span>
+        </div>
+        <div class="cb-right">
+          <span class="modes-btn" id="modes-btn" onclick="toggleMenu('modes-menu', this)"><span id="modes-ic">__HAND__</span> <span id="modes-lbl">Ask before edits</span></span>
+          <span id="send" class="disabled" title="Send">__SEND__</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- + menu -->
+  <div class="menu" id="plus-menu">
+    <div class="item"><span class="ic">__UPLOAD__</span><div class="txt"><span class="lbl">Upload from computer</span></div></div>
+    <div class="item"><span class="ic">__FILEICON__</span><div class="txt"><span class="lbl">Add context</span></div></div>
+    <div class="item"><span class="ic">__GLOBE__</span><div class="txt"><span class="lbl">Browse the web</span></div></div>
+  </div>
+
+  <!-- modes menu -->
+  <div class="menu" id="modes-menu" style="min-width:280px">
+    <div class="head"><span class="h">Modes</span></div>
+    <div class="item" data-mode="default" data-icon="HAND" onclick="selectMode(this)"><span class="ic">__HAND__</span><div class="txt"><span class="lbl">Ask before edits</span><span class="desc">Claude shows each edit in a diff to accept or reject</span></div><span class="check">__CHECK__</span></div>
+    <div class="item" data-mode="acceptEdits" data-icon="PENCIL" onclick="selectMode(this)"><span class="ic">__PENCIL__</span><div class="txt"><span class="lbl">Edit automatically</span><span class="desc">Claude applies edits without asking</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
+    <div class="item" data-mode="plan" data-icon="MAP" onclick="selectMode(this)"><span class="ic">__MAP__</span><div class="txt"><span class="lbl">Plan mode</span><span class="desc">Claude explores and presents a plan before editing</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
+    <div class="item" data-mode="bypassPermissions" data-icon="BOLT" onclick="selectMode(this)"><span class="ic">__BOLT__</span><div class="txt"><span class="lbl">Auto mode</span><span class="desc">Claude runs everything without asking (use with care)</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
+    <div class="sep"></div>
+    <div class="effort"><span class="lbl">__GAUGE__ Effort <span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span>
+      <span class="slider eff-slider" title="Effort" onmousedown="effortDown(event)"><span class="track"></span><span class="fill eff-fill"></span><span class="knob eff-knob"></span></span></div>
+  </div>
+
+  <!-- actions menu (the / button): Model section + Slash Commands -->
+  <div class="menu" id="actions-menu" style="min-width:300px">
+    <div class="head"><span class="h">Model</span></div>
+    <div class="item" onclick="openModelChooser(event)"><span class="ic">__SPARK__</span><div class="txt"><span class="lbl">Switch model <span id="cur-model" style="color:var(--fg-dim)">(Default)</span></span></div><span class="ic">__CHEVRON__</span></div>
+    <div class="effort"><span class="lbl">__GAUGE__ Effort <span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span>
+      <span class="slider eff-slider" title="Effort" onmousedown="effortDown(event)"><span class="track"></span><span class="fill eff-fill"></span><span class="knob eff-knob"></span></span></div>
+    <div class="item" onclick="toggleThinking(event)"><span class="ic">__BRAIN__</span><div class="txt"><span class="lbl">Thinking</span></div><span class="check" id="think-check">__CHECK__</span></div>
+    <div class="item" onclick="openAccount()"><span class="ic">__USER__</span><div class="txt"><span class="lbl">Account &amp; usage…</span></div></div>
+    <div class="sep"></div>
+    <div class="head"><span class="h">Slash Commands</span></div>
+    <div id="actions-slash"></div>
+  </div>
+
+  <!-- model chooser -->
+  <div class="menu" id="model-menu" style="min-width:340px"><div class="head"><span class="h">Select a model</span></div><div id="model-list"></div></div>
+
+  <!-- account & usage window -->
+  <div id="account-overlay"><div id="account-win"></div></div>
+
+  <!-- rewind menu -->
+  <div class="menu" id="rewind-menu">
+    <div class="item"><div class="txt"><span class="lbl">Fork conversation from here</span></div></div>
+    <div class="item"><div class="txt"><span class="lbl">Rewind code to here</span></div></div>
+    <div class="item"><div class="txt"><span class="lbl">Fork conversation and rewind code</span></div></div>
+  </div>
+
+  <!-- slash command menu -->
+  <div class="menu" id="slash-menu"></div>
+
+  <!-- history panel -->
+  <div class="menu" id="history-panel">
+    <div class="hist-tabs">
+      <div class="hist-tab active" id="hist-tab-local" onclick="histTab('local')">__MONITOR__ Local</div>
+      <div class="hist-tab" id="hist-tab-web" onclick="histTab('web')">__GLOBE__ Web</div>
+    </div>
+    <div class="hist-search"><input id="hist-search" type="text" placeholder="Search sessions…" oninput="renderHistoryList()"></div>
+    <div id="history-list"></div>
+    <div id="history-web"><div class="h-empty">Web history isn't available yet.</div></div>
+  </div>
+
+</div>
+
+<script>
+/* ---- inline SVG icon set ---- */
+const ICONS = {
+  SUNBURST: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><g>'+
+    [0,45,90,135].map(a=>`<rect x="11" y="2" width="2" height="20" rx="1" transform="rotate(${a} 12 12)"/>`).join('')+'</g></svg>',
+  X: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  SPLIT: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>',
+  LOCK: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+  DOTS: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>',
+  CLOCK: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+  NEWCHAT: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><path d="M12 8.5v7M8.5 12h7"/></svg>',
+  REWIND: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/></svg>',
+  CODEICON: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></svg>',
+  COPY: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>',
+  MIC: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4"/></svg>',
+  PLUS: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>',
+  SLASH: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M14 8l-4 8"/></svg>',
+  FILEICON: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>',
+  HAND: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 11V5.5a1.5 1.5 0 0 1 3 0V11M11 10.5V4.5a1.5 1.5 0 0 1 3 0V11M14 11V6a1.5 1.5 0 0 1 3 0v7a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-2.7L4 14a1.6 1.6 0 0 1 2.6-1.8L8 14"/></svg>',
+  SEND: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+  STOP: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+  UPLOAD: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>',
+  GLOBE: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.5 2.5 14.5 0 17M12 3.5c-2.5 2.5-2.5 14.5 0 17"/></svg>',
+  CHECK: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l5 5 9-10"/></svg>',
+  PENCIL: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/></svg>',
+  MAP: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg>',
+  BOLT: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 3L4 14h6l-1 7 9-11h-6z"/></svg>',
+  GAUGE: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 17a8 8 0 1 1 16 0"/><path d="M12 17l4-4"/></svg>',
+  MONITOR: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 20h8M12 17v3"/></svg>',
+  TRASH: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>',
+  EYEOFF: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 3l18 18"/><path d="M10.6 10.7a2 2 0 0 0 2.8 2.8"/><path d="M9.9 4.2A9 9 0 0 1 21 12a9.6 9.6 0 0 1-2.3 3.2M6.1 6.1A9.7 9.7 0 0 0 3 12a9 9 0 0 0 11 7.2"/></svg>',
+  CHEVRON: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>',
+  SPARK: '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 6.4L20 10l-6.4 1.6L12 18l-1.6-6.4L4 10l6.4-1.6z"/></svg>',
+  BRAIN: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-1 5.8A3 3 0 0 0 7 17a2.5 2.5 0 0 0 5 .5V5a2 2 0 0 0-3-2zM15 3a3 3 0 0 1 3 3 3 3 0 0 1 1 5.8A3 3 0 0 1 17 17a2.5 2.5 0 0 1-5 .5"/></svg>',
+  USER: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>'
+};
+/* substitute __NAME__ placeholders */
+document.body.innerHTML = document.body.innerHTML.replace(/__([A-Z]+)__/g, (m, k) => ICONS[k] || m);
+
+/* ---- front-end-only interactions ---- */
+let openMenuEl = null, openAnchor = null;   // openAnchor = the trigger element the menu is glued to
+function closeMenus() { document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+  document.querySelectorAll('.tbtn.active-tmp').forEach(b=>b.classList.remove('active-tmp'));
+  openMenuEl = null; openAnchor = null; }
+
+/* Position a menu relative to its trigger button, so it stays glued to that element
+   (in X and Y) when the view is resized — its reference is the element behind it.
+   Below-group opens under the button; everything else opens above. Right-group aligns
+   its right edge to the button; everything else aligns its left edge. Then clamped. */
+function positionMenu(menu, anchor) {
+  if (!menu || !anchor) return;
+  const r = anchor.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  const below = (menu.id === 'history-panel' || menu.id === 'rewind-menu');
+  const right = (menu.id === 'modes-menu' || menu.id === 'history-panel' || menu.id === 'rewind-menu');
+  let left = right ? (r.right - mw) : r.left;
+  let top  = below ? (r.bottom + 6) : (r.top - mh - 6);
+  left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
+  top  = Math.max(8, Math.min(top, Math.max(8, window.innerHeight - mh - 8)));
+  menu.style.left = left + 'px'; menu.style.top = top + 'px';
+}
+
+function toggleMenu(id, anchor) {
+  const menu = document.getElementById(id);
+  const wasOpen = menu.classList.contains('open');
+  closeMenus();
+  if (wasOpen) return;
+  menu.classList.add('open');
+  positionMenu(menu, anchor);
+  openMenuEl = menu; openAnchor = anchor;
+}
+
+function openRewind(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('rewind-menu');
+  const wasOpen = menu.classList.contains('open');
+  closeMenus();
+  if (wasOpen) return;
+  const anchor = e.currentTarget;
+  menu.classList.add('open');
+  positionMenu(menu, anchor);
+  openMenuEl = menu; openAnchor = anchor;
+}
+
+// Disable the browser right-click context menu (no "Inspect element" in the plugin).
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+document.addEventListener('click', (e) => {
+  if (openMenuEl && !openMenuEl.contains(e.target) &&
+      !e.target.closest('#plus-btn,#slash-btn,#modes-btn,.rewind-btn,#history-btn')) closeMenus();
+  // The slash menu isn't tracked by openMenuEl — close it on any click outside it,
+  // the input, or the slash button.
+  if (slashState.open && !e.target.closest('#slash-menu,#input,#slash-btn')) closeSlash();
+});
+
+// Re-pin the open menu/panel so it stays on-screen — snaps its right edge near the
+// viewport edge, only sliding left (and letting the far side clip) once the viewport
+// is narrower than the menu itself. Used on resize AND after async content changes
+// the menu's width (e.g. history "Loading…" → the real list).
+function clampOpenMenu() {
+  if (!openMenuEl || !openMenuEl.classList.contains('open')) return;
+  // Re-anchor to the trigger element so the menu tracks it (X and Y) as the view resizes.
+  if (openAnchor && document.body.contains(openAnchor)) { positionMenu(openMenuEl, openAnchor); return; }
+  // Anchorless popups (e.g. the inline / autocomplete): just keep them on-screen.
+  const m = openMenuEl, mw = m.offsetWidth, mh = m.offsetHeight;
+  const left = Math.max(8, Math.min(parseFloat(m.style.left) || 0, window.innerWidth - mw - 8));
+  const top = Math.max(8, Math.min(parseFloat(m.style.top) || 0, Math.max(8, window.innerHeight - mh - 8)));
+  m.style.left = left + 'px';
+  m.style.top = top + 'px';
+}
+window.addEventListener('resize', clampOpenMenu);
+
+/* textarea auto-grow + focus border + send/stop + Enter-to-send */
+const input = document.getElementById('input');
+const wrap = document.getElementById('input-wrap');
+const send = document.getElementById('send');
+let isStreaming = false;
+
+input.addEventListener('focus', () => wrap.classList.remove('blur'));
+input.addEventListener('blur',  () => wrap.classList.add('blur'));
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+  send.classList.toggle('disabled', input.value.trim() === '' && !isStreaming);
+  updateSlashMenu();
+});
+input.addEventListener('keydown', (e) => {
+  if (slashState.open && handleSlashKey(e)) return;
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!isStreaming) doSend(); }
+  else if (e.key === 'Escape' && isStreaming) { e.preventDefault(); doCancel(); }
+});
+
+send.addEventListener('click', () => { if (isStreaming) doCancel(); else doSend(); });
+
+function setStreaming(v) {
+  isStreaming = v;
+  send.classList.toggle('stop', v);
+  send.classList.toggle('disabled', !v && input.value.trim() === '');
+  send.innerHTML = v ? ICONS.STOP : ICONS.SEND;
+  input.placeholder = v ? 'Queue another message…' : 'Message Claude…';
+}
+
+function copyBlock(el) {
+  const block = el.closest('.code-block');
+  const text = block.querySelector('pre').innerText;
+  if (navigator.clipboard) navigator.clipboard.writeText(text).catch(()=>{});
+}
+
+const messagesEl = document.getElementById('messages');
+
+/* ===================== Tabs ===================== */
+let tabs = [], activeId = null, tabSeq = 0, streamTab = null;
+function activeTab() { return tabs.find(t => t.id === activeId) || null; }
+function streamPane() { return streamTab ? streamTab.pane : (activeTab() ? activeTab().pane : null); }
+function WELCOME_HTML() {
+  return '<div class="welcome"><div class="wc-logo">' + ICONS.SUNBURST + '</div>' +
+    '<div class="wc-h">Claude Code</div>' +
+    '<div class="wc-p">Ask anything about your workspace. Type <code class="ic">/</code> for commands.</div></div>';
+}
+function createTab(opts) {
+  opts = opts || {};
+  const id = 'tab' + (++tabSeq);
+  const pane = document.createElement('div'); pane.className = 'pane'; pane.dataset.id = id;
+  pane.innerHTML = WELCOME_HTML();
+  messagesEl.appendChild(pane);
+  tabs.push({ id, title: opts.title || 'Claude Code', sessionId: opts.sessionId || '', pane, titled: !!opts.titled });
+  switchTab(id);
+  return tabs[tabs.length - 1];
+}
+function switchTab(id) {
+  activeId = id;
+  tabs.forEach(t => { t.pane.style.display = (t.id === id) ? '' : 'none'; });
+  const t = activeTab();
+  if (t) document.getElementById('convo-title').textContent = t.title;
+  renderTabs();
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+function closeTab(id) {
+  const idx = tabs.findIndex(t => t.id === id);
+  if (idx < 0) return;
+  if (streamTab && streamTab.id === id && isStreaming) doCancel();
+  tabs[idx].pane.remove();
+  if (streamTab && streamTab.id === id) streamTab = null;
+  tabs.splice(idx, 1);
+  if (!tabs.length) { createTab(); return; }
+  if (activeId === id) switchTab(tabs[Math.min(idx, tabs.length - 1)].id);
+  else renderTabs();
+}
+function renderTabs() {
+  const c = document.getElementById('tabs'); if (!c) return;
+  c.innerHTML = '';
+  tabs.forEach(t => {
+    const el = document.createElement('div'); el.className = 'tab' + (t.id === activeId ? ' active' : '');
+    el.innerHTML = '<span class="ti">' + ICONS.SUNBURST + '</span><span class="tt"></span><span class="tab-close">' + ICONS.X + '</span>';
+    el.querySelector('.tt').textContent = t.title;
+    el.title = t.title;
+    el.onclick = (e) => { if (e.target.closest('.tab-close')) closeTab(t.id); else switchTab(t.id); };
+    c.appendChild(el);
+  });
+}
+function setTabTitle(t, raw) {
+  const title = ((stripContext(raw) || raw || '').trim().slice(0, 40)) || 'Claude Code';
+  t.title = title; t.titled = true;
+  if (t.id === activeId) document.getElementById('convo-title').textContent = title;
+  renderTabs();
+}
+function newSession() { closeMenus(); createTab(); input.focus(); }
+
+/* ===================== Chat (live, local) ===================== */
+let curTurn = null, curBody = null, curText = '';
+let curThink = null, curThinkText = '', thinkStart = 0, turnStart = 0;
+
+function clearWelcome(pane) { if (!pane) return; const w = pane.querySelector('.welcome'); if (w) w.remove(); }
+function scrollBottom() {
+  if (workingEl && workingEl.parentNode) workingEl.parentNode.appendChild(workingEl); // keep last
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+function addUserMessage(text, ctx) {
+  const pane = activeTab() ? activeTab().pane : messagesEl;
+  clearWelcome(pane);
+  const turn = document.createElement('div'); turn.className = 'turn';
+  const box = document.createElement('div'); box.className = 'user-msg';
+  if (ctx) {
+    const chip = document.createElement('span'); chip.className = 'ctx-chip';
+    chip.innerHTML = ICONS.CODEICON + ' <span></span>';
+    chip.querySelector('span').textContent = ctx;
+    box.appendChild(chip);
+  }
+  const body = document.createElement('div'); body.className = 'body'; body.textContent = text;
+  box.appendChild(body); turn.appendChild(box); pane.appendChild(turn);
+  scrollBottom();
+}
+// Lazily create the assistant turn — only when real content (text or a tool)
+// arrives. While Claude is just "thinking", nothing but the working sunburst shows.
+function ensureTurn() {
+  const pane = streamPane(); if (!pane) return null;
+  if (!curTurn || !curTurn.parentNode) {
+    clearWelcome(pane);
+    curTurn = document.createElement('div'); curTurn.className = 'turn';
+    pane.appendChild(curTurn);
+  }
+  return curTurn;
+}
+// Mark every .a-item that has a following .a-item so a connector line is drawn.
+function relinkTurn(turn) {
+  if (!turn) return;
+  const items = turn.querySelectorAll(':scope > .a-item');
+  items.forEach((el, i) => el.classList.toggle('linked', i < items.length - 1));
+}
+function appendAssistant(t) {
+  finalizeThink();
+  if (!ensureTurn()) return;
+  if (!curBody) {
+    curBody = document.createElement('div'); curBody.className = 'a-item streaming';
+    curBody.innerHTML = '<span class="dot"></span><span class="a-body"></span>';
+    curTurn.appendChild(curBody);
+  }
+  curText += t;
+  curBody.querySelector('.a-body').innerHTML = renderMarkdown(curText);
+  relinkTurn(curTurn);
+  scrollBottom();
+}
+function endAssistant() {
+  finalizeThink();
+  if (curBody) curBody.classList.remove('streaming');
+  if (curTurn && !curTurn.querySelector('.a-item') && curTurn.parentNode) curTurn.remove();
+  curTurn = null; curBody = null; curText = '';
+}
+/* Map a raw tool name to a short generic verb (like the VSCode panel — it never
+   shows internal names like "ToolSearch" or "mcp__eclipse__askUserQuestion"). */
+const TOOL_LABELS = {
+  read:'Read', write:'Write', edit:'Edit', multiedit:'Edit', notebookedit:'Edit',
+  opendiff:'Edit', closealldifftabs:'Edit', savedocument:'Save', openfile:'Open',
+  bash:'Run', bashoutput:'Run', killshell:'Run',
+  glob:'Search', grep:'Search', toolsearch:'Search', websearch:'Search',
+  findreferences:'Search', gettypehierarchy:'Search', getsymbolinfo:'Search',
+  webfetch:'Fetch', task:'Working', todowrite:'Planning', exitplanmode:'Planning',
+  askuserquestion:'Asking', runtests:'Testing',
+  getdiagnostics:'Checking', checkdocumentdirty:'Checking',
+  getcurrentselection:'Reading', getlatestselection:'Reading',
+  getopeneditors:'Reading', getworkspacefolders:'Reading', approvalprompt:'Permission'
+};
+function toolLabel(name) {
+  if (!name) return 'Working';
+  let n = name;
+  if (n.indexOf('mcp__') === 0) { const p = n.split('__'); n = p[p.length - 1]; } // strip mcp__server__
+  const key = n.toLowerCase();
+  if (TOOL_LABELS[key]) return TOOL_LABELS[key];
+  // unknown: humanize (split camelCase/underscores), capitalized — never the raw name
+  const words = n.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Working';
+}
+/* Build a tool line (+ inline diff inside the same .a-item so the connector spans it).
+   Shared by live streaming (addToolLine) and history reconstruction. */
+function makeToolLine(name, input) {
+  input = input || {};
+  const path = input.file_path || input.path || input.notebook_path || '';
+  const detail = path || input.command || input.pattern || input.query || input.url || input.prompt || '';
+  const line = document.createElement('div'); line.className = 'a-item tool-line';
+  line.innerHTML = '<span class="dot"></span><span class="tname"></span> <span class="tpath"></span>';
+  line.querySelector('.tname').textContent = toolLabel(name);   // generic label, not the raw name
+  line.querySelector('.tpath').textContent = detail;
+  const diff = buildToolDiff(name, input);
+  if (diff) {
+    const sub = document.createElement('div'); sub.className = 'tool-sub'; sub.textContent = diff.summary;
+    line.appendChild(sub);
+    line.appendChild(diff.block);
+  }
+  return line;
+}
+function addToolLine(payload) {
+  finalizeThink();
+  if (!ensureTurn()) return;
+  let info; try { info = JSON.parse(payload); } catch (e) { info = { name: payload, input: {} }; }
+  curTurn.appendChild(makeToolLine(info.name || 'tool', info.input || {}));
+  // End the current text body so any text Claude emits AFTER this tool starts a new
+  // body BELOW the tool line (otherwise the closing "Done…" merges in above the edits).
+  curBody = null; curText = '';
+  relinkTurn(curTurn);
+  scrollBottom();
+}
+/* Minimal LCS line diff (guarded against pathological sizes). */
+function lineDiff(oldStr, newStr) {
+  const a = (oldStr || '').split('\n'), b = (newStr || '').split('\n');
+  const n = a.length, m = b.length;
+  if (n * m > 250000) { // too big for O(n*m) — degrade to remove-all / add-all
+    return a.map(l => ['del', l]).concat(b.map(l => ['add', l]));
+  }
+  const dp = []; for (let i = 0; i <= n; i++) dp.push(new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push(['ctx', a[i]]); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push(['del', a[i]]); i++; }
+    else { out.push(['add', b[j]]); j++; }
+  }
+  while (i < n) out.push(['del', a[i++]]);
+  while (j < m) out.push(['add', b[j++]]);
+  return out;
+}
+function buildToolDiff(name, input) {
+  const n = (name || '').toLowerCase();
+  let rows = null, added = 0, removed = 0;
+  if (n === 'write' && typeof input.content === 'string') {
+    rows = input.content.replace(/\n$/, '').split('\n').map(l => ['add', l]); added = rows.length;
+  } else if (typeof input.old_string === 'string' && typeof input.new_string === 'string') {
+    rows = lineDiff(input.old_string, input.new_string);
+  } else if (n === 'multiedit' && Array.isArray(input.edits)) {
+    rows = [];
+    input.edits.forEach((e, i) => {
+      if (i) rows.push(['gap', '']);
+      lineDiff(e.old_string || '', e.new_string || '').forEach(r => rows.push(r));
+    });
+  }
+  if (!rows || !rows.length) return null;
+  rows.forEach(r => { if (r[0] === 'add') added++; else if (r[0] === 'del') removed++; });
+  const block = document.createElement('div'); block.className = 'code-block edit';
+  const pre = document.createElement('pre');
+  const MAX = 40;
+  rows.slice(0, MAX).forEach(r => {
+    const ln = document.createElement('span');
+    ln.className = 'ln mono' + (r[0] === 'add' ? ' add' : r[0] === 'del' ? ' del' : r[0] === 'gap' ? ' meta' : '');
+    ln.textContent = r[0] === 'gap' ? '⋯' : r[1];
+    pre.appendChild(ln);
+  });
+  if (rows.length > MAX) {
+    const ln = document.createElement('span'); ln.className = 'ln meta mono';
+    ln.textContent = '⋯ ' + (rows.length - MAX) + ' more line' + (rows.length - MAX > 1 ? 's' : '');
+    pre.appendChild(ln);
+  }
+  block.appendChild(pre);
+  const parts = [];
+  if (added) parts.push('Added ' + added + ' line' + (added > 1 ? 's' : ''));
+  if (removed) parts.push('Removed ' + removed + ' line' + (removed > 1 ? 's' : ''));
+  return { block, summary: parts.join(', ') || 'Updated' };
+}
+
+/* Thinking marker. `claude -p` redacts the reasoning text from stream-json (only
+   an encrypted signature streams — never the actual thoughts), so there is nothing
+   to expand. We show just "Thinking…" → "Thought for Ns", timed from turn start,
+   with no (dead) chevron. */
+function ensureThink() {
+  if (!ensureTurn()) return null;
+  if (!curThink) {
+    thinkStart = turnStart || Date.now();
+    curThink = document.createElement('div'); curThink.className = 'a-item think muted live';
+    curThink.innerHTML = '<span class="dot gray"></span>'
+      + '<span class="think-head"><span class="think-label">Thinking…</span></span>';
+    curTurn.appendChild(curThink);
+    renderThinkLabel();
+  }
+  return curThink;
+}
+function appendThinking(t) {
+  if (!ensureThink()) return;   // text is always redacted; just surface the marker
+  relinkTurn(curTurn);
+  scrollBottom();
+}
+function finalizeThink() {
+  if (curThink) {
+    const secs = Math.max(1, Math.round((Date.now() - (thinkStart || Date.now())) / 1000));
+    const lbl = curThink.querySelector('.think-label');
+    if (lbl) lbl.textContent = 'Thought for ' + secs + 's';
+    curThink.classList.remove('live');
+  }
+  curThink = null; curThinkText = '';
+}
+function addAssistantStatic(text) {
+  const pane = activeTab() ? activeTab().pane : messagesEl;
+  clearWelcome(pane);
+  const turn = document.createElement('div'); turn.className = 'turn';
+  const item = document.createElement('div'); item.className = 'a-item';
+  item.innerHTML = '<span class="dot"></span><span class="a-body"></span>';
+  item.querySelector('.a-body').innerHTML = renderMarkdown(text);
+  turn.appendChild(item); pane.appendChild(turn);
+}
+function addSystem(text) {
+  const pane = streamPane() || (activeTab() ? activeTab().pane : messagesEl);
+  if (!pane) return;
+  const turn = document.createElement('div'); turn.className = 'turn';
+  turn.innerHTML = '<div class="a-item muted"><span class="dot gray"></span><span class="sys"></span></div>';
+  turn.querySelector('.sys').textContent = text;
+  pane.appendChild(turn); scrollBottom();
+}
+
+function doSend() {
+  const text = input.value.trim();
+  if (!text || isStreaming) return;
+  if (text.startsWith('/') && handleSlashCommand(text)) { input.value = ''; input.style.height = 'auto'; closeSlash(); return; }
+  const t = activeTab(); if (!t) return;
+  streamTab = t;
+  const withCtx = !!(ctxEnabled && ctxData && ctxData.fileName);
+  addUserMessage(text, withCtx ? ctxChipLabel() : null);
+  if (!t.titled) setTabTitle(t, text);          // title updates immediately on first send
+  input.value = ''; input.style.height = 'auto'; closeSlash();
+  setStreaming(true);
+  showWorking();
+  if (window._sendToJava) window._sendToJava(text, withCtx, t.sessionId || '', permMode, effort, curModel, thinkingOn ? '1' : '0');
+}
+function doCancel() {
+  if (window._cancelRequest) window._cancelRequest();
+  hideWorking(); endAssistant(); setStreaming(false);
+  addSystem('Request cancelled.');
+}
+
+/* Java → JS streaming callbacks */
+window.onStreamStart   = () => { setStreaming(true); };
+window.onThinking      = (t) => { appendThinking(t); };
+window.onStreamText    = (t) => { appendAssistant(t); };
+window.onStreamEnd     = () => { hideWorking(); endAssistant(); setStreaming(false); };
+window.onToolStart     = (n) => { addToolLine(n); };
+window.onToolEnd       = () => {};
+window.onSystemMessage = () => {};   /* backend system/init noise — ignored */
+window.onError         = (m) => { hideWorking(); endAssistant(); setStreaming(false); addSystem('⚠ ' + m); };
+window.onStatusUpdate  = () => {};
+window.onSessionId     = (id) => { if (streamTab && id) streamTab.sessionId = id; };
+
+/* A "User answered:" card left in the flow (at the decision point) when the user
+   types an instruction instead of accepting/rejecting. */
+function addAnswered(text, pane) {
+  pane = pane || streamPane() || (activeTab() ? activeTab().pane : null);
+  if (!pane) return;
+  const turn = document.createElement('div'); turn.className = 'turn';
+  const card = document.createElement('div'); card.className = 'answered';
+  const h = document.createElement('div'); h.className = 'ans-head'; h.textContent = 'User answered:';
+  const b = document.createElement('div'); b.className = 'ans-body'; b.textContent = text;
+  card.appendChild(h); card.appendChild(b); turn.appendChild(card); pane.appendChild(turn);
+}
+/* After the user answers a card, end the current assistant turn so Claude's
+   follow-up response streams into a NEW turn BELOW the answer card — not into the
+   turn that was open above it (which would push the answer card to the bottom). */
+function startFreshTurn() {
+  finalizeThink();
+  curTurn = null; curBody = null; curText = '';
+  showWorking();
+}
+
+/* ---- permission decision card (claude --permission-prompt-tool) ---- */
+window.onApprovalRequest = function(reqId, toolName, detail) {
+  const pane = streamPane() || (activeTab() ? activeTab().pane : null);
+  if (!pane) { if (window._decide) window._decide(reqId, 'deny', ''); return; }
+  hideWorking();
+  const isEdit = /edit|write|multiedit|str_replace|notebook|create/i.test(toolName || '');
+  const dock = document.createElement('div'); dock.className = 'turn card-dock';
+  const card = document.createElement('div'); card.className = 'decision';
+
+  const q = document.createElement('div'); q.className = 'dec-q';
+  if (isEdit && detail) {
+    q.appendChild(document.createTextNode('Make this edit to '));
+    const c = document.createElement('code'); c.textContent = detail; q.appendChild(c);
+    q.appendChild(document.createTextNode('?'));
+  } else if (isEdit) {
+    q.textContent = 'Make this edit?';
+  } else {
+    q.appendChild(document.createTextNode('Allow ' + (toolName || 'this action') + (detail ? ' ' : '')));
+    if (detail) { const c = document.createElement('code'); c.textContent = detail; q.appendChild(c); }
+    q.appendChild(document.createTextNode('?'));
+  }
+  card.appendChild(q);
+
+  let resolved = false;
+  function decide(d, msg) {
+    if (resolved) return; resolved = true;
+    document.removeEventListener('keydown', onKey, true);
+    if (window._decide) window._decide(reqId, d, msg || '');
+    dock.remove();                              // card disappears — no Approved/Declined trace
+    if (d === 'deny' && msg) {
+      addAnswered(msg, pane); startFreshTurn();  // instruction stays; reply goes below
+    } else {
+      // Process continues after the decision — start a fresh body below the edits
+      // and re-show the working indicator so the user sees activity again.
+      finalizeThink(); curBody = null; curText = '';
+      showWorking();
+    }
+    scrollBottom();
+  }
+
+  const opts = [['allow', 'Yes'], ['allowAll', 'Yes, allow all edits this session'], ['deny', 'No']];
+  opts.forEach(([d, label], i) => {
+    const opt = document.createElement('div'); opt.className = 'dec-opt' + (i === 0 ? ' sel' : '');
+    opt.setAttribute('data-d', d);
+    opt.innerHTML = '<span class="num"></span><span class="dec-lbl"></span>';
+    opt.querySelector('.num').textContent = (i + 1);
+    opt.querySelector('.dec-lbl').textContent = label;
+    opt.onclick = () => decide(d);
+    opt.onmouseenter = () => card.querySelectorAll('.dec-opt.sel').forEach(e => e.classList.remove('sel'));
+    card.appendChild(opt);
+  });
+
+  const instead = document.createElement('div'); instead.className = 'dec-instead';
+  instead.innerHTML = '<span class="num">4</span>';
+  const inp = document.createElement('input'); inp.type = 'text';
+  inp.placeholder = 'Tell Claude what to do instead';
+  inp.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); const v = inp.value.trim(); if (v) decide('deny', v); }
+    else if (e.key === 'Escape') { e.preventDefault(); decide('deny', ''); }
+  };
+  instead.appendChild(inp); card.appendChild(instead);
+
+  const esc = document.createElement('div'); esc.className = 'dec-esc'; esc.textContent = 'Esc to cancel';
+  card.appendChild(esc);
+
+  // Number-key shortcuts (1/2/3) and Esc while the card is showing.
+  function onKey(e) {
+    if (resolved || document.activeElement === inp) return;
+    if (e.key === '1') { e.preventDefault(); decide('allow'); }
+    else if (e.key === '2') { e.preventDefault(); decide('allowAll'); }
+    else if (e.key === '3') { e.preventDefault(); decide('deny', ''); }
+    else if (e.key === 'Escape') { e.preventDefault(); decide('deny', ''); }
+  }
+  document.addEventListener('keydown', onKey, true);
+
+  dock.appendChild(card); pane.appendChild(dock);
+  scrollBottom();
+};
+
+/* ---- AskUserQuestion card (single/multi question, options + Other) ---- */
+window.onAskQuestion = function(reqId, questionsJson) {
+  const pane = streamPane() || (activeTab() ? activeTab().pane : null);
+  let questions = [];
+  try { questions = JSON.parse(questionsJson) || []; } catch (e) {}
+  if (!pane || !questions.length) { if (window._answerQuestion) window._answerQuestion(reqId, '[]'); return; }
+  hideWorking();
+
+  const state = questions.map(() => ({ choice: null, other: '' })); // choice = option index or 'other'
+  let activeQ = 0, resolved = false;
+  const dock = document.createElement('div'); dock.className = 'turn card-dock';
+  const card = document.createElement('div'); card.className = 'question-card';
+  dock.appendChild(card);
+
+  function answeredText(i) {
+    const st = state[i], q = questions[i];
+    if (st.choice === 'other') return st.other.trim();
+    if (st.choice != null && q.options[st.choice]) return q.options[st.choice].label;
+    return '';
+  }
+  function allAnswered() {
+    return state.every(st => st.choice === 'other' ? !!st.other.trim() : st.choice != null);
+  }
+  function finish() {
+    if (resolved || !allAnswered()) return; resolved = true;
+    document.removeEventListener('keydown', onKey, true);
+    const answers = questions.map((q, i) => ({
+      header: q.header || q.question || ('Question ' + (i + 1)),
+      question: q.question || '', answer: answeredText(i)
+    }));
+    if (window._answerQuestion) window._answerQuestion(reqId, JSON.stringify(answers));
+    dock.remove();
+    const summary = answers.map(a => questions.length > 1 ? (a.header + ': ' + a.answer) : a.answer).join('\n');
+    addAnswered(summary, pane); startFreshTurn(); scrollBottom();
+  }
+  function cancel() {
+    if (resolved) return; resolved = true;
+    document.removeEventListener('keydown', onKey, true);
+    if (window._answerQuestion) window._answerQuestion(reqId, '[]');
+    dock.remove(); scrollBottom();
+  }
+
+  function render() {
+    card.innerHTML = '';
+    const tabs = document.createElement('div'); tabs.className = 'q-tabs';
+    questions.forEach((q, i) => {
+      if (questions.length === 1 && i > 0) return;
+      const t = document.createElement('div'); t.className = 'q-tab' + (i === activeQ ? ' active' : '');
+      t.textContent = q.header || ('Question ' + (i + 1));
+      t.onclick = () => { activeQ = i; render(); };
+      tabs.appendChild(t);
+    });
+    const x = document.createElement('div'); x.className = 'q-x'; x.innerHTML = ICONS.X; x.onclick = cancel;
+    tabs.appendChild(x);
+    card.appendChild(tabs);
+    card.appendChild(Object.assign(document.createElement('div'), { className: 'q-sep' }));
+
+    const q = questions[activeQ];
+    const qt = document.createElement('div'); qt.className = 'q-text'; qt.textContent = q.question || '';
+    card.appendChild(qt);
+
+    const submit = document.createElement('div');
+    (q.options || []).forEach((opt, oi) => {
+      const row = document.createElement('div'); row.className = 'q-opt' + (state[activeQ].choice === oi ? ' sel' : '');
+      const radio = document.createElement('div'); radio.className = 'q-radio';
+      const txt = document.createElement('div'); txt.className = 'q-otext';
+      const title = document.createElement('div'); title.className = 'q-otitle'; title.textContent = opt.label || '';
+      txt.appendChild(title);
+      if (opt.description) { const d = document.createElement('div'); d.className = 'q-odesc'; d.textContent = opt.description; txt.appendChild(d); }
+      row.appendChild(radio); row.appendChild(txt);
+      row.onclick = () => {
+        state[activeQ].choice = oi;
+        // auto-advance to the next question until the last one (then stay so they can submit)
+        if (activeQ < questions.length - 1) activeQ++;
+        render();
+      };
+      card.appendChild(row);
+    });
+    // Other
+    const orow = document.createElement('div'); orow.className = 'q-opt' + (state[activeQ].choice === 'other' ? ' sel' : '');
+    orow.appendChild(Object.assign(document.createElement('div'), { className: 'q-radio' }));
+    const otxt = document.createElement('div'); otxt.className = 'q-otext';
+    otxt.appendChild(Object.assign(document.createElement('div'), { className: 'q-otitle', textContent: 'Other' }));
+    orow.appendChild(otxt);
+    orow.onclick = () => { state[activeQ].choice = 'other'; render();
+      setTimeout(() => { const i = card.querySelector('.q-other-in input'); if (i) i.focus(); }, 0); };
+    card.appendChild(orow);
+    if (state[activeQ].choice === 'other') {
+      const oin = document.createElement('div'); oin.className = 'q-other-in';
+      const inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = 'Type your answer'; inp.value = state[activeQ].other;
+      inp.oninput = () => { state[activeQ].other = inp.value; submit.classList.toggle('ready', allAnswered()); };
+      inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(); } };
+      oin.appendChild(inp); card.appendChild(oin);
+    }
+    submit.className = 'q-submit' + (allAnswered() ? ' ready' : '');
+    submit.innerHTML = '<span class="num">1</span><span>Submit answers</span>';
+    submit.onclick = finish;
+    card.appendChild(submit);
+    card.appendChild(Object.assign(document.createElement('div'), { className: 'q-esc', textContent: 'Esc to cancel' }));
+  }
+  function onKey(e) {
+    if (resolved) return;
+    if (e.key === 'Escape' && (!document.activeElement || document.activeElement.tagName !== 'INPUT')) { e.preventDefault(); cancel(); }
+  }
+  document.addEventListener('keydown', onKey, true);
+  render(); pane.appendChild(dock); scrollBottom();
+};
+
+/* ---- working indicator (sunburst + gerund) ---- */
+const GERUNDS = [
+  'Absquatulating','Accomplishing','Actioning','Actualizing','Architecting','Baking','Beaming','Beboppin\'','Befuddling',
+  'Billowing','Blanching','Bloviating','Boogieing','Boondoggling','Booping','Bootstrapping','Brainstorming',
+  'Brainrotting','Brewing','Bunning','Burrowing','Calculating','Canoodling','Caramelizing','Cascading',
+  'Catapulting','Cerebrating','Channeling','Channelling','Chock-a-blocking','Choreographing','Churning','Clauding',
+  'Coalescing','Cogitating','Combobulating','Compartmentalizing','Composing','Computing','Concocting','Confabulating','Considering',
+  'Contemplating','Cooking','Coruscating','Crafting','Creating','Crunching','Crystallizing','Cultivating','Deciphering',
+  'Deliberating','Determining','Dilly-dallying','Discombobulating','Doing','Doodling','Drizzling','Ebbing',
+  'Effecting','Effervescing','Elucidating','Embellishing','Enchanting','Envisioning','Evaporating','Fanum taxing','Fermenting',
+  'Fiddle-faddling','Finagling','Fishmongering','Flabbergasting','Flambéing','Flibbertigibbeting','Flowing','Flummoxing','Fluttering',
+  'Fluxing','Forging','Forming','Frolicking','Frosting','Gallivanting','Galloping','Garnishing',
+  'Generating','Gesticulating','Germinating','Gerrymandering','Gibbergaberring','Gitifying','Gooning','Grooving',
+  'Gusting','Harmonizing','Hashing','Hatching','Herding','Honking','Hullaballooing','Hyperspacing',
+  'Hyperenthusiasticating','Ideating','Imagining','Improvising','Incubating','Inferring','Infusing','Intellectualizing',
+  'Ionizing','Jitterbugging','Journaling','Julienning','Kneading','Leavening','Levitating','Lollygagging',
+  'Malding','Manifesting','Marinating','Meandering','Meowing','Metamorphosing','Mewing','Misting','Moonwalking',
+  'Moseying','Mulling','Mustering','Musing','Nebulizing','Nesting','Newspapering','Noodling',
+  'Nucleating','Orbiting','Orchestrating','Osmosing','Perambulating','Percolating','Perplexing','Perusing',
+  'Philosophising','Photosynthesizing','Pollinating','Pondering','Pontificating','Pouncing','Precipitating','Prestidigitating',
+  'Processing','Proofing','Propagating','Puttering','Puzzling','Quantumizing','Razzle-dazzling','Razzmatazzing',
+  'Ratiocinating','Recombobulating','Reticulating','Rizzing','Rizzmastering','Roosting','Ruminating','Sautéing','Scampering',
+  'Schlepping','Scurrying','Seasoning','Shenaniganing','Shimmying','Simmering','Skedaddling','Sketching',
+  'Skibidirizzing','Skitterscattering','Skylarking','Slithering','Smooshing','Sock-hopping','Sous-viding','Spelunking','Spinning',
+  'Sprouting','Stewing','Sublimating','Susurrating','Swirling','Swooping','Symbioting','Synthesizing','Tempering',
+  'Thinking','Thundering','Tinkering','Tomfoolering','Topsy-turvying','Transfiguring','Transmogrifying','Transmuting','Twisting',
+  'Undulating','Unfurling','Unravelling','Vibing','Waddling','Wandering','Warping','Whatchamacalliting',
+  'Whirlpooling','Whirring','Whisking','Wibbling','Wewertsing','Woolgathering','Working','Wrangling','Zambasdting','Zesting',
+  'Zigzagging','Zooming'
+];
+let workingEl = null, workingGerund = '', lastTokens = 0;
+function renderThinkLabel() {
+  if (!curThink) return;
+  const lbl = curThink.querySelector('.think-label');
+  if (lbl) lbl.textContent = 'Thinking…' + (lastTokens > 0 ? ' · ' + lastTokens.toLocaleString() + ' tokens' : '');
+}
+function showWorking() {
+  hideWorking();
+  turnStart = Date.now();
+  lastTokens = 0;
+  workingGerund = GERUNDS[Math.floor(Math.random() * GERUNDS.length)];
+  const pane = streamPane(); if (!pane) return;
+  workingEl = document.createElement('div'); workingEl.className = 'turn';
+  workingEl.innerHTML = '<div class="working"><span class="sb">' + ICONS.SUNBURST + '</span><span></span></div>';
+  workingEl.querySelector('.working span:last-child').textContent = workingGerund + '…';
+  pane.appendChild(workingEl);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+function hideWorking() { if (workingEl) { workingEl.remove(); workingEl = null; } }
+/* Live token count shown beside the "Thinking…" marker (real output tokens via the
+   CLI partial-message stream), removed once thinking finalizes to "Thought for Ns". */
+window.onTokens = function(n) {
+  n = parseInt(n, 10) || 0;
+  if (n > lastTokens) lastTokens = n;
+  renderThinkLabel();
+};
+
+/* ---- usage warning banner (from the CLI's rate_limit_event) ---- */
+const USAGE_WARN_THRESHOLD = 75;   // percent, when the CLI exposes a usage %
+let usageDismissed = false;
+function resetIn(ts) {
+  const secs = (ts * 1000 - Date.now()) / 1000;
+  if (secs <= 0) return 'soon';
+  if (secs < 3600) return 'in ' + Math.max(1, Math.round(secs / 60)) + 'm';
+  if (secs < 86400) return 'in ' + Math.round(secs / 3600) + 'h';
+  return 'in ' + Math.round(secs / 86400) + 'd';
+}
+window.onRateLimit = function(json) {
+  const el = document.getElementById('usage-warn'); if (!el) return;
+  let info = {}; try { info = JSON.parse(json) || {}; } catch (e) { return; }
+  // Use a usage % if the CLI provides one (field name varies / may be absent).
+  let pct = null;
+  for (const k of ['percentUsed', 'usagePercent', 'percent', 'fractionUsed', 'usedFraction']) {
+    if (typeof info[k] === 'number') { pct = info[k] <= 1 ? Math.round(info[k] * 100) : Math.round(info[k]); break; }
+  }
+  const status = info.status || 'allowed';
+  const reached = /reject|exceed|block|limit/i.test(status);
+  const warn = reached || (pct != null && pct >= USAGE_WARN_THRESHOLD) || /warn|approach/i.test(status) || info.isUsingOverage === true;
+  if (!warn || usageDismissed) { el.classList.remove('show'); return; }
+  const scope = /five|hour|^5/i.test(info.rateLimitType || '') ? '5-hour limit' : 'weekly limit';
+  const resetTxt = info.resetsAt ? ' · resets ' + resetIn(info.resetsAt) : '';
+  const msg = (pct != null) ? ("You've used " + pct + '% of your ' + scope)
+            : (reached ? "You've reached your " + scope : "You're approaching your " + scope);
+  el.innerHTML = '<span class="uw-txt"></span><a href="https://claude.ai/settings/usage" target="_blank">View usage</a><span class="uw-x">' + ICONS.X + '</span>';
+  el.querySelector('.uw-txt').textContent = msg + resetTxt + ' · ';
+  el.querySelector('.uw-x').onclick = () => { usageDismissed = true; el.classList.remove('show'); };
+  el.classList.add('show');
+};
+
+/* ---- file context chip ---- */
+let ctxData = { fileName: null };
+let ctxEnabled = true;
+window.onContextChanged = function(c) { ctxData = c || { fileName: null }; updateCtxChip(); };
+try { ctxData = JSON.parse(window._currentContext()); } catch (e) {}
+function ctxBaseName() {
+  return ctxData && ctxData.fileName ? ctxData.fileName.split(/[\\/]/).pop() : '';
+}
+function ctxLabelText() {
+  if (!ctxData || !ctxData.fileName) return 'No file open';
+  const base = ctxBaseName();
+  if (ctxData.hasSelection) {
+    const n = Math.max(1, (ctxData.endLine || 0) - (ctxData.startLine || 0) + 1);
+    return base + ' - ' + n + ' line' + (n > 1 ? 's' : '') + ' selected';
+  }
+  return base;
+}
+function ctxChipLabel() {
+  if (!ctxData || !ctxData.fileName) return null;
+  const base = ctxBaseName();
+  return ctxData.hasSelection ? (base + ':' + ctxData.startLine + '-' + ctxData.endLine) : base;
+}
+function updateCtxChip() {
+  const chip = document.getElementById('ctx-chip');
+  const label = document.getElementById('ctx-label');
+  if (!chip || !label) return;
+  const has = !!(ctxData && ctxData.fileName);
+  label.textContent = ctxLabelText();
+  chip.classList.toggle('empty', !has);
+  chip.classList.toggle('off', has && !ctxEnabled);
+  const ic = document.getElementById('ctx-ic');
+  if (ic) ic.innerHTML = (has && !ctxEnabled) ? ICONS.EYEOFF : ICONS.FILEICON;
+}
+function toggleContext() {
+  if (!ctxData || !ctxData.fileName) return;
+  ctxEnabled = !ctxEnabled;
+  updateCtxChip();
+}
+
+/* ---- permission mode (the "Ask before edits" dropdown) ---- */
+let permMode = 'default';
+function selectMode(el) {
+  permMode = el.getAttribute('data-mode') || 'default';
+  const lbl = el.querySelector('.lbl').textContent;
+  const iconKey = el.getAttribute('data-icon') || 'HAND';
+  const lblEl = document.getElementById('modes-lbl'); if (lblEl) lblEl.textContent = lbl;
+  const icEl = document.getElementById('modes-ic'); if (icEl) icEl.innerHTML = ICONS[iconKey] || ICONS.HAND;
+  document.querySelectorAll('#modes-menu .item .check').forEach(c => c.style.visibility = 'hidden');
+  const chk = el.querySelector('.check'); if (chk) chk.style.visibility = '';
+  closeMenus();
+}
+
+/* ---- effort meter (claude --effort) ---- */
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const EFFORT_LABELS = ['Low', 'Medium', 'High', 'X-High', 'Max'];
+let effortIdx = 2;                       // default: high
+let effort = EFFORTS[effortIdx];
+function setEffort(idx) {
+  effortIdx = Math.max(0, Math.min(EFFORTS.length - 1, idx));
+  effort = EFFORTS[effortIdx];
+  const pct = (effortIdx / (EFFORTS.length - 1)) * 100;
+  // both effort sliders (modes menu + actions menu) are an intended redundancy — keep them synced
+  document.querySelectorAll('.eff-fill').forEach(el => el.style.width = pct + '%');
+  document.querySelectorAll('.eff-knob').forEach(el => el.style.left = pct + '%');
+  document.querySelectorAll('.eff-lbl').forEach(el => el.textContent = '(' + EFFORT_LABELS[effortIdx] + ')');
+}
+let effortDragging = false, effortDragSlider = null;
+function effortFromX(slider, clientX) {
+  const r = slider.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+  setEffort(Math.round(ratio * (EFFORTS.length - 1)));   // snap to nearest stop
+}
+function effortDown(e) {
+  e.stopPropagation(); e.preventDefault();   // click-drag without closing the menu / selecting text
+  effortDragging = true; effortDragSlider = e.currentTarget;
+  effortFromX(effortDragSlider, e.clientX);
+}
+document.addEventListener('mousemove', e => { if (effortDragging && effortDragSlider) effortFromX(effortDragSlider, e.clientX); });
+document.addEventListener('mouseup', () => { effortDragging = false; effortDragSlider = null; });
+
+/* ---- model chooser (claude --model) ---- */
+const MODELS = [
+  { id: '',           label: 'Default (recommended)', desc: 'Latest model · efficient for routine tasks' },
+  { id: 'sonnet',     label: 'Sonnet',                desc: 'Sonnet · efficient for routine tasks' },
+  { id: 'sonnet[1m]', label: 'Sonnet (1M context)',   desc: '1M context · draws from usage credits' },
+  { id: 'opus',       label: 'Opus',                  desc: 'Best for everyday, complex tasks · ~2× usage vs Sonnet' },
+  { id: 'haiku',      label: 'Haiku',                 desc: 'Fastest for quick answers' },
+  { id: '__fable',    label: 'Fable (disabled)',      desc: 'Claude Fable 5 is currently unavailable.', disabled: true }
+];
+let curModel = '';      // '' = Default
+let customModel = '';
+function initModelConfig() {
+  try { const c = JSON.parse(window._modelConfig ? window._modelConfig() : '{}'); customModel = (c && c.customModel) || ''; } catch (e) {}
+  if (customModel) {
+    // surface a --model from the plugin's preference args, selected by default
+    MODELS.splice(1, 0, { id: customModel, label: customModel, desc: 'From your plugin settings' });
+    curModel = customModel;
+  }
+  updateModelLabel();
+}
+function modelLabelFor(id) {
+  const m = MODELS.find(x => x.id === id);
+  return m ? m.label.replace(' (recommended)', '') : (id || 'Default');
+}
+function updateModelLabel() {
+  const el = document.getElementById('cur-model');
+  if (el) el.textContent = '(' + modelLabelFor(curModel) + ')';
+}
+function openModelChooser(e) {
+  if (e) e.stopPropagation();
+  closeMenus();
+  renderModelList();
+  const menu = document.getElementById('model-menu');
+  const anchor = document.getElementById('slash-btn');
+  menu.classList.add('open');
+  positionMenu(menu, anchor);
+  openMenuEl = menu; openAnchor = anchor;
+}
+function renderModelList() {
+  const list = document.getElementById('model-list');
+  list.innerHTML = '';
+  MODELS.forEach(m => {
+    const it = document.createElement('div');
+    it.className = 'item' + (m.disabled ? ' disabled' : '');
+    it.innerHTML = '<div class="m-txt"><span class="m-title"></span><span class="m-desc"></span></div>'
+      + (m.id === curModel && !m.disabled ? '<span class="check">' + ICONS.CHECK + '</span>' : '');
+    it.querySelector('.m-title').textContent = m.label;
+    it.querySelector('.m-desc').textContent = m.desc;
+    if (!m.disabled) it.onclick = () => selectModel(m.id);
+    list.appendChild(it);
+  });
+}
+function selectModel(id) { curModel = id; updateModelLabel(); closeMenus(); }
+
+/* ---- thinking toggle (off => MAX_THINKING_TOKENS=0) ---- */
+let thinkingOn = true;
+function updateThinkingCheck() {
+  const chk = document.getElementById('think-check');
+  if (chk) chk.style.visibility = thinkingOn ? '' : 'hidden';
+}
+function toggleThinking(e) { if (e) e.stopPropagation(); thinkingOn = !thinkingOn; updateThinkingCheck(); }
+
+/* ---- Account & usage window ---- */
+function openAccount() {
+  closeMenus();
+  let acc = {};
+  try { acc = JSON.parse(window._accountInfo ? window._accountInfo() : '{}'); } catch (e) {}
+  const win = document.getElementById('account-win');
+  function row(k, v) { return v ? '<div class="aw-row"><span class="k">' + k + '</span><span class="v">' + escapeHtml(v) + '</span></div>' : ''; }
+  let h = '<div class="aw-head"><span class="t">Account &amp; Usage</span><span class="x" onclick="closeAccount()">' + ICONS.X + '</span></div>';
+  h += '<div class="aw-sec">Account</div>';
+  h += row('Auth method', acc.authMethod);
+  h += row('Email', acc.email);
+  h += row('Organization', acc.organization);
+  h += row('Plan', acc.plan);
+  if (!acc.email) h += '<div class="aw-note">Not signed in, or account info is unavailable.</div>';
+  h += '<div class="aw-sec">Usage</div>';
+  h += '<div class="aw-note">Usage limits live on your Claude account — the CLI doesn\'t expose the percentages here. <a href="https://claude.ai/settings/usage" target="_blank">Manage usage on claude.ai</a></div>';
+  win.innerHTML = h;
+  document.getElementById('account-overlay').classList.add('open');
+}
+function closeAccount() { document.getElementById('account-overlay').classList.remove('open'); }
+
+/* ---- slash commands inside the actions menu ---- */
+function buildActionsSlash() {
+  const c = document.getElementById('actions-slash');
+  if (!c) return;
+  c.innerHTML = '';
+  SLASH_COMMANDS.forEach(cmd => {
+    const it = document.createElement('div'); it.className = 'item';
+    it.innerHTML = '<span class="cmd"></span><span class="d"></span>';
+    it.querySelector('.cmd').textContent = cmd.cmd;
+    it.querySelector('.d').textContent = cmd.desc;
+    it.onclick = () => { closeMenus(); applySlash(cmd.cmd); };
+    c.appendChild(it);
+  });
+}
+
+/* Initialise: first tab + context chip + effort/model/thinking + slash list. */
+createTab();
+updateCtxChip();
+setEffort(effortIdx);
+initModelConfig();
+updateThinkingCheck();
+// buildActionsSlash() is called at the end of the script — it needs SLASH_COMMANDS,
+// which is declared further down.
+
+/* ===================== History (past conversations) ===================== */
+function relTime(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso); if (isNaN(t)) return '';
+  const s = Math.floor((Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  if (s < 604800) return Math.floor(s / 86400) + 'd ago';
+  return new Date(t).toLocaleDateString();
+}
+/* Strip the editor-context preamble AND Claude Code's internal command/meta wrappers
+   so loaded history shows the user's actual text — never raw <ide_selection>,
+   <command-name>, <local-command-caveat>, <local-command-stdout>, … tags. */
+function stripMeta(s) {
+  if (!s) return '';
+  return s
+    .replace(/<ide_selection\b[^>]*>[\s\S]*?<\/ide_selection>/gi, '')
+    .replace(/<ide_context\b[^>]*\/>/gi, '')
+    .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/gi, '')
+    .replace(/<command-message>[\s\S]*?<\/command-message>/gi, '')
+    .replace(/<command-args>[\s\S]*?<\/command-args>/gi, '')
+    .replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/gi, '')
+    .replace(/<command-stdout>[\s\S]*?<\/command-stdout>/gi, '')
+    .replace(/<command-contents>[\s\S]*?<\/command-contents>/gi, '')
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '')
+    // keep the command itself (e.g. /usage) but drop the tag
+    .replace(/<command-name>([\s\S]*?)<\/command-name>/gi, '$1')
+    .trim();
+}
+function stripContext(s) { return stripMeta(s || ''); }
+function parseUserContent(s) {
+  if (!s) return { chip: null, text: '' };
+  let chip = null;
+  const m = s.match(/<ide_selection\b([^>]*)>[\s\S]*?<\/ide_selection>/i);
+  if (m) {
+    const f  = (m[1].match(/file="([^"]*)"/i) || [])[1];
+    const sl = (m[1].match(/startLine="(\d+)"/i) || [])[1];
+    const el = (m[1].match(/endLine="(\d+)"/i) || [])[1];
+    if (f) { const base = f.split(/[\\/]/).pop(); chip = (sl && el) ? base + ':' + sl + '-' + el : base; }
+  }
+  const c = s.match(/<ide_context\b[^>]*openFile="([^"]*)"[^>]*\/>/i);
+  if (c && !chip) chip = c[1].split(/[\\/]/).pop();
+  return { chip, text: stripMeta(s) };
+}
+
+let histSessions = [], histLoading = false, histLoaded = false;
+function setHistoryLoading(v) { histLoading = v; }   // list shows "Loading…"; button stays the clock
+/* Load the session list off the UI thread (the first call extracts the bundled
+   PHP runtime + spawns php, which would otherwise freeze the click). */
+function loadHistoryAsync() {
+  if (histLoading) return;
+  setHistoryLoading(true);
+  renderHistoryList();   // show "Loading…" (or cached items if we have them) right away
+  if (window._listSessionsAsync) { window._listSessionsAsync(); return; }
+  // Fallback: old synchronous bridge.
+  try { histSessions = JSON.parse(window._listSessions() || '[]'); } catch (e) { histSessions = []; }
+  histLoaded = true; setHistoryLoading(false); renderHistoryList();
+}
+window.onHistoryLoaded = function(json) {
+  try { histSessions = JSON.parse(json || '[]'); } catch (e) { histSessions = []; }
+  histLoaded = true; setHistoryLoading(false); renderHistoryList();
+  clampOpenMenu();   // the list may be a different width than "Loading…" — re-pin so it isn't cut off
+};
+function toggleHistory(anchor) {
+  const panel = document.getElementById('history-panel');
+  const wasOpen = panel.classList.contains('open');
+  closeMenus();
+  if (wasOpen) return;
+  histTab('local');
+  const s = document.getElementById('hist-search'); if (s) s.value = '';
+  // Open the panel immediately; show cached results if we have them, otherwise a
+  // "Loading…" state — and (re)load in the background either way.
+  renderHistoryList();
+  loadHistoryAsync();
+  panel.classList.add('open');
+  positionMenu(panel, anchor);
+  openMenuEl = panel; openAnchor = anchor;
+  if (s) setTimeout(() => s.focus(), 0);
+}
+function histTab(which) {
+  const local = which === 'local';
+  document.getElementById('hist-tab-local').classList.toggle('active', local);
+  document.getElementById('hist-tab-web').classList.toggle('active', !local);
+  document.getElementById('history-list').style.display = local ? '' : 'none';
+  document.querySelector('.hist-search').style.display = local ? '' : 'none';
+  document.getElementById('history-web').style.display = local ? 'none' : '';
+}
+function renderHistoryList() {
+  const q = (document.getElementById('hist-search') ? document.getElementById('hist-search').value : '').toLowerCase();
+  const list = document.getElementById('history-list');
+  list.innerHTML = '';
+  if (histLoading && !histLoaded) { list.innerHTML = '<div class="h-empty">Loading…</div>'; return; }
+  const items = histSessions.filter(s => (s.display || '').toLowerCase().includes(q));
+  if (!items.length) {
+    list.innerHTML = '<div class="h-empty">' + (histSessions.length ? 'No matches.' : 'No past conversations yet.') + '</div>';
+    return;
+  }
+  items.forEach(s => {
+    const it = document.createElement('div'); it.className = 'item';
+    const main = document.createElement('div'); main.className = 'h-main';
+    const title = document.createElement('div'); title.className = 'h-title'; title.textContent = stripContext(s.display) || '(untitled)';
+    const time = document.createElement('div'); time.className = 'h-time'; time.textContent = relTime(s.timestamp);
+    main.appendChild(title); main.appendChild(time);
+    const del = document.createElement('span'); del.className = 'h-del'; del.title = 'Delete conversation'; del.innerHTML = ICONS.TRASH;
+    del.onclick = (e) => { e.stopPropagation(); deleteHistory(s.sessionId); };
+    it.appendChild(main); it.appendChild(del);
+    it.onclick = () => loadHistory(s.sessionId, s.display);
+    list.appendChild(it);
+  });
+}
+function deleteHistory(id) {
+  try { if (window._deleteSession) window._deleteSession(id); } catch (e) {}
+  histSessions = histSessions.filter(s => s.sessionId !== id);
+  renderHistoryList();
+}
+/* static (non-streaming) reconstruction helpers for loaded history */
+function appendThinkStatic(turn) {
+  const el = document.createElement('div'); el.className = 'a-item think muted';
+  // no saved duration → just "Thinking" (agreed VSCode-style workaround)
+  el.innerHTML = '<span class="dot gray"></span><span class="think-head"><span class="think-label">Thinking</span></span>';
+  turn.appendChild(el);
+}
+function appendTextStatic(turn, text) {
+  if (!text || !text.trim()) return;
+  const el = document.createElement('div'); el.className = 'a-item';
+  el.innerHTML = '<span class="dot"></span><span class="a-body"></span>';
+  el.querySelector('.a-body').innerHTML = renderMarkdown(text);
+  turn.appendChild(el);
+}
+function loadHistory(id, title) {
+  closeMenus();
+  let items = [];
+  try { items = JSON.parse(window._loadSession(id) || '[]'); } catch (e) {}
+  // Replace the CURRENT tab's content with the selected session (VSCode behaviour).
+  const t = activeTab(); if (!t) return;
+  if (isStreaming && streamTab === t) doCancel();
+  hideWorking();
+  curTurn = null; curBody = null; curText = '';
+  const pane = t.pane;
+  pane.innerHTML = '';
+  t.sessionId = id;                                   // continuing this tab resumes the session
+  setTabTitle(t, title);
+  if (!items.length) { addSystem('This conversation is empty or could not be loaded.'); }
+
+  // Group consecutive assistant blocks (thinking / tool / text) into one turn with
+  // its dotted rail; user messages and answer cards are their own turns.
+  let aTurn = null;
+  function assistantTurn() {
+    if (!aTurn || !aTurn.parentNode) { aTurn = document.createElement('div'); aTurn.className = 'turn'; pane.appendChild(aTurn); }
+    return aTurn;
+  }
+  items.forEach(it => {
+    const ty = it.t || (it.role === 'user' ? 'user' : 'text');   // back-compat with old text-only format
+    if (ty === 'user') {
+      aTurn = null;
+      const p = parseUserContent(it.content || '');
+      if (p.text || p.chip) addUserMessage(p.text, p.chip);
+    } else if (ty === 'answered') {
+      aTurn = null;
+      addAnswered(it.text || '', pane);
+    } else if (ty === 'thinking') {
+      appendThinkStatic(assistantTurn());
+    } else if (ty === 'tool') {
+      assistantTurn().appendChild(makeToolLine(it.name || 'tool', it.input || {}));
+    } else { // text
+      appendTextStatic(assistantTurn(), it.text || it.content || '');
+    }
+  });
+  // draw the connector rails
+  pane.querySelectorAll(':scope > .turn').forEach(relinkTurn);
+  pane.scrollTop = 0;
+  messagesEl.scrollTop = 0;
+}
+
+/* ===================== Slash commands ===================== */
+const SLASH_COMMANDS = [
+  { cmd: '/clear', desc: 'Start a new session (tab)' },
+  { cmd: '/help',  desc: 'Show available commands' },
+];
+const slashState = { open: false, sel: 0, items: [] };
+const slashEl = document.getElementById('slash-menu');
+
+function updateSlashMenu() {
+  const v = input.value;
+  const m = /^\/(\S*)$/.exec(v); // only a leading "/word" with no space yet
+  if (!m) { closeSlash(); return; }
+  const q = m[1].toLowerCase();
+  slashState.items = SLASH_COMMANDS.filter(c => c.cmd.slice(1).startsWith(q));
+  if (!slashState.items.length) { closeSlash(); return; }
+  slashState.sel = 0;
+  renderSlash();
+  positionSlash();
+  slashState.open = true;
+  slashEl.classList.add('open');
+}
+function renderSlash() {
+  slashEl.innerHTML = '<div class="head"><span class="h">Commands</span></div>';
+  slashState.items.forEach((c, i) => {
+    const it = document.createElement('div');
+    it.className = 'item' + (i === slashState.sel ? ' sel' : '');
+    it.innerHTML = '<span class="cmd"></span><span class="d"></span>';
+    it.querySelector('.cmd').textContent = c.cmd;
+    it.querySelector('.d').textContent = c.desc;
+    it.onmousedown = (e) => { e.preventDefault(); applySlash(c.cmd); };
+    slashEl.appendChild(it);
+  });
+}
+function positionSlash() {
+  const r = document.getElementById('composer').getBoundingClientRect();
+  slashEl.style.left = (r.left + 12) + 'px';
+  slashEl.classList.add('open');
+  slashEl.style.top = (r.top - slashEl.offsetHeight - 4) + 'px';
+}
+function handleSlashKey(e) {
+  if (e.key === 'ArrowDown') { slashState.sel = (slashState.sel + 1) % slashState.items.length; renderSlash(); positionSlash(); return true; }
+  if (e.key === 'ArrowUp')   { slashState.sel = (slashState.sel - 1 + slashState.items.length) % slashState.items.length; renderSlash(); positionSlash(); return true; }
+  if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); applySlash(slashState.items[slashState.sel].cmd); return true; }
+  if (e.key === 'Escape') { closeSlash(); return true; }
+  return false;
+}
+function applySlash(cmd) {
+  input.value = cmd;
+  closeSlash();
+  doSend(); // known no-arg commands execute immediately
+}
+function closeSlash() { slashState.open = false; slashEl.classList.remove('open'); }
+function openSlashFromButton() {
+  closeMenus();
+  input.focus();
+  if (!input.value.startsWith('/')) input.value = '/';
+  updateSlashMenu();
+}
+function handleSlashCommand(text) {
+  const cmd = text.split(/\s+/)[0].toLowerCase();
+  if (cmd === '/clear') { newSession(); return true; }
+  if (cmd === '/help') {
+    addSystem('Commands: /clear — new conversation · /help — this list. Type / to see them.');
+    return true;
+  }
+  return false; // unknown slash: let it pass through to Claude
+}
+
+/* ===================== Markdown rendering ===================== */
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = text;
+  const blocks = [];
+  // fenced code blocks
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const i = blocks.length;
+    const label = lang || 'code';
+    blocks.push('<pre><div class="cb-head"><span>' + label + '</span><button onclick="copyCode(this)">Copy</button></div><code>' + escapeHtml(code.replace(/\n$/, '')) + '</code></pre>');
+    return ' B' + i + ' ';
+  });
+  html = escapeHtml(html);
+  html = html.replace(/`([^`\n]+)`/g, '<code class="ic">$1</code>');
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+             .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+             .replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+             .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>');
+  html = html.replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>[\s\S]*?<\/li>)/g, m => '<ul>' + m + '</ul>').replace(/<\/ul>\s*<ul>/g, '');
+  html = html.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
+  if (!/^\s*<(h\d|ul|pre|p)/.test(html)) html = '<p>' + html + '</p>';
+  html = html.replace(/ B(\d+) /g, (_, i) => blocks[+i]);
+  return html;
+}
+function copyCode(btn) {
+  const code = btn.closest('pre').querySelector('code').textContent;
+  if (navigator.clipboard) navigator.clipboard.writeText(code).then(() => {
+    btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500);
+  }).catch(() => {});
+}
+
+/* Populate the actions-menu slash list (needs SLASH_COMMANDS, declared above). */
+buildActionsSlash();
+</script>
+</body>
+</html>

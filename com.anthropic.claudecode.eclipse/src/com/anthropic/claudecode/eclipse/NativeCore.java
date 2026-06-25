@@ -166,7 +166,9 @@ public final class NativeCore {
      */
     public static native void chatSendMessage(long handle, String message,
                                               String claudeCmd, String workspaceRoot,
-                                              int mcpPort, String mcpAuthToken);
+                                              int mcpPort, String mcpAuthToken,
+                                              String resumeId, String permMode, String effort,
+                                              String model, String thinking);
 
     /** Cancels the current turn (kills the claude process). */
     public static native void chatCancel(long handle);
@@ -185,6 +187,12 @@ public final class NativeCore {
         void onStreamEnd();
         void onError(String message);
         void onSystem(String message);
+        void onThinking(String text);
+        void onSessionId(String sessionId);
+        /** Live output-token count during a turn (from the partial-message stream). */
+        default void onTokens(String count) {}
+        /** Rate-limit / usage info (JSON) for the usage warning banner. */
+        default void onRateLimit(String json) {}
     }
 
     // ── PTY process manager ───────────────────────────────────────────────────
@@ -311,6 +319,21 @@ public final class NativeCore {
      * Pass null or empty string to clear an override (fall back to env/shell).
      */
     public static native void setProxyOverrides(String httpProxy, String httpsProxy, String noProxy);
+
+    // ── Session history (local) ──────────────────────────────────────────────
+
+    /**
+     * Lists past local Claude conversations for the given workspace, newest first,
+     * as a JSON array of {@code {sessionId, display, timestamp}}. Reads
+     * {@code ~/.claude/projects/<hash>/*.jsonl}; returns {@code "[]"} if none.
+     */
+    public static native String sessionList(String workspaceRoot);
+
+    /**
+     * Loads one past conversation as a JSON array of
+     * {@code {role, content, timestamp}} messages (final text only).
+     */
+    public static native String sessionLoad(String workspaceRoot, String sessionId);
 
     /**
      * Returns the login-shell environment to inject into a spawned terminal

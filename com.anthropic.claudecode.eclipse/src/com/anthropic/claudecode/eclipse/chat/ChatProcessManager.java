@@ -26,6 +26,10 @@ public class ChatProcessManager {
     private Runnable onStreamEnd;
     private Consumer<String> onError;
     private Consumer<String> onSystem;
+    private Consumer<String> onThinking;
+    private Consumer<String> onSessionId;
+    private Consumer<String> onTokens;
+    private Consumer<String> onRateLimit;
 
     public ChatProcessManager() {
         this.handle = NativeCore.chatCreate();
@@ -36,6 +40,10 @@ public class ChatProcessManager {
             @Override public void onStreamEnd()            { emit(ChatProcessManager.this.onStreamEnd); }
             @Override public void onError(String msg)      { emit(ChatProcessManager.this.onError, msg); }
             @Override public void onSystem(String msg)     { emit(ChatProcessManager.this.onSystem, msg); }
+            @Override public void onThinking(String t)     { emit(ChatProcessManager.this.onThinking, t); }
+            @Override public void onSessionId(String id)   { emit(ChatProcessManager.this.onSessionId, id); }
+            @Override public void onTokens(String n)       { emit(ChatProcessManager.this.onTokens, n); }
+            @Override public void onRateLimit(String j)    { emit(ChatProcessManager.this.onRateLimit, j); }
         });
     }
 
@@ -48,10 +56,27 @@ public class ChatProcessManager {
     public void setOnStreamEnd(Runnable cb)         { this.onStreamEnd = cb; }
     public void setOnError(Consumer<String> cb)     { this.onError = cb; }
     public void setOnSystem(Consumer<String> cb)    { this.onSystem = cb; }
+    public void setOnThinking(Consumer<String> cb)  { this.onThinking = cb; }
+    public void setOnSessionId(Consumer<String> cb) { this.onSessionId = cb; }
+    public void setOnTokens(Consumer<String> cb)    { this.onTokens = cb; }
+    public void setOnRateLimit(Consumer<String> cb) { this.onRateLimit = cb; }
 
     // ── Operations ────────────────────────────────────────────────────────────
 
     public void sendMessage(String message) {
+        sendMessage(message, "", "", "", "", "");
+    }
+
+    /**
+     * Send a message.
+     * @param resumeId session id to resume (empty = fresh session)
+     * @param permMode claude permission mode: default|acceptEdits|plan|bypassPermissions (empty = claude default)
+     * @param effort   claude effort level: low|medium|high|xhigh|max (empty = claude default)
+     * @param model    claude model alias (sonnet|opus|haiku|sonnet[1m]|<custom>); empty = default
+     * @param thinking "0" disables extended thinking; anything else leaves it to effort
+     */
+    public void sendMessage(String message, String resumeId, String permMode, String effort,
+                            String model, String thinking) {
         IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
         String claudeCmd = prefs.getString(Constants.PREF_CLAUDE_CMD);
         if (claudeCmd == null || claudeCmd.isBlank()) claudeCmd = Constants.DEFAULT_CLAUDE_CMD;
@@ -67,7 +92,10 @@ public class ChatProcessManager {
             mcpAuthToken = server.getAuthToken();
         }
 
-        NativeCore.chatSendMessage(handle, message, claudeCmd, workspaceRoot, mcpPort, mcpAuthToken);
+        NativeCore.chatSendMessage(handle, message, claudeCmd, workspaceRoot, mcpPort, mcpAuthToken,
+                resumeId == null ? "" : resumeId, permMode == null ? "" : permMode,
+                effort == null ? "" : effort, model == null ? "" : model,
+                thinking == null ? "" : thinking);
     }
 
     public void cancel() {

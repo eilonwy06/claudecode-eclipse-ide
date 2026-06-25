@@ -5,6 +5,7 @@ mod mcp;
 mod php_bridge;
 mod pty;
 mod server;
+mod session;
 mod shell_env;
 mod vterm;
 
@@ -293,6 +294,11 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatSend
     workspace_root: JString,
     mcp_port: jint,
     mcp_auth_token: JString,
+    resume_id: JString,
+    perm_mode: JString,
+    effort: JString,
+    model: JString,
+    thinking: JString,
 ) {
     if handle == 0 {
         return;
@@ -302,7 +308,32 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatSend
     let claude_cmd: String = env.get_string(&claude_cmd).unwrap().into();
     let workspace_root: String = env.get_string(&workspace_root).unwrap().into();
     let mcp_auth_token: String = env.get_string(&mcp_auth_token).unwrap().into();
-    manager.send_message(message, claude_cmd, workspace_root, mcp_port as u16, mcp_auth_token);
+    let resume_id: String = if resume_id.is_null() {
+        String::new()
+    } else {
+        env.get_string(&resume_id).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let perm_mode: String = if perm_mode.is_null() {
+        String::new()
+    } else {
+        env.get_string(&perm_mode).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let effort: String = if effort.is_null() {
+        String::new()
+    } else {
+        env.get_string(&effort).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let model: String = if model.is_null() {
+        String::new()
+    } else {
+        env.get_string(&model).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let thinking: String = if thinking.is_null() {
+        String::new()
+    } else {
+        env.get_string(&thinking).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    manager.send_message(message, claude_cmd, workspace_root, mcp_port as u16, mcp_auth_token, resume_id, perm_mode, effort, model, thinking);
 }
 
 #[no_mangle]
@@ -732,6 +763,46 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_setProxy
             .filter(|s: &String| !s.is_empty())
     };
     shell_env::set_proxy_overrides(http, https, no);
+}
+
+// ===========================================================================
+// Session history JNI entry points (local — reads ~/.claude/projects/*.jsonl)
+// ===========================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionList(
+    mut env: JNIEnv,
+    _class: JClass,
+    workspace_root: JString,
+) -> jstring {
+    let root: String = if workspace_root.is_null() {
+        String::new()
+    } else {
+        env.get_string(&workspace_root).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let json = session::list_sessions(&root);
+    env.new_string(json).unwrap_or_else(|_| env.new_string("[]").unwrap()).into_raw()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionLoad(
+    mut env: JNIEnv,
+    _class: JClass,
+    workspace_root: JString,
+    session_id: JString,
+) -> jstring {
+    let root: String = if workspace_root.is_null() {
+        String::new()
+    } else {
+        env.get_string(&workspace_root).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let id: String = if session_id.is_null() {
+        String::new()
+    } else {
+        env.get_string(&session_id).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let json = session::load_session_history(&root, &id);
+    env.new_string(json).unwrap_or_else(|_| env.new_string("[]").unwrap()).into_raw()
 }
 
 // ===========================================================================

@@ -41,6 +41,8 @@ public class Activator extends AbstractUIPlugin {
         super.start(context);
         instance = this;
         LOG.info("Claude Code for Eclipse starting...");
+        // Note: dictation captures the mic natively (cpal) in the core, so there
+        // is no WebView2 getUserMedia permission to grant here.
     }
 
     @Override

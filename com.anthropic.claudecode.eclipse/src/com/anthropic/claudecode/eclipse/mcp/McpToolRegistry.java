@@ -42,6 +42,8 @@ public class McpToolRegistry {
         register(new SaveDocumentTool());
         register(new GetDiagnosticsTool());
         register(new CloseAllDiffTabsTool());
+        register(new com.anthropic.claudecode.eclipse.tools.ApprovalPromptTool());
+        register(new com.anthropic.claudecode.eclipse.tools.AskUserQuestionTool());
         registerJdtToolsIfAvailable();
     }
 

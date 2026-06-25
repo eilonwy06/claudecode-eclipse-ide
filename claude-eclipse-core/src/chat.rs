@@ -58,6 +58,11 @@ impl ChatManager {
         workspace_root: String,
         mcp_port: u16,
         mcp_auth_token: String,
+        resume_id: String,
+        perm_mode: String,
+        effort: String,
+        model: String,
+        thinking: String,
     ) {
         {
             let s = self.state.lock().unwrap();
@@ -65,12 +70,6 @@ impl ChatManager {
                 return;
             }
         }
-
-        // Snapshot what we need before spawning.
-        let has_session = {
-            let s = self.state.lock().unwrap();
-            s.has_session
-        };
 
         let (java_vm, callbacks_obj) = match self.callbacks.lock().unwrap().as_ref() {
             Some(cb) => (Arc::clone(&cb.java_vm), Arc::clone(&cb.obj)),
@@ -97,7 +96,11 @@ impl ChatManager {
                     &workspace_root,
                     mcp_port,
                     &mcp_auth_token,
-                    has_session,
+                    &resume_id,
+                    &perm_mode,
+                    &effort,
+                    &model,
+                    &thinking,
                     &cancel,
                     &java_vm,
                     &callbacks_obj,
@@ -149,7 +152,11 @@ fn run_turn(
     workspace_root: &str,
     mcp_port: u16,
     mcp_auth_token: &str,
-    has_session: bool,
+    resume_id: &str,
+    perm_mode: &str,
+    effort: &str,
+    model: &str,
+    thinking: &str,
     cancel: &Arc<AtomicBool>,
     java_vm: &Arc<jni::JavaVM>,
     callbacks: &Arc<jni::objects::GlobalRef>,
@@ -162,9 +169,82 @@ fn run_turn(
         "--output-format".into(),
         "stream-json".into(),
         "--verbose".into(),
+        // Stream fine-grained events so we can show a live output-token counter
+        // (message_start / content_block_delta / message_delta usage).
+        "--include-partial-messages".into(),
     ];
-    if has_session {
-        cmd_args.push("-c".into());
+    // Effort level from the GUI meter (low | medium | high | xhigh | max). This
+    // drives how much Claude reasons — it also governs whether thinking happens, so
+    // we do NOT force MAX_THINKING_TOKENS (which --effort overrides anyway).
+    if !effort.is_empty() {
+        cmd_args.push("--effort".into());
+        cmd_args.push(effort.to_string());
+    }
+    // Model from the GUI chooser (sonnet | sonnet[1m] | opus | haiku | <custom from
+    // prefs args>). Empty = "Default", let claude pick. Appended last so it overrides
+    // any --model the user put in their preference args.
+    if !model.is_empty() {
+        cmd_args.push("--model".into());
+        cmd_args.push(model.to_string());
+    }
+    // Permission mode from the GUI dropdown (default | acceptEdits | plan |
+    // bypassPermissions). Without this, claude -p denies edits → "no permission".
+    if !perm_mode.is_empty() {
+        cmd_args.push("--permission-mode".into());
+        cmd_args.push(perm_mode.to_string());
+    }
+    // Expose our server as a named config server ("eclipse") so its tools become
+    // referenceable. The IDE auto-connect (CLAUDE_CODE_SSE_PORT) does NOT make tools
+    // eligible for --permission-prompt-tool or steerable by name, so we register the
+    // same loopback SSE endpoint via --mcp-config too.
+    if mcp_port > 0 {
+        let cfg = format!(
+            r#"{{"mcpServers":{{"eclipse":{{"type":"sse","url":"http://127.0.0.1:{}/sse"}}}}}}"#,
+            mcp_port
+        );
+        cmd_args.push("--mcp-config".into());
+        cmd_args.push(cfg);
+
+        // The built-in AskUserQuestion auto-dismisses in headless -p mode (no
+        // interactive surface), so disable it and steer claude to our MCP tool,
+        // which renders the in-chat multiple-choice card and blocks for the answer.
+        // The MCP tool is pre-approved (--allowed-tools) so it isn't gated by the
+        // permission prompt — otherwise the Yes/No card would intercept it instead
+        // of the question card rendering.
+        cmd_args.push("--allowed-tools".into());
+        cmd_args.push("mcp__eclipse__askUserQuestion".into());
+        // Disallow the blocking IDE diff tool: in the GUI we want claude to use its
+        // built-in Edit (gated by the approvalPrompt card → "Make this edit?" + our
+        // non-blocking DiffPreview), NOT openDiff (which gates as "allow openDiff?" then
+        // blocks until the user saves/closes the diff tab). Cover every name form.
+        // Scoped to the GUI chat only — the terminal view's claude is unaffected.
+        cmd_args.push("--disallowed-tools".into());
+        cmd_args.push("AskUserQuestion".into());
+        cmd_args.push("openDiff".into());
+        cmd_args.push("mcp__ide__openDiff".into());
+        cmd_args.push("mcp__eclipse__openDiff".into());
+        cmd_args.push("--append-system-prompt".into());
+        cmd_args.push(
+            "To ask the user to choose between options, you MUST call the \
+             mcp__eclipse__askUserQuestion tool — never the built-in AskUserQuestion, \
+             and never just describe the options in prose. Pass a `questions` array; each \
+             item has `question`, a short `header` (tab label), `multiSelect`, and `options` \
+             (each with `label` and `description`). The tool returns the user's selections."
+                .into(),
+        );
+
+        // "Ask before edits" (default mode): route each permission request to our
+        // approvalPrompt tool so the GUI can show an in-chat Yes/No decision card.
+        if perm_mode == "default" {
+            cmd_args.push("--permission-prompt-tool".into());
+            cmd_args.push("mcp__eclipse__approvalPrompt".into());
+        }
+    }
+    // Per-tab continuity: resume the tab's own session if we have its id, else
+    // start fresh (a new session id comes back via the init event → onSessionId).
+    if !resume_id.is_empty() {
+        cmd_args.push("--resume".into());
+        cmd_args.push(resume_id.to_string());
     }
 
     // Rust 1.77+ properly handles .cmd/.bat files on Windows: it resolves
@@ -191,6 +271,12 @@ fn run_turn(
     // kernel skips PATH lookup when the command contains /.
     for (k, v) in crate::shell_env::captured_env().to_inject() {
         cmd.env(k, v);
+    }
+
+    // Thinking toggle: "0" (off) disables extended thinking via MAX_THINKING_TOKENS=0,
+    // which suppresses thinking even at high --effort (verified). On = leave it to effort.
+    if thinking == "0" {
+        cmd.env("MAX_THINKING_TOKENS", "0");
     }
 
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
@@ -245,6 +331,11 @@ fn run_turn(
     // Tracks cumulative text already sent for the current assistant turn,
     // so we can compute deltas from partial assistant events.
     let mut last_text_len: usize = 0;
+    let mut last_thinking_len: usize = 0;
+    // Live output-token counter state (from --include-partial-messages):
+    // base from message_start, +1/4 char estimate per text_delta, exact at message_delta.
+    let mut tok_base: u64 = 0;
+    let mut tok_chars: u64 = 0;
 
     for line in reader.lines() {
         if cancel.load(Ordering::Relaxed) {
@@ -254,7 +345,8 @@ fn run_turn(
             Ok(l) if !l.is_empty() => l,
             _ => continue,
         };
-        process_event(&line, java_vm, callbacks, &mut last_text_len);
+        process_event(&line, java_vm, callbacks, &mut last_text_len, &mut last_thinking_len,
+                      &mut tok_base, &mut tok_chars);
     }
 
     let exit_ok = if cancel.load(Ordering::Relaxed) {
@@ -286,6 +378,9 @@ fn process_event(
     java_vm: &Arc<jni::JavaVM>,
     callbacks: &Arc<jni::objects::GlobalRef>,
     last_text_len: &mut usize,
+    last_thinking_len: &mut usize,
+    tok_base: &mut u64,
+    tok_chars: &mut u64,
 ) {
     let event: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
@@ -293,8 +388,17 @@ fn process_event(
     };
 
     match event["type"].as_str().unwrap_or("") {
+        // Usage/rate-limit signal — forwarded so the GUI can show a warning banner.
+        "rate_limit_event" => {
+            if let Some(info) = event.get("rate_limit_info") {
+                fire_string(java_vm, callbacks, "onRateLimit", &info.to_string());
+            }
+        }
         "system" => {
             if event["subtype"].as_str() == Some("init") {
+                if let Some(sid) = event["session_id"].as_str() {
+                    fire_string(java_vm, callbacks, "onSessionId", sid);
+                }
                 let msg = event["message"].as_str().unwrap_or("Connected");
                 fire_string(java_vm, callbacks, "onSystem", msg);
             }
@@ -316,9 +420,29 @@ fn process_event(
                                 *last_text_len = text.len();
                             }
                         }
+                        "thinking" => {
+                            // The CLI strips the reasoning text from stream-json output
+                            // (only an encrypted `signature` remains), so `thinking` is
+                            // usually an empty string. We still fire onThinking — even
+                            // empty — so the GUI shows a "Thought for Ns" marker for the
+                            // reasoning that happened (matches the VSCode panel). When the
+                            // text IS present we stream the delta as before.
+                            let t = block["thinking"].as_str().unwrap_or("");
+                            let start = (*last_thinking_len).min(t.len());
+                            let new_part = &t[start..];
+                            if !new_part.is_empty() || *last_thinking_len == 0 {
+                                fire_string(java_vm, callbacks, "onThinking", new_part);
+                            }
+                            *last_thinking_len = t.len();
+                        }
                         "tool_use" if !is_partial => {
-                            let name = block["name"].as_str().unwrap_or("tool");
-                            fire_string(java_vm, callbacks, "onToolStart", name);
+                            // Pass name + input so the GUI can show the target file/command
+                            // after the verb and render an inline diff for edits.
+                            let payload = serde_json::json!({
+                                "name": block["name"].as_str().unwrap_or("tool"),
+                                "input": block.get("input").cloned().unwrap_or(serde_json::json!({})),
+                            });
+                            fire_string(java_vm, callbacks, "onToolStart", &payload.to_string());
                         }
                         _ => {}
                     }
@@ -326,6 +450,35 @@ fn process_event(
             }
             if !is_partial {
                 *last_text_len = 0;
+                *last_thinking_len = 0;
+            }
+        }
+        // Fine-grained streaming events (only with --include-partial-messages) —
+        // used solely to drive the live output-token counter. Text/thinking/tools
+        // still render from the complete "assistant" events above.
+        "stream_event" => {
+            let ev = &event["event"];
+            match ev["type"].as_str().unwrap_or("") {
+                "message_start" => {
+                    *tok_chars = 0;
+                    *tok_base = ev["message"]["usage"]["output_tokens"].as_u64().unwrap_or(0);
+                    fire_string(java_vm, callbacks, "onTokens", &tok_base.to_string());
+                }
+                "content_block_delta" => {
+                    if ev["delta"]["type"].as_str() == Some("text_delta") {
+                        if let Some(txt) = ev["delta"]["text"].as_str() {
+                            *tok_chars += txt.chars().count() as u64;
+                            let est = *tok_base + *tok_chars / 4;
+                            fire_string(java_vm, callbacks, "onTokens", &est.to_string());
+                        }
+                    }
+                }
+                "message_delta" => {
+                    if let Some(n) = ev["usage"]["output_tokens"].as_u64() {
+                        fire_string(java_vm, callbacks, "onTokens", &n.to_string());
+                    }
+                }
+                _ => {}
             }
         }
         _ => {}
