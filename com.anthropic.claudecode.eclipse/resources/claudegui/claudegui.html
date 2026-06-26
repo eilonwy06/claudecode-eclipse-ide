@@ -40,8 +40,16 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 /* ── Top toolbar (VSCode editor-tab strip) ───────────────── */
 #toolbar { display: flex; align-items: stretch; height: 35px; flex-shrink: 0;
   background: var(--bg); border-bottom: 1px solid var(--border-soft); }
-#tabs { display: flex; align-items: stretch; height: 100%; overflow-x: auto; }
-#tabs::-webkit-scrollbar { height: 0; }
+/* min-width:0 lets the strip shrink within the toolbar so its tabs scroll INTERNALLY
+   (instead of pushing the toolbar tools off-screen). Thin bottom scrollbar, thumb
+   visible only on hover — like VSCode. */
+#tabs { display: flex; align-items: stretch; height: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+/* thin bottom scrollbar; thumb shown only while hovering/scrolling (JS toggles
+   .sb-show — CSS :hover on webkit scrollbars is unreliable in WebView2). */
+#tabs::-webkit-scrollbar { height: 4px; }
+#tabs::-webkit-scrollbar-track { background: transparent; }
+#tabs::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+#tabs.sb-show::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); }
 .tab { display: flex; align-items: center; gap: 7px; padding: 0 10px; height: 100%; cursor: pointer;
   background: var(--bg); border-right: 1px solid var(--border-soft); border-top: 2px solid transparent;
   font-size: 12.5px; color: var(--fg-dim); max-width: 200px; flex-shrink: 0; }
@@ -578,6 +586,28 @@ function clampOpenMenu() {
 }
 window.addEventListener('resize', clampOpenMenu);
 
+/* Tab strip: vertical mouse-wheel scrolls horizontally, and the scrollbar thumb is
+   shown only while hovering or actively scrolling (then auto-hides). */
+(function () {
+  const tabsEl = document.getElementById('tabs');
+  if (!tabsEl) return;
+  let sbTimer = null;
+  function flashScrollbar() {
+    tabsEl.classList.add('sb-show');
+    clearTimeout(sbTimer);
+    sbTimer = setTimeout(() => { if (!tabsEl.matches(':hover')) tabsEl.classList.remove('sb-show'); }, 900);
+  }
+  tabsEl.addEventListener('mouseenter', () => { clearTimeout(sbTimer); tabsEl.classList.add('sb-show'); });
+  tabsEl.addEventListener('mouseleave', () => { clearTimeout(sbTimer); tabsEl.classList.remove('sb-show'); });
+  tabsEl.addEventListener('wheel', (e) => {
+    if (e.deltaY === 0) return;
+    tabsEl.scrollLeft += e.deltaY;   // translate vertical wheel to horizontal scroll
+    e.preventDefault();
+    flashScrollbar();
+  }, { passive: false });
+  tabsEl.addEventListener('scroll', flashScrollbar);
+})();
+
 /* textarea auto-grow + focus border + send/stop + Enter-to-send */
 const input = document.getElementById('input');
 const wrap = document.getElementById('input-wrap');
@@ -665,6 +695,14 @@ function renderTabs() {
     el.onclick = (e) => { if (e.target.closest('.tab-close')) closeTab(t.id); else switchTab(t.id); };
     c.appendChild(el);
   });
+  // Scroll the active tab into view so a newly created session (off the right edge
+  // on a narrow view) is always reachable.
+  const a = c.querySelector('.tab.active');
+  if (a) {
+    const al = a.offsetLeft, ar = al + a.offsetWidth;
+    if (ar > c.scrollLeft + c.clientWidth) c.scrollLeft = ar - c.clientWidth;
+    else if (al < c.scrollLeft) c.scrollLeft = al;
+  }
 }
 function setTabTitle(t, raw) {
   const title = ((stripContext(raw) || raw || '').trim().slice(0, 40)) || 'Claude Code';

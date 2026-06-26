@@ -56,6 +56,11 @@
             description="Toggle the Claude Code terminal panel"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
+            id="com.anthropic.claudecode.eclipse.commands.toggleGui"
+            name="Toggle Claude GUI"
+            description="Show or hide the Claude GUI view"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+      <command
             id="com.anthropic.claudecode.eclipse.commands.sendSelection"
             name="Send Selection to Claude"
             description="Send the current editor selection to Claude Code"
@@ -87,6 +92,9 @@
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.toggle"
             class="com.anthropic.claudecode.eclipse.ui.handlers.ToggleClaudeHandler"/>
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.toggleGui"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.ToggleClaudeGuiHandler"/>
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
             class="com.anthropic.claudecode.eclipse.ui.handlers.SendSelectionHandler"/>
@@ -136,6 +144,11 @@
                   commandId="com.anthropic.claudecode.eclipse.commands.toggle"
                   label="Toggle Claude Code"
                   mnemonic="T"
+                  style="push"/>
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.toggleGui"
+                  label="Toggle Claude GUI"
+                  mnemonic="G"
                   style="push"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
