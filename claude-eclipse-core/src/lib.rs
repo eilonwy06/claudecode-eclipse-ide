@@ -219,6 +219,24 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_register
     server.register_tool_callback(java_vm(), global_ref);
 }
 
+/// Registers the Java StatusCallback object.  From this point, statusLine updates
+/// POSTed to /statusline are dispatched via callback.onStatusUpdate(tabToken, statusJson).
+/// Dedicated channel — separate from the MCP tool callback above.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_registerStatusCallback(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    callback: JObject,
+) {
+    if handle == 0 {
+        return;
+    }
+    let server = unsafe { &*(handle as *const Server) };
+    let global_ref = env.new_global_ref(callback).expect("new_global_ref failed");
+    server.register_status_callback(java_vm(), global_ref);
+}
+
 // ===========================================================================
 // Lock-file JNI entry points
 // ===========================================================================

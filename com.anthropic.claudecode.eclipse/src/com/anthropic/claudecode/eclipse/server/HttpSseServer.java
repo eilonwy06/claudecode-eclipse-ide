@@ -3,6 +3,7 @@ package com.anthropic.claudecode.eclipse.server;
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.NativeCore;
 import com.anthropic.claudecode.eclipse.NativeToolBridge;
+import com.anthropic.claudecode.eclipse.StatusBridge;
 import com.anthropic.claudecode.eclipse.mcp.McpToolRegistry;
 
 /**
@@ -31,6 +32,15 @@ public class HttpSseServer {
         }
 
         NativeCore.registerToolCallback(handle, new NativeToolBridge(toolRegistry));
+        // Dedicated status channel, independent of the MCP tool callback above. Optional:
+        // a not-yet-rebuilt native lib (e.g. another platform pending its build host) lacks
+        // this export, so tolerate UnsatisfiedLinkError — the server still runs, just without
+        // the status line.
+        try {
+            NativeCore.registerStatusCallback(handle, new StatusBridge());
+        } catch (UnsatisfiedLinkError e) {
+            Activator.log("Native library has no registerStatusCallback; status line disabled.");
+        }
     }
 
     public void start() {

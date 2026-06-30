@@ -1,15 +1,20 @@
 package com.anthropic.claudecode.eclipse.ui;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.FileLocator;
 import org.eclipse.core.runtime.IAdaptable;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.IToolBarManager;
@@ -34,7 +39,6 @@ import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.FontData;
 import org.eclipse.swt.graphics.RGB;
-import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
@@ -49,6 +53,10 @@ import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.part.IShowInTarget;
 import org.eclipse.ui.part.ShowInContext;
 import org.eclipse.ui.part.ViewPart;
+import org.osgi.framework.Bundle;
+
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 
 import org.eclipse.terminal.connector.ISettingsStore;
 import org.eclipse.terminal.connector.ITerminalConnector;
@@ -67,6 +75,7 @@ import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.Constants;
 import com.anthropic.claudecode.eclipse.NativeCore;
 import com.anthropic.claudecode.eclipse.resolvers.EntitiesRegistry;
+import com.anthropic.claudecode.eclipse.status.StandaloneStatusForwarder;
 
 /**
  * Claude CLI view: a tabbed view ("Claude 1", "Claude 2", …) where each tab
@@ -389,7 +398,13 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                     : "Claude " + sessionCounter);
 
             Composite content = new Composite(tabFolder, SWT.NONE);
-            content.setLayout(new FillLayout());
+            // GridLayout (not FillLayout) so the terminal grabs the free space and the
+            // per-tab status bar can sit as a fixed-height strip beneath it.
+            GridLayout contentLayout = new GridLayout(1, false);
+            contentLayout.marginWidth = 0;
+            contentLayout.marginHeight = 0;
+            contentLayout.verticalSpacing = 0;
+            content.setLayout(contentLayout);
             content.setBackground(bgColor);
             tabItem.setControl(content);
 
@@ -501,6 +516,24 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         }
     }
 
+    /**
+     * Routes a status update to the tab whose routing token matches {@code tabToken}, using
+     * the existing {@code CTabItem.setData(session)} idiom. Returns {@code true} if a live
+     * session matched (token is globally unique, so at most one). Called on the UI thread by
+     * {@code StatusBridge}.
+     */
+    public boolean deliverStatus(String tabToken, ClaudeStatus status) {
+        if (tabFolder == null || tabFolder.isDisposed()) return false;
+        for (CTabItem item : tabFolder.getItems()) {
+            TerminalSession session = (TerminalSession) item.getData();
+            if (session != null && tabToken.equals(session.tabToken())) {
+                session.setStatus(status);
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     public void dispose() {
         viewDisposed = true;
@@ -589,10 +622,27 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         private final CTabItem tabItem;
         private final Composite content;
         private final String customCwd;
+        /**
+         * Per-tab routing token for the status line. A UUID is globally unique across views
+         * AND across JVM runs, so a stale forwarder from a previous launch/run can never
+         * collide with a current tab. Minted once per session — there is nothing to register
+         * and nothing to remove; it dies with the session.
+         */
+        private final String tabToken = UUID.randomUUID().toString();
         private volatile boolean disposed = false;
         private ITerminalViewControl termControl;
+        private ClaudeStatusBar statusBar;
         private PreferenceStore prefStore;
         private Listener ctrlCFilter;
+
+        String tabToken() { return tabToken; }
+
+        /** Pushes a status snapshot into this tab's status bar (UI thread). */
+        void setStatus(ClaudeStatus status) {
+            if (!disposed && statusBar != null && !statusBar.isDisposed()) {
+                statusBar.setStatus(status);
+            }
+        }
 
         /** Pastes text into the terminal (lands at Claude's prompt). False if not live. */
         boolean sendText(String text) {
@@ -670,7 +720,6 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             // Tell Claude the terminal supports 24-bit color so it emits RGB
             // (the Eclipse terminal renders truecolor). Inlines xgsa's PR #26.
             env.add("COLORTERM=truecolor");
-            String[] environment = env.toArray(new String[0]);
 
             // macOS/Linux: resolve a bare command against the captured PATH.
             if (!IS_WINDOWS) {
@@ -683,6 +732,12 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 for (String arg : claudeArgs.trim().split("\\s+")) argTokens.add(quoteArg(arg));
             }
             for (String a : extraArgs) argTokens.add(quoteArg(a));
+
+            // When enabled, injects the per-tab CLAUDE_TAB_TOKEN into `env` and appends
+            // --settings <shared file> to `argTokens` (no-op + untouched user statusLine if off).
+            configureStatusLine(env, argTokens);
+
+            String[] environment = env.toArray(new String[0]);
             String arguments = String.join(" ", argTokens);
 
             ITerminalConnector connector;
@@ -733,6 +788,20 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             prefStore = buildTerminalPrefs();
             termControl = new VT100TerminalControl(
                     listener, content, new ITerminalConnector[] { connector }, prefStore);
+            // content uses a GridLayout: the terminal grabs the free space; the status bar
+            // (created below, if enabled) is a fixed-height strip beneath it. The layout data
+            // must go on the terminal's ROOT control (the direct child of content,
+            // VT100TerminalControl's fWndParent) — getControl() returns a nested canvas, so
+            // setting it there leaves the real child at its tiny preferred size.
+            Control termRoot = termControl.getRootControl();
+            if (termRoot != null && !termRoot.isDisposed()) {
+                termRoot.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+            }
+            if (Activator.getDefault().getPreferenceStore()
+                    .getBoolean(Constants.PREF_STATUSLINE_ENABLED)) {
+                statusBar = new ClaudeStatusBar(content);
+                statusBar.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+            }
             termControl.setCharset(java.nio.charset.StandardCharsets.UTF_8);
             applyControlFont();
             termControl.setConnector(connector);
@@ -748,6 +817,112 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             if (scrollLockAction != null && scrollLockAction.isChecked())
                 termControl.setScrollLock(true);
             focus();
+        }
+
+        /**
+         * When the status-line preference is enabled, injects the per-tab CLAUDE_TAB_TOKEN
+         * into {@code env} and appends {@code --settings <shared file>} to {@code argTokens}.
+         * On any failure (no java.home, bundle/state-location error, read-only FS) it logs
+         * (debug-gated) and leaves both lists untouched, so the terminal still launches —
+         * just without the status line. When the preference is off it injects nothing, leaving
+         * the user's own statusLine (if any) untouched.
+         */
+        private void configureStatusLine(List<String> env, List<String> argTokens) {
+            IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
+            if (!prefs.getBoolean(Constants.PREF_STATUSLINE_ENABLED)) return;
+            try {
+                String javaHome = System.getProperty("java.home");
+                if (javaHome == null || javaHome.isEmpty()) return;
+                // Forward slashes throughout: Java accepts them in paths/classpaths on every
+                // OS and they keep backslashes out of the JSON / off the command line.
+                String javaBin = (javaHome + (IS_WINDOWS ? "/bin/java.exe" : "/bin/java"))
+                        .replace('\\', '/');
+
+                // Derive the FQN (compile-time reference) so a rename/move needs no edit here.
+                String fqn = StandaloneStatusForwarder.class.getName();
+
+                Bundle bundle = Activator.getDefault().getBundle();
+                File bundleFile = FileLocator.getBundleFile(bundle);
+                File cpRoot = forwarderClasspathRoot(bundleFile, fqn);
+                if (cpRoot == null) return; // class not found on disk — skip rather than misfire
+                String cp = cpRoot.getAbsolutePath().replace('\\', '/');
+
+                String command = "\"" + javaBin + "\" -Xmx24m -Xms8m -Xss512k -cp \""
+                        + cp + "\" " + fqn;
+
+                int refresh = prefs.getInt(Constants.PREF_STATUSLINE_REFRESH_SECONDS);
+                if (refresh < 1) refresh = 1;
+
+                File settingsFile = writeSharedSettings(command, refresh);
+                if (settingsFile == null) return;
+
+                // Mutate the lists only after the fallible work succeeded, so a partial
+                // failure never leaves a half-configured launch.
+                env.add("CLAUDE_TAB_TOKEN=" + tabToken);
+                argTokens.add("--settings");
+                argTokens.add(quoteArg(settingsFile.getAbsolutePath()));
+            } catch (Exception e) {
+                Activator.logError("Status line setup failed; launching without it", e);
+            }
+        }
+
+        /**
+         * Resolves the {@code -cp} entry from which a bare JVM can load {@link StandaloneStatusForwarder}.
+         *
+         * <p>{@link FileLocator#getBundleFile} returns the bundle <em>root</em>, which differs by
+         * runtime: an installed product is a jar with classes at its root, but a PDE/dev launch is
+         * the project directory whose classes live in the build-output folder ({@code bin/}), not
+         * the root. We therefore probe for the actual {@code .class} file: jar → the jar; root has
+         * it → the root; otherwise the dev output dir. Returns {@code null} if it's nowhere found.
+         */
+        private File forwarderClasspathRoot(File bundleFile, String fqn) {
+            if (bundleFile == null) return null;
+            if (!bundleFile.isDirectory()) return bundleFile; // jar (or other archive): classes at root
+            String classRelPath = fqn.replace('.', '/') + ".class";
+            if (new File(bundleFile, classRelPath).isFile()) {
+                return bundleFile; // classes at the bundle root
+            }
+            File binDir = new File(bundleFile, "bin"); // PDE/dev output folder (build.properties output..)
+            if (new File(binDir, classRelPath).isFile()) {
+                return binDir;
+            }
+            return null;
+        }
+
+        /**
+         * (Over)writes the single shared {@code statusline/settings.json} in the bundle state
+         * location and returns it. The content depends only on {@code command} and
+         * {@code refreshSeconds} (install-/preference-scoped, identical across tabs), so every
+         * launch rewrites byte-identical bytes except when the refresh preference changed —
+         * which is exactly how a refresh-interval change takes effect on the next launch.
+         *
+         * <p>No locking: {@code launch()} is confined to the SWT UI thread (the sole caller
+         * defers it via {@code Display.asyncExec}), so writes never overlap. Returns
+         * {@code null} on I/O failure (caller then launches without the status line).
+         */
+        private File writeSharedSettings(String command, int refreshSeconds) {
+            try {
+                File dir = Activator.getDefault().getStateLocation().append("statusline").toFile();
+                dir.mkdirs();
+                File file = new File(dir, "settings.json");
+
+                JsonObject statusLine = new JsonObject();
+                statusLine.addProperty("type", "command");
+                statusLine.addProperty("command", command);
+                statusLine.addProperty("padding", 0);
+                statusLine.addProperty("refreshInterval", refreshSeconds);
+                JsonObject root = new JsonObject();
+                root.add("statusLine", statusLine);
+
+                // disableHtmlEscaping so <, >, &, =, ' survive verbatim (paths/FQN may contain them).
+                String json = new GsonBuilder().disableHtmlEscaping().create().toJson(root);
+                Files.writeString(file.toPath(), json, StandardCharsets.UTF_8);
+                file.deleteOnExit(); // best-effort cleanup; overwritten before use on every launch
+                return file;
+            } catch (IOException e) {
+                Activator.logError("Failed to write statusline settings file", e);
+                return null;
+            }
         }
 
         private void applyControlFont() {

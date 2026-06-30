@@ -1,14 +1,20 @@
 package com.anthropic.claudecode.eclipse.ui;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.eclipse.jface.preference.BooleanFieldEditor;
 import org.eclipse.jface.preference.ColorFieldEditor;
 import org.eclipse.jface.preference.ComboFieldEditor;
+import org.eclipse.jface.preference.FieldEditor;
 import org.eclipse.jface.preference.FieldEditorPreferencePage;
 import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.preference.IntegerFieldEditor;
 import org.eclipse.jface.preference.StringFieldEditor;
+import org.eclipse.jface.util.PropertyChangeEvent;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.layout.GridData;
+import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPreferencePage;
@@ -18,6 +24,9 @@ import com.anthropic.claudecode.eclipse.Constants;
 import com.anthropic.claudecode.eclipse.NativeCore;
 
 public class ClaudePreferencePage extends FieldEditorPreferencePage implements IWorkbenchPreferencePage {
+
+    private BooleanFieldEditor statuslineEnabled;
+    private final List<FieldEditor> statuslineDependents = new ArrayList<>();
 
     public ClaudePreferencePage() {
         super(GRID);
@@ -91,6 +100,61 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 "Claude CLI foreground:",
                 getFieldEditorParent()));
 
+        Label statusSeparator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);
+        statusSeparator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+
+        Label statusLabel = new Label(getFieldEditorParent(), SWT.NONE);
+        statusLabel.setText("Claude CLI status bar configuration:");
+        statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+
+        statuslineEnabled = new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_ENABLED,
+                "Show status bar (applies to newly launched sessions)",
+                getFieldEditorParent());
+        addField(statuslineEnabled);
+
+        addStatuslineDependent(new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_SHOW_MODEL,
+                "Show model",
+                getFieldEditorParent()));
+
+        addStatuslineDependent(new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_SHOW_EFFORT,
+                "Show effort level",
+                getFieldEditorParent()));
+
+        addStatuslineDependent(new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_SHOW_THINKING,
+                "Show thinking indicator",
+                getFieldEditorParent()));
+
+        addStatuslineDependent(new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_SHOW_CONTEXT,
+                "Show context-window usage",
+                getFieldEditorParent()));
+
+        addStatuslineDependent(new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_SHOW_COST,
+                "Show session cost (USD)",
+                getFieldEditorParent()));
+
+        addStatuslineDependent(new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_SHOW_SESSION_5H,
+                "Show 5-hour (session) usage limit",
+                getFieldEditorParent()));
+
+        addStatuslineDependent(new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_SHOW_WEEKLY,
+                "Show weekly (7-day) usage limit",
+                getFieldEditorParent()));
+
+        IntegerFieldEditor refreshSeconds = new IntegerFieldEditor(
+                Constants.PREF_STATUSLINE_REFRESH_SECONDS,
+                "Status refresh interval (seconds, applies on next launch):",
+                getFieldEditorParent());
+        refreshSeconds.setValidRange(1, 3600);
+        addStatuslineDependent(refreshSeconds);
+
         Label separator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);
         separator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
 
@@ -112,6 +176,43 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 Constants.PREF_NO_PROXY,
                 "NO_PROXY:",
                 getFieldEditorParent()));
+    }
+
+    private void addStatuslineDependent(FieldEditor editor) {
+        statuslineDependents.add(editor);
+        addField(editor);
+    }
+
+    private void updateStatuslineDependentsEnabled() {
+        if (statuslineEnabled == null) {
+            return;
+        }
+        boolean enabled = statuslineEnabled.getBooleanValue();
+        Composite parent = getFieldEditorParent();
+        for (FieldEditor editor : statuslineDependents) {
+            editor.setEnabled(enabled, parent);
+        }
+    }
+
+    @Override
+    protected void initialize() {
+        super.initialize();
+        updateStatuslineDependentsEnabled();
+    }
+
+    @Override
+    protected void performDefaults() {
+        super.performDefaults();
+        updateStatuslineDependentsEnabled();
+    }
+
+    @Override
+    public void propertyChange(PropertyChangeEvent event) {
+        super.propertyChange(event);
+        if (event.getSource() == statuslineEnabled
+                && FieldEditor.VALUE.equals(event.getProperty())) {
+            updateStatuslineDependentsEnabled();
+        }
     }
 
     @Override
