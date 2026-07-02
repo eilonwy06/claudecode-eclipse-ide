@@ -337,6 +337,20 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatSend
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatSetPersistent(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    persistent: jboolean,
+) {
+    if handle == 0 {
+        return;
+    }
+    let manager = unsafe { &*(handle as *const ChatManager) };
+    manager.set_persistent(persistent != 0);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatCancel(
     _env: JNIEnv,
     _class: JClass,

@@ -82,8 +82,16 @@ public class ClaudeGuiView extends ViewPart {
             else if (val instanceof Integer) browserHwnd = (long) (int) (Integer) val;
         } catch (Exception ignored) {}
 
+        disableDevTools();
+
         active = this;
         processManager = new ChatProcessManager();
+        // Persistent protocol: one long-lived claude per conversation. Permission
+        // and question cards arrive as CLI-enforced control requests (the CLI
+        // blocks until answered) instead of model-dependent MCP shim calls.
+        processManager.setPersistent(true);
+        processManager.setOnPermissionRequest(ClaudeGuiView::handleControlPermission);
+        processManager.setOnQuestionRequest(ClaudeGuiView::requestQuestion);
         wireChatCallbacks();
 
         // JS → Java bridge.
@@ -146,6 +154,8 @@ public class ClaudeGuiView extends ViewPart {
 
         browser.addProgressListener(org.eclipse.swt.browser.ProgressListener.completedAdapter(e -> {
             pageLoaded = true;
+            // WebView2 init is async — retry here where the webview provably exists.
+            disableDevTools();
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
             }
@@ -402,12 +412,71 @@ public class ClaudeGuiView extends ViewPart {
     }
 
     /**
-     * Called (off the UI thread) by {@code ApprovalPromptTool} when claude requests
-     * permission. Shows an in-chat decision card and blocks until the user chooses.
-     * Returns "allow" or "deny" ("allow all this session" is remembered statically).
+     * Removes "Inspect" from the WebView2 right-click menu by disabling dev tools
+     * ({@code AreDevToolsEnabled=false}). The default context menu itself stays
+     * enabled, so cut/copy/paste/select-all keep working. Reaches into SWT's Edge
+     * internals reflectively — silently a no-op on other browser backends or if a
+     * future SWT rearranges the fields.
      */
+    private void disableDevTools() {
+        try {
+            Object edge = browser.getWebBrowser();
+            if (edge == null || !edge.getClass().getName().endsWith(".Edge")) return;
+            java.lang.reflect.Field f = edge.getClass().getDeclaredField("settings");
+            f.setAccessible(true);
+            Object settings = f.get(edge);
+            if (settings == null) return;
+            settings.getClass().getMethod("put_AreDevToolsEnabled", boolean.class)
+                    .invoke(settings, false);
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Persistent-chat permission request (stdio control channel). Derives the
+     * card detail and DiffPreview content exactly like {@code ApprovalPromptTool}
+     * and funnels into the same {@link #requestApproval} card flow, so both
+     * routes look identical to the user. Called on a dedicated Rust thread;
+     * blocks until the user decides. {@code rememberLabel} is the CLI-derived
+     * label for the middle "remember" option (empty = no such option). Returns
+     * "allow", "allowRemember", "deny", or "deny&lt;message&gt;".
+     */
+    private static String handleControlPermission(String toolName, String inputJson, String rememberLabel) {
+        com.google.gson.JsonElement input;
+        try {
+            input = com.google.gson.JsonParser.parseString(inputJson);
+        } catch (Exception e) {
+            input = new com.google.gson.JsonObject();
+        }
+        String[] proposal = com.anthropic.claudecode.eclipse.tools.ApprovalPromptTool
+                .proposedContentFor(toolName, input);
+        String decision = requestApproval(toolName,
+                com.anthropic.claudecode.eclipse.tools.ApprovalPromptTool.detailOf(input),
+                proposal != null ? proposal[0] : null,
+                proposal != null ? proposal[1] : null,
+                rememberLabel);
+        return decision == null ? "deny" : decision;
+    }
+
+    /** Legacy overload (MCP {@code ApprovalPromptTool}) — no CLI-derived remember
+     *  label, so it shows the static "allow all edits this session" option. */
     public static String requestApproval(String toolName, String detail,
                                          String filePath, String proposedContent) {
+        return requestApproval(toolName, detail, filePath, proposedContent,
+                               "Yes, allow all edits this session");
+    }
+
+    /** Sets the legacy session-wide auto-allow flag (MCP path only). */
+    public static void setAllowAllSession(boolean on) { allowAllSession = on; }
+
+    /**
+     * Shows an in-chat decision card and blocks until the user chooses.
+     * {@code rememberLabel} sets the middle option's text (empty = no middle
+     * option). Returns the raw decision: "allow", "allowRemember", "deny", or
+     * "deny&lt;message&gt;" — the caller decides how to honor "allowRemember".
+     */
+    public static String requestApproval(String toolName, String detail,
+                                         String filePath, String proposedContent,
+                                         String rememberLabel) {
         if (allowAllSession) return "allow";
         ClaudeGuiView view = active;
         if (view == null || view.browser == null) return "deny";
@@ -416,6 +485,7 @@ public class ClaudeGuiView extends ViewPart {
         PENDING.put(reqId, future);
         final String tn = esc(toolName == null ? "tool" : toolName);
         final String dt = esc(detail == null ? "" : detail);
+        final String rl = esc(rememberLabel == null ? "" : rememberLabel);
 
         // Show the proposed change in an Eclipse diff editor while the card is up
         // (matches the VSCode panel: the diff opens at the decision point).
@@ -431,16 +501,14 @@ public class ClaudeGuiView extends ViewPart {
         Display.getDefault().asyncExec(() -> {
             if (view.browser != null && !view.browser.isDisposed() && view.pageLoaded) {
                 view.browser.execute("window.onApprovalRequest && window.onApprovalRequest('"
-                        + reqId + "','" + tn + "','" + dt + "')");
+                        + reqId + "','" + tn + "','" + dt + "','" + rl + "')");
             } else {
                 CompletableFuture<String> f = PENDING.remove(reqId);
                 if (f != null) f.complete("deny");
             }
         });
         try {
-            String decision = future.get(30, TimeUnit.MINUTES);
-            if ("allowAll".equals(decision)) { allowAllSession = true; return "allow"; }
-            return decision;
+            return future.get(30, TimeUnit.MINUTES);
         } catch (Exception e) {
             return "deny";
         } finally {

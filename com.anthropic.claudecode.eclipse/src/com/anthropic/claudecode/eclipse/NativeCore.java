@@ -170,7 +170,10 @@ public final class NativeCore {
                                               String resumeId, String permMode, String effort,
                                               String model, String thinking);
 
-    /** Cancels the current turn (kills the claude process). */
+    /**
+     * Cancels the current turn. Legacy mode kills the claude process; persistent
+     * mode sends an interrupt over the control channel and the process survives.
+     */
     public static native void chatCancel(long handle);
 
     /** Cancels the current turn and clears session state (disables -c flag). */
@@ -178,6 +181,15 @@ public final class NativeCore {
 
     /** Frees the native memory for this chat manager. */
     public static native void chatDestroy(long handle);
+
+    /**
+     * Switches this manager to persistent mode: one long-lived
+     * {@code claude --input-format stream-json} process per conversation, with
+     * CLI-enforced permission prompts delivered via
+     * {@link ChatCallbacks#onPermissionRequest} / {@link ChatCallbacks#onQuestionRequest}.
+     * Default (never called) is the legacy spawn-per-message behavior.
+     */
+    public static native void chatSetPersistent(long handle, boolean persistent);
 
     /** Streaming event callbacks fired from Rust worker threads. */
     public interface ChatCallbacks {
@@ -193,6 +205,22 @@ public final class NativeCore {
         default void onTokens(String count) {}
         /** Rate-limit / usage info (JSON) for the usage warning banner. */
         default void onRateLimit(String json) {}
+        /**
+         * Persistent mode only: claude is blocked waiting for a permission
+         * decision. Called on a dedicated Rust thread — may block until the user
+         * decides. {@code rememberLabel} is the CLI-derived label for the middle
+         * "remember this decision" option (empty = no such option). Return
+         * "allow" (once), "allowRemember" (allow + echo the CLI's scoped rule),
+         * "deny", or "deny&lt;message&gt;" (reject with a "do this instead" note).
+         */
+        default String onPermissionRequest(String toolName, String inputJson, String rememberLabel) { return "deny"; }
+        /**
+         * Persistent mode only: claude asked a multiple-choice question
+         * (built-in AskUserQuestion). Receives the questions array JSON; returns
+         * the answers as {@code [{header,question,answer}]} or {@code "[]"} if
+         * dismissed. May block until the user answers.
+         */
+        default String onQuestionRequest(String questionsJson) { return "[]"; }
     }
 
     // ── PTY process manager ───────────────────────────────────────────────────

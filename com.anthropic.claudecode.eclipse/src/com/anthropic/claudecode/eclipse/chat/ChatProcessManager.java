@@ -30,6 +30,16 @@ public class ChatProcessManager {
     private Consumer<String> onSessionId;
     private Consumer<String> onTokens;
     private Consumer<String> onRateLimit;
+    // Persistent mode only (Claude GUI). Both may block until the user decides;
+    // Rust calls them on dedicated threads. Defaults when unset match headless
+    // claude -p: permissions denied, questions dismissed.
+    private PermissionHandler onPermissionRequest;
+    private java.util.function.Function<String, String> onQuestionRequest;
+
+    /** (toolName, inputJson, rememberLabel) → decision string. See {@link NativeCore.ChatCallbacks#onPermissionRequest}. */
+    public interface PermissionHandler {
+        String handle(String toolName, String inputJson, String rememberLabel);
+    }
 
     public ChatProcessManager() {
         this.handle = NativeCore.chatCreate();
@@ -44,6 +54,16 @@ public class ChatProcessManager {
             @Override public void onSessionId(String id)   { emit(ChatProcessManager.this.onSessionId, id); }
             @Override public void onTokens(String n)       { emit(ChatProcessManager.this.onTokens, n); }
             @Override public void onRateLimit(String j)    { emit(ChatProcessManager.this.onRateLimit, j); }
+            @Override public String onPermissionRequest(String toolName, String inputJson, String rememberLabel) {
+                var h = ChatProcessManager.this.onPermissionRequest;
+                if (h == null) return "deny";
+                try { return h.handle(toolName, inputJson, rememberLabel); } catch (Exception e) { return "deny"; }
+            }
+            @Override public String onQuestionRequest(String questionsJson) {
+                var h = ChatProcessManager.this.onQuestionRequest;
+                if (h == null) return "[]";
+                try { return h.apply(questionsJson); } catch (Exception e) { return "[]"; }
+            }
         });
     }
 
@@ -60,6 +80,23 @@ public class ChatProcessManager {
     public void setOnSessionId(Consumer<String> cb) { this.onSessionId = cb; }
     public void setOnTokens(Consumer<String> cb)    { this.onTokens = cb; }
     public void setOnRateLimit(Consumer<String> cb) { this.onRateLimit = cb; }
+    /** (toolName, inputJson, rememberLabel) → "allow" | "allowRemember" | "deny" | "deny&lt;message&gt;". Persistent mode. */
+    public void setOnPermissionRequest(PermissionHandler cb) {
+        this.onPermissionRequest = cb;
+    }
+    /** questionsJson → answers array JSON ({@code [{header,question,answer}]}) or "[]". Persistent mode. */
+    public void setOnQuestionRequest(java.util.function.Function<String, String> cb) {
+        this.onQuestionRequest = cb;
+    }
+
+    /**
+     * Opts this manager into the persistent-process protocol (one long-lived
+     * claude per conversation, CLI-enforced permission cards). The deprecated
+     * Claude Chat view never calls this and stays on spawn-per-message.
+     */
+    public void setPersistent(boolean persistent) {
+        NativeCore.chatSetPersistent(handle, persistent);
+    }
 
     // ── Operations ────────────────────────────────────────────────────────────
 

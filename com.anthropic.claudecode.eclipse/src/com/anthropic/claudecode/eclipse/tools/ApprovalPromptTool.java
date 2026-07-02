@@ -64,6 +64,9 @@ public class ApprovalPromptTool implements McpTool {
 
         JsonObject resp = new JsonObject();
         if (decision != null && decision.startsWith("allow")) {
+            // Legacy MCP path has no CLI-enforced scoped rules, so "allowRemember"
+            // falls back to the session-wide auto-allow flag it always used.
+            if ("allowRemember".equals(decision)) ClaudeGuiView.setAllowAllSession(true);
             resp.addProperty("behavior", "allow");
             resp.add("updatedInput", input);
         } else {
@@ -78,8 +81,12 @@ public class ApprovalPromptTool implements McpTool {
         return McpToolResult.success(resp.toString());
     }
 
-    /** Pull a human-friendly detail (usually the target file or command) from the tool input. */
-    private static String detailOf(JsonElement input) {
+    /**
+     * Pull a human-friendly detail (usually the target file or command) from the
+     * tool input. Public: also used by the Claude GUI's control-channel
+     * permission path so both routes render identical cards.
+     */
+    public static String detailOf(JsonElement input) {
         if (input != null && input.isJsonObject()) {
             JsonObject o = input.getAsJsonObject();
             for (String k : new String[]{"file_path", "old_file_path", "path", "filePath", "command", "url"}) {
@@ -92,9 +99,10 @@ public class ApprovalPromptTool implements McpTool {
     /**
      * Computes the proposed full file content for an edit-style tool so a diff
      * preview can be shown. Returns {@code {filePath, content}} or {@code null}
-     * when the tool isn't a file edit (Read, Bash, search, …).
+     * when the tool isn't a file edit (Read, Bash, search, …). Public: shared
+     * with the Claude GUI's control-channel permission path.
      */
-    private static String[] proposedContentFor(String toolName, JsonElement inputEl) {
+    public static String[] proposedContentFor(String toolName, JsonElement inputEl) {
         if (inputEl == null || !inputEl.isJsonObject()) return null;
         JsonObject in = inputEl.getAsJsonObject();
         String fp = str(in, "file_path");

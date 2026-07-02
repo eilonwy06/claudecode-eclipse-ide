@@ -79,6 +79,8 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 #messages::-webkit-scrollbar-track { background: transparent; }
 
 .turn { position: relative; margin: 10px 0; }
+/* First bubble in a conversation gets breathing room below the title header. */
+.pane > .turn:first-child { margin-top: 18px; }
 
 /* user bubble */
 .user-msg { position: relative; border: 1px solid var(--border); background: var(--bg-soft);
@@ -140,6 +142,10 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 
 /* ── Composer ────────────────────────────────────────────── */
 #composer { flex-shrink: 0; padding: 8px 14px 12px; }
+/* Floats OVER the transcript at the composer's position (composer hides while a
+   card is up). The transcript never reflows; showBottomCard reserves matching
+   bottom padding in #messages so the last message can scroll above the card. */
+#bottom-card { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; padding: 8px 14px 12px; }
 /* usage warning banner (shown above the input near a usage limit) */
 #usage-warn { display: none; align-items: center; gap: 4px; margin-bottom: 8px; padding: 7px 11px;
   border: 1px solid #b58b2e; background: rgba(181,139,46,.12); border-radius: 8px; color: #d8b66a; font-size: 12px; }
@@ -178,6 +184,15 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 #send.stop { background: var(--accent); }
 
 /* ── Popup menus ─────────────────────────────────────────── */
+/* custom right-click menu (the native WebView2 menu never shows in the SWT host) */
+#ctx-menu { display: none; position: fixed; z-index: 100; min-width: 150px; background: #252526;
+  border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+#ctx-menu .ci { display: flex; justify-content: space-between; gap: 24px; padding: 5px 10px;
+  border-radius: 5px; font-size: 12.5px; color: var(--fg); cursor: default; }
+#ctx-menu .ci .ck { color: var(--fg-faint); }
+#ctx-menu .ci:hover { background: #2f3140; }
+#ctx-menu .ci.off { color: var(--fg-faint); pointer-events: none; }
+#ctx-menu .ci.off .ck { color: var(--fg-faint); }
 .menu { position: absolute; z-index: 40; background: #252526; border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); padding: 6px; min-width: 230px; display: none; }
 .menu.open { display: block; }
@@ -391,6 +406,10 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 
   <!-- Messages (one .pane per tab, added by JS) -->
   <div id="messages"></div>
+
+  <!-- Decision/question cards dock here, REPLACING the composer while active
+       (VSCode behavior: the card covers the text field, transcript stays live) -->
+  <div id="bottom-card"></div>
 
   <!-- Composer -->
   <div id="composer">
@@ -624,7 +643,9 @@ input.addEventListener('input', () => {
 });
 input.addEventListener('keydown', (e) => {
   if (slashState.open && handleSlashKey(e)) return;
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!isStreaming) doSend(); }
+  // Enter always sends: mid-stream it QUEUES the message (VSCode behavior —
+  // claude answers queued messages in succession over the persistent process).
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
   else if (e.key === 'Escape' && isStreaming) { e.preventDefault(); doCancel(); }
 });
 
@@ -932,16 +953,20 @@ function addSystem(text) {
 
 function doSend() {
   const text = input.value.trim();
-  if (!text || isStreaming) return;
+  if (!text) return;
   if (text.startsWith('/') && handleSlashCommand(text)) { input.value = ''; input.style.height = 'auto'; closeSlash(); return; }
   const t = activeTab(); if (!t) return;
-  streamTab = t;
+  // Mid-stream sends QUEUE onto the same conversation (persistent process);
+  // a different tab can't queue into someone else's stream — ignore.
+  const queueing = isStreaming;
+  if (queueing && streamTab && t !== streamTab) return;
+  if (!queueing) streamTab = t;
   const withCtx = !!(ctxEnabled && ctxData && ctxData.fileName);
   addUserMessage(text, withCtx ? ctxChipLabel() : null);
   if (!t.titled) setTabTitle(t, text);          // title updates immediately on first send
   input.value = ''; input.style.height = 'auto'; closeSlash();
-  setStreaming(true);
-  showWorking();
+  if (!queueing) { setStreaming(true); showWorking(); }
+  else if (!workingEl) showWorking();
   if (window._sendToJava) window._sendToJava(text, withCtx, t.sessionId || '', permMode, effort, curModel, thinkingOn ? '1' : '0');
 }
 function doCancel() {
@@ -951,7 +976,9 @@ function doCancel() {
 }
 
 /* Java → JS streaming callbacks */
-window.onStreamStart   = () => { setStreaming(true); };
+/* onStreamStart also fires when a QUEUED turn begins (after the previous turn's
+   onStreamEnd) — restore the working indicator so the succession is visible. */
+window.onStreamStart   = () => { setStreaming(true); ensureWorking(); };
 window.onThinking      = (t) => { appendThinking(t); };
 window.onStreamText    = (t) => { appendAssistant(t); };
 window.onStreamEnd     = () => { hideWorking(); endAssistant(); setStreaming(false); };
@@ -982,13 +1009,125 @@ function startFreshTurn() {
   showWorking();
 }
 
+/* ---- bottom card dock: cards float over the transcript at the composer's
+   position while active (joebiden3). #messages keeps full height; we reserve
+   bottom padding equal to the card height so the last message scrolls clear. ---- */
+const bottomCardEl = document.getElementById('bottom-card');
+function padForBottomCard() {
+  messagesEl.style.paddingBottom = (bottomCardEl.offsetHeight + 8) + 'px';
+}
+/* Tracks BOTH growth and shrink (question-tab switches, the "Other" input
+   toggling): recompute the reserved padding AND re-pin the transcript to the
+   bottom, so the last message always sits exactly one gap above the card —
+   never covered by a taller tab, never floating high above a shorter one. */
+new ResizeObserver(() => {
+  if (bottomCardEl.style.display === 'block') { padForBottomCard(); scrollBottom(); }
+}).observe(bottomCardEl);
+function showBottomCard(card) {
+  bottomCardEl.innerHTML = '';
+  bottomCardEl.appendChild(card);
+  bottomCardEl.style.display = 'block';
+  document.getElementById('composer').style.display = 'none';
+  requestAnimationFrame(() => { padForBottomCard(); scrollBottom(); });
+}
+function clearBottomCard() {
+  bottomCardEl.innerHTML = '';
+  bottomCardEl.style.display = 'none';
+  messagesEl.style.paddingBottom = '';
+  document.getElementById('composer').style.display = '';
+  input.focus();
+  // A blocking card (AskUserQuestion / approval) suspends the turn WITHOUT ending
+  // it — dismissing the card resumes the same turn, so no onStreamStart fires to
+  // restore the gerund. Guarantee it here (the single dismissal choke point) so
+  // the working indicator is present whenever a turn is still processing.
+  ensureWorking();
+}
+
+/* ---- custom right-click menu ----
+   The native WebView2 context menu never appears inside the SWT host, so we
+   draw our own: Cut/Copy/Paste/Select All, styled like the other popups.
+   No Inspect — dev tools are also disabled host-side. */
+const ctxMenu = document.createElement('div');
+ctxMenu.id = 'ctx-menu';
+document.body.appendChild(ctxMenu);
+// Don't let a click on the menu steal focus/selection from the input.
+ctxMenu.addEventListener('mousedown', (e) => e.preventDefault());
+
+function hideCtxMenu() { ctxMenu.style.display = 'none'; }
+document.addEventListener('mousedown', (e) => { if (!e.target.closest('#ctx-menu')) hideCtxMenu(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideCtxMenu(); }, true);
+window.addEventListener('blur', hideCtxMenu);
+messagesEl.addEventListener('scroll', hideCtxMenu);
+
+function ctxItem(label, hint, enabled, fn) {
+  const it = document.createElement('div');
+  it.className = 'ci' + (enabled ? '' : ' off');
+  it.innerHTML = '<span></span><span class="ck"></span>';
+  it.firstChild.textContent = label;
+  it.lastChild.textContent = hint;
+  if (enabled) it.onclick = () => { hideCtxMenu(); fn(); };
+  ctxMenu.appendChild(it);
+}
+
+document.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  const t = e.target;
+  const field = t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT') ? t : null;
+  const fieldSel = field && field.selectionStart !== field.selectionEnd;
+  const pageSel = !!String(window.getSelection() || '').trim();
+
+  function copyText() {
+    const txt = field ? field.value.slice(field.selectionStart, field.selectionEnd)
+                      : String(window.getSelection() || '');
+    if (!txt) return;
+    if (navigator.clipboard) navigator.clipboard.writeText(txt).catch(() => document.execCommand('copy'));
+    else document.execCommand('copy');
+  }
+
+  ctxMenu.innerHTML = '';
+  if (field) {
+    ctxItem('Cut', 'Ctrl+X', fieldSel, () => {
+      copyText();
+      field.setRangeText('', field.selectionStart, field.selectionEnd, 'start');
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.focus();
+    });
+  }
+  ctxItem('Copy', 'Ctrl+C', field ? fieldSel : pageSel, copyText);
+  if (field) {
+    ctxItem('Paste', 'Ctrl+V', true, () => {
+      field.focus();
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then((txt) => {
+          if (!txt) return;
+          field.setRangeText(txt, field.selectionStart, field.selectionEnd, 'end');
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+        }).catch(() => document.execCommand('paste'));
+      } else {
+        document.execCommand('paste');
+      }
+    });
+  }
+  ctxItem('Select All', 'Ctrl+A', true, () => {
+    if (field) { field.focus(); field.select(); return; }
+    const r = document.createRange();
+    r.selectNodeContents(activeTab() ? activeTab().pane : messagesEl);
+    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  });
+
+  ctxMenu.style.display = 'block';
+  // Clamp inside the viewport (menu is position:fixed).
+  const mw = ctxMenu.offsetWidth, mh = ctxMenu.offsetHeight;
+  ctxMenu.style.left = Math.min(e.clientX, window.innerWidth - mw - 4) + 'px';
+  ctxMenu.style.top  = Math.min(e.clientY, window.innerHeight - mh - 4) + 'px';
+});
+
 /* ---- permission decision card (claude --permission-prompt-tool) ---- */
-window.onApprovalRequest = function(reqId, toolName, detail) {
+window.onApprovalRequest = function(reqId, toolName, detail, rememberLabel) {
   const pane = streamPane() || (activeTab() ? activeTab().pane : null);
   if (!pane) { if (window._decide) window._decide(reqId, 'deny', ''); return; }
   hideWorking();
   const isEdit = /edit|write|multiedit|str_replace|notebook|create/i.test(toolName || '');
-  const dock = document.createElement('div'); dock.className = 'turn card-dock';
   const card = document.createElement('div'); card.className = 'decision';
 
   const q = document.createElement('div'); q.className = 'dec-q';
@@ -1010,7 +1149,7 @@ window.onApprovalRequest = function(reqId, toolName, detail) {
     if (resolved) return; resolved = true;
     document.removeEventListener('keydown', onKey, true);
     if (window._decide) window._decide(reqId, d, msg || '');
-    dock.remove();                              // card disappears — no Approved/Declined trace
+    clearBottomCard();                          // card disappears — composer returns
     if (d === 'deny' && msg) {
       addAnswered(msg, pane); startFreshTurn();  // instruction stays; reply goes below
     } else {
@@ -1022,7 +1161,12 @@ window.onApprovalRequest = function(reqId, toolName, detail) {
     scrollBottom();
   }
 
-  const opts = [['allow', 'Yes'], ['allowAll', 'Yes, allow all edits this session'], ['deny', 'No']];
+  // Middle "remember" option is contextual: its label comes from the CLI's own
+  // permission_suggestion (edits→"all edits", Bash→the command, etc.), and is
+  // omitted entirely when the CLI offers no suggestion for this tool.
+  const opts = [['allow', 'Yes']];
+  if (rememberLabel) opts.push(['allowRemember', rememberLabel]);
+  opts.push(['deny', 'No']);
   opts.forEach(([d, label], i) => {
     const opt = document.createElement('div'); opt.className = 'dec-opt' + (i === 0 ? ' sel' : '');
     opt.setAttribute('data-d', d);
@@ -1034,8 +1178,9 @@ window.onApprovalRequest = function(reqId, toolName, detail) {
     card.appendChild(opt);
   });
 
+  const insteadNum = opts.length + 1;
   const instead = document.createElement('div'); instead.className = 'dec-instead';
-  instead.innerHTML = '<span class="num">4</span>';
+  instead.innerHTML = '<span class="num">' + insteadNum + '</span>';
   const inp = document.createElement('input'); inp.type = 'text';
   inp.placeholder = 'Tell Claude what to do instead';
   inp.onkeydown = (e) => {
@@ -1048,18 +1193,16 @@ window.onApprovalRequest = function(reqId, toolName, detail) {
   const esc = document.createElement('div'); esc.className = 'dec-esc'; esc.textContent = 'Esc to cancel';
   card.appendChild(esc);
 
-  // Number-key shortcuts (1/2/3) and Esc while the card is showing.
+  // Number-key shortcuts map to the visible options in order; Esc cancels.
   function onKey(e) {
     if (resolved || document.activeElement === inp) return;
-    if (e.key === '1') { e.preventDefault(); decide('allow'); }
-    else if (e.key === '2') { e.preventDefault(); decide('allowAll'); }
-    else if (e.key === '3') { e.preventDefault(); decide('deny', ''); }
-    else if (e.key === 'Escape') { e.preventDefault(); decide('deny', ''); }
+    if (e.key === 'Escape') { e.preventDefault(); decide('deny', ''); return; }
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= opts.length) { e.preventDefault(); decide(opts[n - 1][0], ''); }
   }
   document.addEventListener('keydown', onKey, true);
 
-  dock.appendChild(card); pane.appendChild(dock);
-  scrollBottom();
+  showBottomCard(card);
 };
 
 /* ---- AskUserQuestion card (single/multi question, options + Other) ---- */
@@ -1072,9 +1215,7 @@ window.onAskQuestion = function(reqId, questionsJson) {
 
   const state = questions.map(() => ({ choice: null, other: '' })); // choice = option index or 'other'
   let activeQ = 0, resolved = false;
-  const dock = document.createElement('div'); dock.className = 'turn card-dock';
   const card = document.createElement('div'); card.className = 'question-card';
-  dock.appendChild(card);
 
   function answeredText(i) {
     const st = state[i], q = questions[i];
@@ -1093,7 +1234,7 @@ window.onAskQuestion = function(reqId, questionsJson) {
       question: q.question || '', answer: answeredText(i)
     }));
     if (window._answerQuestion) window._answerQuestion(reqId, JSON.stringify(answers));
-    dock.remove();
+    clearBottomCard();
     const summary = answers.map(a => questions.length > 1 ? (a.header + ': ' + a.answer) : a.answer).join('\n');
     addAnswered(summary, pane); startFreshTurn(); scrollBottom();
   }
@@ -1101,7 +1242,7 @@ window.onAskQuestion = function(reqId, questionsJson) {
     if (resolved) return; resolved = true;
     document.removeEventListener('keydown', onKey, true);
     if (window._answerQuestion) window._answerQuestion(reqId, '[]');
-    dock.remove(); scrollBottom();
+    clearBottomCard(); scrollBottom();
   }
 
   function render() {
@@ -1167,7 +1308,7 @@ window.onAskQuestion = function(reqId, questionsJson) {
     if (e.key === 'Escape' && (!document.activeElement || document.activeElement.tagName !== 'INPUT')) { e.preventDefault(); cancel(); }
   }
   document.addEventListener('keydown', onKey, true);
-  render(); pane.appendChild(dock); scrollBottom();
+  render(); showBottomCard(card);
 };
 
 /* ---- working indicator (sunburst + gerund) ---- */
@@ -1219,6 +1360,11 @@ function showWorking() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 function hideWorking() { if (workingEl) { workingEl.remove(); workingEl = null; } }
+/* Invariant: the gerund is visible whenever a turn is still processing AND no
+   card has replaced it. Idempotent — safe to call from any path. */
+function ensureWorking() {
+  if (isStreaming && bottomCardEl.style.display !== 'block' && !workingEl) showWorking();
+}
 /* Live token count shown beside the "Thinking…" marker (real output tokens via the
    CLI partial-message stream), removed once thinking finalizes to "Thought for Ns". */
 window.onTokens = function(n) {
