@@ -28,10 +28,6 @@ public final class Constants {
     public static final String PREF_HTTPS_PROXY = "httpsProxy";
     public static final String PREF_NO_PROXY = "noProxy";
 
-    public static final String PREF_CONSOLE_THEME = "consoleTheme";
-    public static final String CONSOLE_THEME_DARK = "dark";
-    public static final String CONSOLE_THEME_LIGHT = "light";
-
     /** Claude CLI terminal colors (independent of Eclipse's Terminal prefs).
      *  Stored as PreferenceConverter RGB strings ("r,g,b"). */
     public static final String PREF_CONSOLE_BG_COLOR = "consoleBgColor";

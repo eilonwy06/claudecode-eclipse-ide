@@ -112,9 +112,11 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     private static final String LOCAL_CONNECTOR_ID =
             "org.eclipse.terminal.connector.local.LocalConnector";
 
-    // COLORFGBG hint for Claude's "/theme auto", derived from the console theme.
+    // COLORFGBG hint for Claude's "/theme auto", derived from the terminal background luminance.
     private static final String DARK_COLORFGBG_ENV_VAL = "15;0";
     private static final String LIGHT_COLORFGBG_ENV_VAL = "0;15";
+    // Perceived-luminance cutoff (of 255) below which the terminal background counts as dark.
+    private static final double DARK_BG_LUMINANCE_THRESHOLD = 128;
 
     // Active terminal colors, read from the PREF_CONSOLE_BG/FG_COLOR preferences
     // (user-configurable, independent of Eclipse's shared Terminal colors).
@@ -138,9 +140,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     public void createPartControl(Composite parent) {
         Display display = parent.getDisplay();
 
-        String theme = Activator.getDefault().getPreferenceStore()
-                .getString(Constants.PREF_CONSOLE_THEME);
-        setThemeColors(theme, display);
+        setThemeColors(display);
 
         Composite container = new Composite(parent, SWT.NONE);
         GridLayout layout = new GridLayout(1, false);
@@ -194,8 +194,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
         themeChangeListener = event -> {
             String p = event.getProperty();
-            if (Constants.PREF_CONSOLE_THEME.equals(p)
-                    || Constants.PREF_CONSOLE_BG_COLOR.equals(p)
+            if (Constants.PREF_CONSOLE_BG_COLOR.equals(p)
                     || Constants.PREF_CONSOLE_FG_COLOR.equals(p)) {
                 display.asyncExec(() -> {
                     if (viewDisposed || tabFolder == null || tabFolder.isDisposed()) return;
@@ -210,9 +209,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         Display display = Display.getCurrent();
         if (display == null) return;
         Color oldBg = bgColor;
-        String theme = Activator.getDefault().getPreferenceStore()
-                .getString(Constants.PREF_CONSOLE_THEME);
-        setThemeColors(theme, display);
+        setThemeColors(display);
         for (CTabItem item : tabFolder.getItems()) {
             TerminalSession session = (TerminalSession) item.getData();
             if (session != null) session.updateTheme();
@@ -333,9 +330,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         toolBar.add(scrollLockAction);
     }
 
-    private void setThemeColors(String theme, Display display) {
-        colorFgBgEnvVal = Constants.CONSOLE_THEME_LIGHT.equals(theme)
-                ? LIGHT_COLORFGBG_ENV_VAL : DARK_COLORFGBG_ENV_VAL;
+    private void setThemeColors(Display display) {
         // Background/foreground come from the user-configurable preferences.
         IPreferenceStore store = Activator.getDefault().getPreferenceStore();
         RGB bg = PreferenceConverter.getColor(store, Constants.PREF_CONSOLE_BG_COLOR);
@@ -343,6 +338,15 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         bgR = bg.red; bgG = bg.green; bgB = bg.blue;
         fgR = fg.red; fgG = fg.green; fgB = fg.blue;
         bgColor = new Color(display, bgR, bgG, bgB);
+
+        // COLORFGBG tells Claude's "/theme auto" whether its background is dark or light. We derive it
+        // from the actual configured terminal background (PREF_CONSOLE_BG_COLOR), not Eclipse's
+        // General > Appearance theme: that color is what is genuinely painted behind the terminal (and
+        // can differ from the SWT widget/theme color), so its luminance is the ground truth for the hint.
+        // This keeps it correct for any custom color and avoids the discouraged x-friends IThemeEngine
+        // (and its fragile theme-id matching, which mislabels light themes like "Classic").
+        colorFgBgEnvVal = ColorUtils.luminance(bg) < DARK_BG_LUMINANCE_THRESHOLD
+                ? DARK_COLORFGBG_ENV_VAL : LIGHT_COLORFGBG_ENV_VAL;
     }
 
     /**
