@@ -2,14 +2,14 @@
 <?eclipse version="3.4"?>
 <plugin>
 
-   <!-- Claude Code View -->
+   <!-- Claude IDE Server View -->
    <extension point="org.eclipse.ui.views">
       <category
             id="com.anthropic.claudecode.eclipse.category"
             name="Claude Code"/>
       <view
             id="com.anthropic.claudecode.eclipse.ui.ClaudeCodeView"
-            name="Claude Code"
+            name="Claude IDE Server"
             icon="icons/claude-16.png"
             class="com.anthropic.claudecode.eclipse.ui.ClaudeCodeView"
             category="com.anthropic.claudecode.eclipse.category"
@@ -25,7 +25,7 @@
             restorable="true"/>
       <view
             id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"
-            name="Claude CLI"
+            name="Claude Terminal"
             icon="icons/claude-16.png"
             class="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"
             category="com.anthropic.claudecode.eclipse.category"
@@ -40,8 +40,8 @@
             name="Claude Code"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.toggle"
-            name="Toggle Claude Code"
-            description="Toggle the Claude Code terminal panel"
+            name="Toggle Claude IDE Server"
+            description="Toggle the Claude IDE Server view"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.sendSelection"
@@ -65,8 +65,8 @@
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.activateCli"
-            name="Activate Claude CLI"
-            description="Open the Claude CLI view"
+            name="Activate Claude Terminal"
+            description="Open the Claude Terminal view"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
    </extension>
 
@@ -121,15 +121,16 @@
                label="Claude Code"
                mnemonic="C">
             <command
-                  commandId="com.anthropic.claudecode.eclipse.commands.toggle"
-                  label="Toggle Claude Code"
-                  mnemonic="T"
-                  style="push"/>
-            <command
                   commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
-                  label="Activate Claude CLI"
+                  label="Activate Claude Terminal"
                   mnemonic="L"
                   style="push"/>
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.resume"
+                  label="Resume Session"
+                  mnemonic="R"
+                  style="push"/>
+            <separator name="com.anthropic.claudecode.eclipse.separator1" visible="true"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
                   label="Send Selection to Claude"
@@ -137,18 +138,8 @@
                   style="push"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.addFile"
-                  label="Add File to Claude Context"
+                  label="Add File to Claude"
                   mnemonic="A"
-                  style="push"/>
-            <separator name="com.anthropic.claudecode.eclipse.separator1" visible="true"/>
-            <command
-                  commandId="com.anthropic.claudecode.eclipse.commands.resume"
-                  label="Resume Session"
-                  mnemonic="R"
-                  style="push"/>
-            <command
-                  commandId="com.anthropic.claudecode.eclipse.commands.restart"
-                  label="Restart Server"
                   style="push"/>
          </menu>
       </menuContribution>
@@ -175,9 +166,9 @@
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
                   icon="icons/claude-16.png"
-                  label="Activate Claude CLI"
+                  label="Activate Claude Terminal"
                   style="push"
-                  tooltip="Activate Claude CLI"/>
+                  tooltip="Activate Claude Terminal"/>
          </toolbar>
       </menuContribution>
    </extension>
@@ -194,11 +185,11 @@
    <extension point="org.eclipse.ui.themes">
       <fontDefinition
             id="com.anthropic.claudecode.eclipse.font.console"
-            label="Claude CLI Console Font"
+            label="Claude Terminal Console Font"
             categoryId="org.eclipse.ui.workbenchMisc"
             defaultsTo="org.eclipse.jface.textfont">
          <description>
-            The font used for the Claude CLI terminal console.
+            The font used for the Claude Terminal.
          </description>
       </fontDefinition>
    </extension>
@@ -213,7 +204,7 @@
       <startup class="com.anthropic.claudecode.eclipse.ClaudeStartup"/>
    </extension>
 
-   <!-- Register Claude CLI in Show In menu (Package Explorer works, Project Explorer is CNF limitation) -->
+   <!-- Register Claude Terminal in Show In menu (Package Explorer works, Project Explorer is CNF limitation) -->
    <extension point="org.eclipse.ui.perspectiveExtensions">
       <!-- Java -->
       <perspectiveExtension targetID="org.eclipse.jdt.ui.JavaPerspective">
@@ -341,7 +332,7 @@
       </perspectiveExtension>
    </extension>
 
-   <!-- Open Claude CLI Here - context menu for navigators -->
+   <!-- Open Claude Terminal Here - context menu for navigators -->
    <extension point="org.eclipse.ui.popupMenus">
       <objectContribution
             id="com.anthropic.claudecode.eclipse.openCliHere"
@@ -349,7 +340,7 @@
             adaptable="true">
          <action
                id="com.anthropic.claudecode.eclipse.actions.openCliHere"
-               label="Open Claude CLI Here"
+               label="Open Claude Terminal Here"
                icon="icons/claude-16.png"
                class="com.anthropic.claudecode.eclipse.ui.actions.OpenCliHereAction"/>
       </objectContribution>

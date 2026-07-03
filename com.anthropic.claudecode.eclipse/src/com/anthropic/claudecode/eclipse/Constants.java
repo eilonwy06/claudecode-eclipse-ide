@@ -21,19 +21,19 @@ public final class Constants {
     public static final String PREF_AUTO_LAUNCH_CLI = "autoLaunchCli";
     public static final String PREF_DEBUG_MODE = "debugMode";
 
-    /** Set once the user dismisses the Ctrl+Click hint bar in the Claude CLI view (per-workspace). */
+    /** Set once the user dismisses the Ctrl+Click hint bar in the Claude Terminal view (per-workspace). */
     public static final String PREF_CLI_CTRLCLICK_HINT_DISMISSED = "cliCtrlClickHintDismissed";
 
     public static final String PREF_HTTP_PROXY = "httpProxy";
     public static final String PREF_HTTPS_PROXY = "httpsProxy";
     public static final String PREF_NO_PROXY = "noProxy";
 
-    /** Claude CLI terminal colors (independent of Eclipse's Terminal prefs).
+    /** Claude Terminal colors (independent of Eclipse's Terminal prefs).
      *  Stored as PreferenceConverter RGB strings ("r,g,b"). */
     public static final String PREF_CONSOLE_BG_COLOR = "consoleBgColor";
     public static final String PREF_CONSOLE_FG_COLOR = "consoleFgColor";
 
-    // ── Claude CLI status bar (statusLine) ──────────────────────────────────
+    // ── Claude Terminal status bar (statusLine) ─────────────────────────────
     /** Master switch: inject the statusLine and show the per-tab status bar. */
     public static final String PREF_STATUSLINE_ENABLED = "statuslineEnabled";
     /** Per-element visibility toggles (apply live in the bar render path). */

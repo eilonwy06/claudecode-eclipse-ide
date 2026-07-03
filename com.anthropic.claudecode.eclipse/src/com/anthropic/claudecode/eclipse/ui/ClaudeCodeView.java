@@ -85,7 +85,7 @@ public class ClaudeCodeView extends ViewPart {
 
         startPhpBridge();
         logBridgeInfo();
-        appendLog("Click 'Launch Claude Terminal' to open the Claude CLI.\n\n");
+        appendLog("Click 'Launch Claude Terminal' to open the Claude Terminal.\n\n");
 
         updateStatus();
         startStatusPoller();
@@ -180,13 +180,13 @@ public class ClaudeCodeView extends ViewPart {
         launchButton.setText("Launch Terminal");
         launchButton.addListener(SWT.Selection, e -> startClaude());
 
-        Button restartBtn = new Button(buttonRow, SWT.PUSH);
-        restartBtn.setText("Restart Server");
-        restartBtn.addListener(SWT.Selection, e -> restartServer());
-
         Button resumeBtn = new Button(buttonRow, SWT.PUSH);
         resumeBtn.setText("Resume Session");
         resumeBtn.addListener(SWT.Selection, e -> restartClaude("--resume"));
+
+        Button restartBtn = new Button(buttonRow, SWT.PUSH);
+        restartBtn.setText("Restart Server");
+        restartBtn.addListener(SWT.Selection, e -> restartServer());
     }
 
     private void createLogArea(Composite parent, Display display) {
@@ -259,8 +259,8 @@ public class ClaudeCodeView extends ViewPart {
             ClaudeCliView cliView = (ClaudeCliView) page.showView(ClaudeCliView.VIEW_ID);
             cliView.launchProcess(extraArgs);
         } catch (PartInitException e) {
-            appendLog("[ERROR] Could not open Claude CLI view: " + e.getMessage() + "\n");
-            Activator.logError("Failed to open Claude CLI view", e);
+            appendLog("[ERROR] Could not open Claude Terminal view: " + e.getMessage() + "\n");
+            Activator.logError("Failed to open Claude Terminal view", e);
         } finally {
             Display.getCurrent().timerExec(500, () -> launching = false);
         }

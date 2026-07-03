@@ -23,7 +23,7 @@ public class ActivateClaudeCliHandler extends AbstractHandler {
             ClaudeCliView view = (ClaudeCliView) page.showView(ClaudeCliView.VIEW_ID);
             if (view != null) view.ensureAtLeastOneTab();
         } catch (Exception e) {
-            Activator.logError("Failed to activate Claude CLI view", e);
+            Activator.logError("Failed to activate Claude Terminal view", e);
         }
         return null;
     }

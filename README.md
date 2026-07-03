@@ -25,7 +25,7 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 
 ### Required Eclipse Terminal bundles
 
-The **Claude CLI** view embeds the Eclipse Terminal, so these bundles must be present (version **1.1.0 or newer**, within the `1.x` range):
+The **Claude Terminal** view embeds the Eclipse Terminal, so these bundles must be present (version **1.1.0 or newer**, within the `1.x` range):
 
 - `org.eclipse.terminal.control`
 - `org.eclipse.terminal.connector.process`
@@ -75,30 +75,30 @@ Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
 ### Opening the Views
 
 Go to **Window → Show View → Other → Claude Code** and open the views you want:
-- **Claude Code** — server status, launch/resume/restart controls
-- **Claude CLI** — dedicated interactive terminal (multiple "Claude N" tabs), built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, customizable colors, and Ctrl/⌘-click navigation to file paths and links mentioned in Claude's answers
+- **Claude Terminal** — dedicated interactive terminal, built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, customizable colors, and Ctrl/⌘-click navigation to file paths and links mentioned in Claude's answers
 - **Claude Chat** — web-based chat interface with markdown rendering
+- **Claude IDE Server** — server status, launch/resume/restart controls
+
 
 ### Getting Started
 
-1. In the **Claude Code** view, click **Launch Claude Terminal** — this opens the **Claude CLI** view and starts Claude automatically
-2. Type directly in the **Claude CLI** view, or switch to **Claude Chat** for a richer markdown interface
-3. Claude can read your open files, selection, and workspace context automatically via MCP tools
+1. Open the **Claude Terminal** view, or switch to **Claude Chat** for a richer markdown interface
+2. Claude can read your open files, selection, and workspace context automatically via MCP tools
 
-> **Note (all platforms):** The Claude CLI view embeds the Eclipse Terminal control and launches `claude` over a local PTY (ConPTY on Windows, native PTY on Linux/macOS), with full ANSI/24-bit color, scrollback, and resize. Copy/paste is available via the right-click menu or the keyboard: `Ctrl/⌘+V` (or `Shift+Insert`) to paste, `Ctrl/⌘+Shift+C` to copy, and `Ctrl/⌘+C` copies when text is selected (otherwise it passes through to interrupt Claude).
+> **Note (all platforms):** The Claude Terminal view embeds the Eclipse Terminal control and launches `claude` over a local PTY (ConPTY on Windows, native PTY on Linux/macOS), with full ANSI/24-bit color, scrollback, and resize. Copy/paste is available via the right-click menu or the keyboard: `Ctrl/⌘+V` (or `Shift+Insert`) to paste, `Ctrl/⌘+Shift+C` to copy, and `Ctrl/⌘+C` copies when text is selected (otherwise it passes through to interrupt Claude).
 
-> **Open files, links, and Java references:** Claude often references file paths, URLs and Java type/member names in its answers. **Ctrl-click** (⌘-click on macOS) any such token in the **Claude CLI** view to jump straight to it — a file opens in an editor, an `http`/`https` URL opens in your browser, and a Java reference (e.g. `java.util.List`, `com.foo.Bar:21`, `Bar#baz(int)`) opens in the Java editor (only if JDT is installed). Paths and file names containing spaces are fully supported — absolute or workspace-relative, even when the path wraps across terminal lines or a file name appears mid-sentence — clicking any segment opens the right file. You can also select text and choose **Open** from the right-click menu.
+> **Open files, links, and Java references:** Claude often references file paths, URLs and Java type/member names in its answers. **Ctrl-click** (⌘-click on macOS) any such token in the **Claude Terminal** view to jump straight to it — a file opens in an editor, an `http`/`https` URL opens in your browser, and a Java reference (e.g. `java.util.List`, `com.foo.Bar:21`, `Bar#baz(int)`) opens in the Java editor (only if JDT is installed). Paths and file names containing spaces are fully supported — absolute or workspace-relative, even when the path wraps across terminal lines or a file name appears mid-sentence — clicking any segment opens the right file. You can also select text and choose **Open** from the right-click menu.
 
-> **Font customization (all platforms):** The console font can be changed in **Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude CLI Console Font**. By default it inherits from Eclipse's "Text Font" setting. **Linux users:** If you see horizontal lines or other rendering artifacts, try setting the font to one commonly used by terminal emulators (e.g., MesloLGS NF, JetBrains Mono, or your terminal's default font).
+> **Font customization (all platforms):** The console font can be changed in **Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude Terminal Console Font**. By default it inherits from Eclipse's "Text Font" setting. **Linux users:** If you see horizontal lines or other rendering artifacts, try setting the font to one commonly used by terminal emulators (e.g., MesloLGS NF, JetBrains Mono, or your terminal's default font).
 
-> **Color customization (all platforms):** The Claude CLI's background/foreground colors — can be set in **Window → Preferences → Claude Code** ("Claude CLI background" and "Claude CLI foreground"). These are independent of Eclipse's built-in Terminal colors and apply immediately without restart.
+> **Color customization (all platforms):** The Claude Terminal's background/foreground colors — can be set in **Window → Preferences → Claude Code** ("Claude Terminal background" and "Claude Terminal foreground"). These are independent of Eclipse's built-in Terminal colors and apply immediately without restart.
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+Shift+C` | Toggle Claude Code view |
-| ``Ctrl+` ``    | Activate Claude CLI view |
+| `Ctrl+Shift+Alt+C` | Toggle Claude IDE Server view |
+| ``Ctrl+` ``    | Activate Claude Terminal view |
 | `Ctrl+Alt+S` | Send current editor selection to Claude |
 | `Ctrl+Alt+A` | Add current file to Claude's context |
 
@@ -139,7 +139,7 @@ Go to **Window → Preferences → Claude Code** to configure:
 | Claude command | `claude` | Path to the Claude CLI executable |
 | Arguments | *(empty)* | Additional CLI arguments (e.g., `--model claude-opus-4-7-20260418`) |
 | Port range (min/max) | 10000–65535 | Port range for the internal HTTP+SSE server |
-| Claude CLI background / foreground | `#121314` / `#E5E5E5` | Terminal colors, independent of Eclipse's Terminal; apply immediately |
+| Claude Terminal background / foreground | `#121314` / `#E5E5E5` | Terminal colors, independent of Eclipse's Terminal; apply immediately |
 
 ## Architecture
 

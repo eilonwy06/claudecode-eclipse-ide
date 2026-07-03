@@ -70,7 +70,7 @@ public class AddFileHandler extends AbstractHandler {
             if (view != null) view.ensureAtLeastOneTab();
             return view;
         } catch (Exception e) {
-            Activator.logError("Failed to open Claude CLI view", e);
+            Activator.logError("Failed to open Claude Terminal view", e);
             return null;
         }
     }
