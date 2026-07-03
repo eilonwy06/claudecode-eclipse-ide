@@ -321,10 +321,6 @@ public class ClaudeCodeView extends ViewPart {
         return store.getBoolean(Constants.PREF_AUTO_LAUNCH_CLI);
     }
 
-    private boolean isMacOS() {
-        return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac");
-    }
-
     private void appendLog(String text) {
         if (logArea != null && !logArea.isDisposed()) {
             logArea.append(text);

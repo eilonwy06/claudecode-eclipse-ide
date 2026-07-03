@@ -129,6 +129,25 @@ public final class NativeCore {
         String executeEclipseTool(String toolName, String argsJson);
     }
 
+    /**
+     * Registers the Java object that handles Claude statusLine updates.
+     * Rust calls {@link StatusCallback#onStatusUpdate} for every POST to /statusline.
+     * This is a dedicated channel, independent of the MCP {@link ToolCallback} above.
+     */
+    public static native void registerStatusCallback(long serverHandle, StatusCallback callback);
+
+    /** Callback invoked from a Rust worker/OS thread for every statusLine update. */
+    public interface StatusCallback {
+        /**
+         * Deliver a Claude statusLine JSON document to the tab identified by {@code tabToken}.
+         * Called from a Rust worker/OS thread (NOT the UI thread).
+         *
+         * @param tabToken   the per-tab routing token minted at launch
+         * @param statusJson the raw statusLine JSON Claude piped to the forwarder
+         */
+        void onStatusUpdate(String tabToken, String statusJson);
+    }
+
     // ── Lock file ─────────────────────────────────────────────────────────────
 
     /**

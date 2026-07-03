@@ -44,6 +44,15 @@ pub struct ToolCallbackRef {
     pub callback: Arc<GlobalRef>,
 }
 
+/// Status callback stored once per server after Java calls registerStatusCallback.
+/// Deliberately a sibling of `ToolCallbackRef` (not a reuse): the status-line channel
+/// is independent of the MCP tool path, so it gets its own ref, its own Java method
+/// (`onStatusUpdate`), and its own invoker (`call_java_status`).
+pub struct StatusCallbackRef {
+    pub java_vm: Arc<jni::JavaVM>,
+    pub callback: Arc<GlobalRef>,
+}
+
 // ---------------------------------------------------------------------------
 // Shared state (Arc'd into every Axum handler)
 // ---------------------------------------------------------------------------
@@ -53,6 +62,8 @@ pub struct AppState {
     pub clients: Mutex<HashMap<String, mpsc::UnboundedSender<SseEvent>>>,
     pub auth_token: String,
     pub tool_callback: Mutex<Option<ToolCallbackRef>>,
+    /// Dedicated status-line callback, separate from `tool_callback` (status is not a tool).
+    pub status_callback: Mutex<Option<StatusCallbackRef>>,
     pub preferred_port: Option<u16>,
     /// Last "selection_changed" notification JSON, cached so a CLI that connects
     /// after a selection happened can be replayed it on initialize.
@@ -112,6 +123,7 @@ impl Server {
             clients: Mutex::new(HashMap::new()),
             auth_token,
             tool_callback: Mutex::new(None),
+            status_callback: Mutex::new(None),
             preferred_port,
             last_selection: Mutex::new(None),
         });
@@ -174,6 +186,7 @@ impl Server {
             let app = Router::new()
                 .route("/sse", get(sse_handler))
                 .route("/messages", post(messages_handler))
+                .route("/statusline", post(statusline_handler))
                 .with_state(state);
 
             axum::serve(listener, app)
@@ -326,6 +339,13 @@ impl Server {
             callback: Arc::new(callback),
         });
     }
+
+    pub fn register_status_callback(&self, vm: Arc<jni::JavaVM>, callback: GlobalRef) {
+        *self.state.status_callback.lock().unwrap() = Some(StatusCallbackRef {
+            java_vm: vm,
+            callback: Arc::new(callback),
+        });
+    }
 }
 
 impl Drop for Server {
@@ -469,6 +489,101 @@ async fn messages_handler(
     });
 
     (StatusCode::ACCEPTED, "Accepted").into_response()
+}
+
+// ---------------------------------------------------------------------------
+// /statusline — dedicated status-line channel (NOT the MCP tool path)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct StatusQuery {
+    /// Our per-tab routing token (minted by ClaudeCliView, echoed by StandaloneStatusForwarder).
+    tab: Option<String>,
+    /// The workspace server's shared secret (lock-file `authToken` / `state.auth_token`).
+    #[serde(rename = "authToken")]
+    auth_token: Option<String>,
+}
+
+/// POST /statusline?tab=<tabToken>&authToken=<secret>
+/// Receives the raw Claude statusLine JSON (piped to StandaloneStatusForwarder's stdin and
+/// forwarded verbatim) and routes it to the matching tab via the status callback.
+async fn statusline_handler(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<StatusQuery>,
+    body: Bytes,
+) -> Response {
+    let tab = match params.tab {
+        Some(t) if !t.is_empty() => t,
+        _ => return (StatusCode::BAD_REQUEST, "Missing tab").into_response(),
+    };
+
+    // Authenticate with the workspace server's shared secret (loopback-only endpoint,
+    // random per-session token).
+    let presented = params.auth_token.unwrap_or_default();
+    if presented != state.auth_token {
+        return (StatusCode::UNAUTHORIZED, "Invalid authToken").into_response();
+    }
+
+    let body_str = match String::from_utf8(body.to_vec()) {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid UTF-8 body").into_response(),
+    };
+
+    // Hand off to Java on a plain OS thread so attach_current_thread is safe even off a
+    // tokio worker (mirrors ClientGuard::drop). The forwarder ignores the response body.
+    let guard = state.status_callback.lock().unwrap();
+    if let Some(cb) = guard.as_ref() {
+        let java_vm  = Arc::clone(&cb.java_vm);
+        let callback = Arc::clone(&cb.callback);
+        std::thread::spawn(move || {
+            call_java_status(&java_vm, &callback, &tab, &body_str);
+        });
+    }
+
+    (StatusCode::OK, "OK").into_response()
+}
+
+/// Attaches the current thread to the JVM and calls
+/// `callback.onStatusUpdate(tabToken, statusJson)`. Dedicated to the status channel —
+/// deliberately separate from `mcp::call_java_tool`.
+fn call_java_status(
+    java_vm: &jni::JavaVM,
+    callback: &GlobalRef,
+    tab: &str,
+    status_json: &str,
+) {
+    use jni::objects::{JObject, JValue};
+
+    let mut env = match java_vm.attach_current_thread() {
+        Ok(env) => env,
+        Err(e) => {
+            if crate::is_debug() {
+                eprintln!("statusline: JVM attach failed: {}", e);
+            }
+            return;
+        }
+    };
+
+    let tab_jstr = match env.new_string(tab) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let json_jstr = match env.new_string(status_json) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let tab_obj  = JObject::from(tab_jstr);
+    let json_obj = JObject::from(json_jstr);
+
+    let result = env.call_method(
+        callback,
+        "onStatusUpdate",
+        "(Ljava/lang/String;Ljava/lang/String;)V",
+        &[JValue::Object(&tab_obj), JValue::Object(&json_obj)],
+    );
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
 }
 
 // ---------------------------------------------------------------------------

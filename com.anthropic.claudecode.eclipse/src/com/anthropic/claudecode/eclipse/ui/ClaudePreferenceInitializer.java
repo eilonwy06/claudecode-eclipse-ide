@@ -31,6 +31,17 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
 
         store.setDefault(Constants.PREF_CONSOLE_THEME, Constants.CONSOLE_THEME_DARK);
 
+        // Claude CLI status bar (statusLine) — on by default, except the thinking segment.
+        store.setDefault(Constants.PREF_STATUSLINE_ENABLED, true);
+        store.setDefault(Constants.PREF_STATUSLINE_SHOW_MODEL, true);
+        store.setDefault(Constants.PREF_STATUSLINE_SHOW_EFFORT, true);
+        store.setDefault(Constants.PREF_STATUSLINE_SHOW_THINKING, false);
+        store.setDefault(Constants.PREF_STATUSLINE_SHOW_CONTEXT, true);
+        store.setDefault(Constants.PREF_STATUSLINE_SHOW_COST, false);
+        store.setDefault(Constants.PREF_STATUSLINE_SHOW_SESSION_5H, true);
+        store.setDefault(Constants.PREF_STATUSLINE_SHOW_WEEKLY, true);
+        store.setDefault(Constants.PREF_STATUSLINE_REFRESH_SECONDS, 60);
+
         // Claude CLI terminal colors — default to the dark look (#121314 / #E5E5E5).
         PreferenceConverter.setDefault(store, Constants.PREF_CONSOLE_BG_COLOR, new RGB(0x12, 0x13, 0x14));
         PreferenceConverter.setDefault(store, Constants.PREF_CONSOLE_FG_COLOR, new RGB(0xE5, 0xE5, 0xE5));
