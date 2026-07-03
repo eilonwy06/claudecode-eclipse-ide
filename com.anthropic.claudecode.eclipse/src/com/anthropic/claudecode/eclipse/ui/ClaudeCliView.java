@@ -304,13 +304,13 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
     private void configureActionBars() {
         IToolBarManager toolBar = getViewSite().getActionBars().getToolBarManager();
-        Action newSession = new Action("New Claude Terminal Session") {
+        Action newSession = new Action("New Session") {
             @Override
             public void run() {
                 openNewSession(null, null);
             }
         };
-        newSession.setToolTipText("New Claude Terminal Session");
+        newSession.setToolTipText("New Claude Session");
         newSession.setImageDescriptor(Activator.getImageDescriptor(Constants.IMG_NEW_CLI_SESSION));
         toolBar.add(newSession);
         toolBar.add(new Separator());
