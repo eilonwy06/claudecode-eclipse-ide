@@ -25,7 +25,7 @@
             restorable="true"/>
       <view
             id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"
-            name="Claude CLI"
+            name="Claude Terminal"
             icon="icons/claude-16.png"
             class="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"
             category="com.anthropic.claudecode.eclipse.category"
@@ -65,8 +65,8 @@
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.activateCli"
-            name="Activate Claude CLI"
-            description="Open the Claude CLI view"
+            name="Activate Claude Terminal"
+            description="Open the Claude Terminal view"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
    </extension>
 
@@ -127,7 +127,7 @@
                   style="push"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
-                  label="Activate Claude CLI"
+                  label="Activate Claude Terminal"
                   mnemonic="L"
                   style="push"/>
             <command
@@ -175,9 +175,9 @@
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
                   icon="icons/claude-16.png"
-                  label="Activate Claude CLI"
+                  label="Activate Claude Terminal"
                   style="push"
-                  tooltip="Activate Claude CLI"/>
+                  tooltip="Activate Claude Terminal"/>
          </toolbar>
       </menuContribution>
    </extension>
@@ -194,11 +194,11 @@
    <extension point="org.eclipse.ui.themes">
       <fontDefinition
             id="com.anthropic.claudecode.eclipse.font.console"
-            label="Claude CLI Console Font"
+            label="Claude Terminal Console Font"
             categoryId="org.eclipse.ui.workbenchMisc"
             defaultsTo="org.eclipse.jface.textfont">
          <description>
-            The font used for the Claude CLI terminal console.
+            The font used for the Claude Terminal.
          </description>
       </fontDefinition>
    </extension>
@@ -213,7 +213,7 @@
       <startup class="com.anthropic.claudecode.eclipse.ClaudeStartup"/>
    </extension>
 
-   <!-- Register Claude CLI in Show In menu (Package Explorer works, Project Explorer is CNF limitation) -->
+   <!-- Register Claude Terminal in Show In menu (Package Explorer works, Project Explorer is CNF limitation) -->
    <extension point="org.eclipse.ui.perspectiveExtensions">
       <!-- Java -->
       <perspectiveExtension targetID="org.eclipse.jdt.ui.JavaPerspective">
@@ -341,7 +341,7 @@
       </perspectiveExtension>
    </extension>
 
-   <!-- Open Claude CLI Here - context menu for navigators -->
+   <!-- Open Claude Terminal Here - context menu for navigators -->
    <extension point="org.eclipse.ui.popupMenus">
       <objectContribution
             id="com.anthropic.claudecode.eclipse.openCliHere"
@@ -349,7 +349,7 @@
             adaptable="true">
          <action
                id="com.anthropic.claudecode.eclipse.actions.openCliHere"
-               label="Open Claude CLI Here"
+               label="Open Claude Terminal Here"
                icon="icons/claude-16.png"
                class="com.anthropic.claudecode.eclipse.ui.actions.OpenCliHereAction"/>
       </objectContribution>

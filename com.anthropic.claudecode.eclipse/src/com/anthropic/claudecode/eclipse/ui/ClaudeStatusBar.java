@@ -25,7 +25,7 @@ import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.Constants;
 
 /**
- * Per-tab status strip for the Claude CLI view: a one-line, at-a-glance indicator of the
+ * Per-tab status strip for the Claude Terminal view: a one-line, at-a-glance indicator of the
  * current model, effort level, thinking indicator, context-window usage, session cost, and the
  * 5-hour/weekly subscription usage limits (with reset countdowns). It is fed by {@link #setStatus}
  * from  {@code StatusBridge}.

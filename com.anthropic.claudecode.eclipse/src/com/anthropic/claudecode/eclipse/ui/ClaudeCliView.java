@@ -78,7 +78,7 @@ import com.anthropic.claudecode.eclipse.resolvers.EntitiesRegistry;
 import com.anthropic.claudecode.eclipse.status.StandaloneStatusForwarder;
 
 /**
- * Claude CLI view: a tabbed view ("Claude 1", "Claude 2", …) where each tab
+ * Claude Terminal view: a tabbed view ("Claude 1", "Claude 2", …) where each tab
  * embeds an Eclipse terminal control running the Claude CLI.
  *
  * <p>The terminal is the Eclipse terminal control ({@code org.eclipse.terminal})
@@ -304,13 +304,13 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
     private void configureActionBars() {
         IToolBarManager toolBar = getViewSite().getActionBars().getToolBarManager();
-        Action newSession = new Action("New Claude CLI Session") {
+        Action newSession = new Action("New Claude Terminal Session") {
             @Override
             public void run() {
                 openNewSession(null, null);
             }
         };
-        newSession.setToolTipText("New Claude CLI Session");
+        newSession.setToolTipText("New Claude Terminal Session");
         newSession.setImageDescriptor(Activator.getImageDescriptor(Constants.IMG_NEW_CLI_SESSION));
         toolBar.add(newSession);
         toolBar.add(new Separator());

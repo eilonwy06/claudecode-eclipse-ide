@@ -20,7 +20,7 @@ import com.anthropic.claudecode.eclipse.resolvers.EntitiesRegistry;
 import com.anthropic.claudecode.eclipse.resolvers.EntitiesRegistry.NamedResolvedEntity;
 
 /**
- * Opens an entity from the Claude CLI terminal, either on Ctrl/Cmd + left-click (the hovered
+ * Opens an entity from the Claude Terminal, either on Ctrl/Cmd + left-click (the hovered
  * token) or on demand from the context menu (the current selection).
  *
  * <p>The mouse gesture is modeled on Eclipse's {@code OpenFileMouseHandler} (only MOD1 +
@@ -86,7 +86,7 @@ public class OpenEntityHandler implements ITerminalMouseListener {
 		}
 		statusLine.setErrorMessage(null);
 		statusLine.setMessage("Opening entity from \""+text+"\"...");
-		Job job = new Job("Resolving entity from Claude CLI") {
+		Job job = new Job("Resolving entity from Claude Terminal") {
 			@Override
 			protected IStatus run(IProgressMonitor monitor) {
 				List<NamedResolvedEntity> entities = registry.resolve(text, allowStripEdges);
@@ -127,7 +127,7 @@ public class OpenEntityHandler implements ITerminalMouseListener {
 	private void showChooser(List<NamedResolvedEntity> entities) {
 		Control canvas = terminal.getControl();
 		if (canvas == null || canvas.isDisposed()) {
-			statusLine.setErrorMessage("Could not show the entity chooser: Claude CLI is unavailable.");
+			statusLine.setErrorMessage("Could not show the entity chooser: Claude Terminal is unavailable.");
 			return;
 		}
 		Menu menu = new Menu(canvas);

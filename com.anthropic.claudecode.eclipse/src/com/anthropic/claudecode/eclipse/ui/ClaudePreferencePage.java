@@ -71,7 +71,7 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
 
         addField(new BooleanFieldEditor(
                 Constants.PREF_AUTO_LAUNCH_CLI,
-                "Auto-launch Claude CLI on workspace open",
+                "Auto-launch Claude Terminal on workspace open",
                 getFieldEditorParent()));
 
         addField(new BooleanFieldEditor(
@@ -79,22 +79,22 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 "Debug mode",
                 getFieldEditorParent()));
 
-        // Claude CLI terminal colors — independent of Eclipse's Terminal colors.
+        // Claude Terminal colors — independent of Eclipse's Terminal colors.
         addField(new ColorFieldEditor(
                 Constants.PREF_CONSOLE_BG_COLOR,
-                "Claude CLI background:",
+                "Claude Terminal background:",
                 getFieldEditorParent()));
 
         addField(new ColorFieldEditor(
                 Constants.PREF_CONSOLE_FG_COLOR,
-                "Claude CLI foreground:",
+                "Claude Terminal foreground:",
                 getFieldEditorParent()));
 
         Label statusSeparator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);
         statusSeparator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
 
         Label statusLabel = new Label(getFieldEditorParent(), SWT.NONE);
-        statusLabel.setText("Claude CLI status bar configuration:");
+        statusLabel.setText("Claude Terminal status bar configuration:");
         statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
 
         statuslineEnabled = new BooleanFieldEditor(
