@@ -5,7 +5,6 @@ import java.util.List;
 
 import org.eclipse.jface.preference.BooleanFieldEditor;
 import org.eclipse.jface.preference.ColorFieldEditor;
-import org.eclipse.jface.preference.ComboFieldEditor;
 import org.eclipse.jface.preference.FieldEditor;
 import org.eclipse.jface.preference.FieldEditorPreferencePage;
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -78,15 +77,6 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
         addField(new BooleanFieldEditor(
                 Constants.PREF_DEBUG_MODE,
                 "Debug mode",
-                getFieldEditorParent()));
-
-        addField(new ComboFieldEditor(
-                Constants.PREF_CONSOLE_THEME,
-                "Claude CLI theme:",
-                new String[][] {
-                    {"Dark", Constants.CONSOLE_THEME_DARK},
-                    {"Light", Constants.CONSOLE_THEME_LIGHT}
-                },
                 getFieldEditorParent()));
 
         // Claude CLI terminal colors — independent of Eclipse's Terminal colors.

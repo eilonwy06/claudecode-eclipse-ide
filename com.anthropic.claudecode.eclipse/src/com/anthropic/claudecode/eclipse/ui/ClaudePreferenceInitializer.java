@@ -29,8 +29,6 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         store.setDefault(Constants.PREF_HTTPS_PROXY, "");
         store.setDefault(Constants.PREF_NO_PROXY, "");
 
-        store.setDefault(Constants.PREF_CONSOLE_THEME, Constants.CONSOLE_THEME_DARK);
-
         // Claude CLI status bar (statusLine) — on by default, except the thinking segment.
         store.setDefault(Constants.PREF_STATUSLINE_ENABLED, true);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_MODEL, true);

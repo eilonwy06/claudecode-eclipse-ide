@@ -91,7 +91,7 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 
 > **Font customization (all platforms):** The console font can be changed in **Window → Preferences → General → Appearance → Colors and Fonts → Basic → Claude CLI Console Font**. By default it inherits from Eclipse's "Text Font" setting. **Linux users:** If you see horizontal lines or other rendering artifacts, try setting the font to one commonly used by terminal emulators (e.g., MesloLGS NF, JetBrains Mono, or your terminal's default font).
 
-> **Color customization (all platforms):** The Claude CLI's background/foreground colors — and the Dark/Light theme hint — can be set in **Window → Preferences → Claude Code** ("Claude CLI background", "Claude CLI foreground", and "Claude CLI theme"). These are independent of Eclipse's built-in Terminal colors and apply immediately without restart.
+> **Color customization (all platforms):** The Claude CLI's background/foreground colors — can be set in **Window → Preferences → Claude Code** ("Claude CLI background" and "Claude CLI foreground"). These are independent of Eclipse's built-in Terminal colors and apply immediately without restart.
 
 ### Keyboard Shortcuts
 
@@ -139,7 +139,6 @@ Go to **Window → Preferences → Claude Code** to configure:
 | Claude command | `claude` | Path to the Claude CLI executable |
 | Arguments | *(empty)* | Additional CLI arguments (e.g., `--model claude-opus-4-7-20260418`) |
 | Port range (min/max) | 10000–65535 | Port range for the internal HTTP+SSE server |
-| Claude CLI theme | Dark | Theme hint for Claude's `/theme auto` (Dark or Light); applies immediately |
 | Claude CLI background / foreground | `#121314` / `#E5E5E5` | Terminal colors, independent of Eclipse's Terminal; apply immediately |
 
 ## Architecture
