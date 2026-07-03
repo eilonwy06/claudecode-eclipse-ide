@@ -75,15 +75,15 @@ Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
 ### Opening the Views
 
 Go to **Window → Show View → Other → Claude Code** and open the views you want:
-- **Claude Code** — server status, launch/resume/restart controls
-- **Claude Terminal** — dedicated interactive terminal (multiple "Claude N" tabs), built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, customizable colors, and Ctrl/⌘-click navigation to file paths and links mentioned in Claude's answers
+- **Claude Terminal** — dedicated interactive terminal, built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, customizable colors, and Ctrl/⌘-click navigation to file paths and links mentioned in Claude's answers
 - **Claude Chat** — web-based chat interface with markdown rendering
+- **Claude IDE Server** — server status, launch/resume/restart controls
+
 
 ### Getting Started
 
-1. In the **Claude Code** view, click **Launch Claude Terminal** — this opens the **Claude Terminal** view and starts Claude automatically
-2. Type directly in the **Claude Terminal** view, or switch to **Claude Chat** for a richer markdown interface
-3. Claude can read your open files, selection, and workspace context automatically via MCP tools
+1. Open the **Claude Terminal** view, or switch to **Claude Chat** for a richer markdown interface
+2. Claude can read your open files, selection, and workspace context automatically via MCP tools
 
 > **Note (all platforms):** The Claude Terminal view embeds the Eclipse Terminal control and launches `claude` over a local PTY (ConPTY on Windows, native PTY on Linux/macOS), with full ANSI/24-bit color, scrollback, and resize. Copy/paste is available via the right-click menu or the keyboard: `Ctrl/⌘+V` (or `Shift+Insert`) to paste, `Ctrl/⌘+Shift+C` to copy, and `Ctrl/⌘+C` copies when text is selected (otherwise it passes through to interrupt Claude).
 
@@ -97,7 +97,7 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+Shift+C` | Toggle Claude Code view |
+| `Ctrl+Shift+Alt+C` | Toggle Claude IDE Server view |
 | ``Ctrl+` ``    | Activate Claude Terminal view |
 | `Ctrl+Alt+S` | Send current editor selection to Claude |
 | `Ctrl+Alt+A` | Add current file to Claude's context |

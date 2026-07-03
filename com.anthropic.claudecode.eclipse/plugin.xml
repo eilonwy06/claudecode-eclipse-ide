@@ -2,14 +2,14 @@
 <?eclipse version="3.4"?>
 <plugin>
 
-   <!-- Claude Code View -->
+   <!-- Claude IDE Server View -->
    <extension point="org.eclipse.ui.views">
       <category
             id="com.anthropic.claudecode.eclipse.category"
             name="Claude Code"/>
       <view
             id="com.anthropic.claudecode.eclipse.ui.ClaudeCodeView"
-            name="Claude Code"
+            name="Claude IDE Server"
             icon="icons/claude-16.png"
             class="com.anthropic.claudecode.eclipse.ui.ClaudeCodeView"
             category="com.anthropic.claudecode.eclipse.category"
@@ -40,8 +40,8 @@
             name="Claude Code"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.toggle"
-            name="Toggle Claude Code"
-            description="Toggle the Claude Code terminal panel"
+            name="Toggle Claude IDE Server"
+            description="Toggle the Claude IDE Server view"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.sendSelection"
@@ -122,7 +122,7 @@
                mnemonic="C">
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.toggle"
-                  label="Toggle Claude Code"
+                  label="Toggle Claude IDE Server"
                   mnemonic="T"
                   style="push"/>
             <command
