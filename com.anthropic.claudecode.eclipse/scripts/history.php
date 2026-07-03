@@ -139,18 +139,22 @@ function load_session(string $root, string $sid): array {
             if (!empty($e['partial'])) continue;
             $content = $e['message']['content'] ?? null;
             if (!is_array($content)) continue;
+            // The model this turn ran on — attached to each item so the GUI can
+            // resume the conversation with its last-used model + show it in the bar.
+            $model = is_string($e['message']['model'] ?? null) ? $e['message']['model'] : '';
             foreach ($content as $b) {
                 $bt = $b['type'] ?? '';
                 if ($bt === 'thinking') {
-                    $items[] = ['t' => 'thinking'];
+                    $tt = is_string($b['thinking'] ?? null) ? $b['thinking'] : '';
+                    $items[] = ['t' => 'thinking', 'model' => $model, 'text' => $tt];
                 } elseif ($bt === 'text') {
                     if (isset($b['text']) && is_string($b['text']) && $b['text'] !== '') {
-                        $items[] = ['t' => 'text', 'text' => $b['text']];
+                        $items[] = ['t' => 'text', 'text' => $b['text'], 'model' => $model];
                     }
                 } elseif ($bt === 'tool_use') {
                     $name = is_string($b['name'] ?? null) ? $b['name'] : 'tool';
                     $input = $b['input'] ?? new stdClass();
-                    $items[] = ['t' => 'tool', 'name' => $name, 'input' => $input];
+                    $items[] = ['t' => 'tool', 'name' => $name, 'input' => $input, 'model' => $model];
                     if (stripos($name, 'askUserQuestion') !== false && isset($b['id'])) {
                         $askIds[$b['id']] = true;
                     }

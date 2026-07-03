@@ -775,6 +775,9 @@ fn reader_loop(
     let mut last_thinking_len: usize = 0;
     let mut tok_base: u64 = 0;
     let mut tok_chars: u64 = 0;
+    // Raw model id from the init event (e.g. "claude-opus-4-8") — reported to the
+    // GUI status bar, which maps it to a display name.
+    let mut current_model = String::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -811,6 +814,12 @@ fn reader_loop(
                     s.awaiting = false;
                     s.has_session = true;
                 }
+                // Derive the session-specific status-bar data (model, context %,
+                // cost) from this turn's usage and fire it to the GUI status bar.
+                // Account-global rate limits come from the shared store, not here.
+                if let Some(status) = build_status_json(&event, &current_model) {
+                    fire_string(&java_vm, &callbacks, "onStatus", &status);
+                }
                 fire_void(&java_vm, &callbacks, "onStreamEnd");
                 last_text_len = 0;
                 last_thinking_len = 0;
@@ -825,6 +834,9 @@ fn reader_loop(
                 if event["subtype"].as_str() == Some("init") {
                     if let Some(sid) = event["session_id"].as_str() {
                         *proc.session_id.lock().unwrap() = Some(sid.to_string());
+                    }
+                    if let Some(m) = event["model"].as_str() {
+                        current_model = m.to_string();
                     }
                 }
             }
@@ -856,8 +868,17 @@ fn reader_loop(
                             &mut last_thinking_len, &mut tok_base, &mut tok_chars);
     }
 
-    // EOF: crash, logout, kill (reset/dispose) — mark dead, free our state slot.
-    proc.alive.store(false, Ordering::Relaxed);
+    // EOF. Distinguish an INTENTIONAL kill (respawn on settings/tab change, reset,
+    // dispose — all set `alive=false` *before* killing) from a genuine CRASH
+    // (alive still true). swap returns the previous value: true = was alive = crash.
+    let crashed = proc.alive.swap(false, Ordering::Relaxed);
+    if !crashed {
+        // Intentional teardown: the initiator already updated state.proc/awaiting,
+        // and a replacement turn (if any) owns the stream. Stay silent — do NOT
+        // report an error or fire onStreamEnd (that would abort the new turn and
+        // show "Claude process exited unexpectedly" on every model switch).
+        return;
+    }
     let was_awaiting = {
         let mut s = state.lock().unwrap();
         let w = s.awaiting;
@@ -882,6 +903,60 @@ fn reader_loop(
         }
         fire_void(&java_vm, &callbacks, "onStreamEnd");
     }
+}
+
+/// Builds the GUI status-bar JSON for a completed turn from its `result` event.
+/// Context % = (input + cache_read + cache_creation) / contextWindow · 100; the
+/// window size and cost come straight from the result. Returns None when there's
+/// no usable usage data. Only session-specific fields — rate limits are shared
+/// from the CLI statusLine via ClaudeStatusStore, never derived here.
+fn build_status_json(event: &serde_json::Value, model: &str) -> Option<String> {
+    let usage = &event["usage"];
+    let input = usage["input_tokens"].as_u64().unwrap_or(0);
+    let cache_read = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+    let cache_create = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+    let output = usage["output_tokens"].as_u64().unwrap_or(0);
+    let context_tokens = input + cache_read + cache_create;
+
+    // Context window size from modelUsage (per-model), falling back to the
+    // largest reported window across models in this result.
+    let mut window: u64 = 0;
+    if let Some(mu) = event["modelUsage"].as_object() {
+        if let Some(m) = mu.get(model).and_then(|v| v["contextWindow"].as_u64()) {
+            window = m;
+        }
+        if window == 0 {
+            for v in mu.values() {
+                if let Some(w) = v["contextWindow"].as_u64() {
+                    window = window.max(w);
+                }
+            }
+        }
+    }
+    let cost = event["total_cost_usd"].as_f64().unwrap_or(0.0);
+
+    // Nothing meaningful to show yet.
+    if context_tokens == 0 && window == 0 && cost == 0.0 {
+        return None;
+    }
+
+    let context_pct = if window > 0 {
+        (context_tokens as f64 / window as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let payload = serde_json::json!({
+        "model": model,
+        "contextPct": context_pct,
+        "contextWindow": window,
+        "inputTokens": input,
+        "outputTokens": output,
+        "cacheCreationTokens": cache_create,
+        "cacheReadTokens": cache_read,
+        "costUsd": cost,
+    });
+    Some(payload.to_string())
 }
 
 /// can_use_tool: ask the user via the Java callbacks. Runs on its own thread so

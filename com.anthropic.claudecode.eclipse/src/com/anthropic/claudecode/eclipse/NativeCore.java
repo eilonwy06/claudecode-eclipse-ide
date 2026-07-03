@@ -240,6 +240,12 @@ public final class NativeCore {
          * dismissed. May block until the user answers.
          */
         default String onQuestionRequest(String questionsJson) { return "[]"; }
+        /**
+         * Session status snapshot for the GUI status bar (fired after each turn):
+         * JSON with model, context %, context window, token breakdown and cost.
+         * Non-blocking. Account-global rate limits are shared separately.
+         */
+        default void onStatus(String statusJson) {}
     }
 
     // ── PTY process manager ───────────────────────────────────────────────────

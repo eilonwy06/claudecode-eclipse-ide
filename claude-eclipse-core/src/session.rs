@@ -215,10 +215,14 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
 
                 if !text.is_empty() {
                     let ts = event["timestamp"].as_str().unwrap_or("").to_string();
+                    // Surface the model so the GUI can resume the conversation with
+                    // the model it last used (and show it in the status bar).
+                    let model = event["message"]["model"].as_str().unwrap_or("");
                     messages.push(serde_json::json!({
                         "role": "assistant",
                         "content": text,
                         "timestamp": ts,
+                        "model": model,
                     }));
                 }
             }

@@ -54,6 +54,10 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
   background: var(--bg); border-right: 1px solid var(--border-soft); border-top: 2px solid transparent;
   font-size: 12.5px; color: var(--fg-dim); max-width: 200px; flex-shrink: 0; }
 .tab.active { background: var(--bg-soft); border-top-color: var(--accent); color: var(--fg); }
+/* drag-to-reorder: dragged tab dims; a 2px accent line marks the drop position */
+.tab.dragging { opacity: .4; }
+.tab.drop-before { box-shadow: inset 2px 0 0 0 var(--accent); }
+.tab.drop-after { box-shadow: inset -2px 0 0 0 var(--accent); }
 .tab .ti { color: var(--accent); display: inline-flex; flex-shrink: 0; }
 .tab .tt { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tab .tab-close { color: var(--fg-dim); margin-left: 2px; cursor: pointer; border-radius: 3px; padding: 1px 3px; flex-shrink: 0; }
@@ -81,6 +85,13 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 .turn { position: relative; margin: 10px 0; }
 /* First bubble in a conversation gets breathing room below the title header. */
 .pane > .turn:first-child { margin-top: 18px; }
+
+/* "Switched to <model>" divider — wavy line either side of muted centered text. */
+.switch-divider { display: flex; align-items: center; gap: 10px; color: var(--fg-faint);
+  font-size: 12px; margin: 4px 0; }
+.switch-divider .sw-line { flex: 1; height: 8px; opacity: .6;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='8'%3E%3Cpath d='M0 4 Q4 0 8 4 T16 4' fill='none' stroke='%236e6e6e' stroke-width='1'/%3E%3C/svg%3E") repeat-x center; }
+.switch-divider .sw-text { white-space: nowrap; }
 
 /* user bubble */
 .user-msg { position: relative; border: 1px solid var(--border); background: var(--bg-soft);
@@ -288,15 +299,18 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 .answered .ans-head { color: var(--fg-dim); font-size: 11px; margin-bottom: 5px; }
 .answered .ans-body { color: var(--fg); line-height: 1.5; white-space: pre-wrap; }
 
-/* collapsible "Thought for Ns" block */
-.a-item.think .think-head { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--fg-dim); }
-.a-item.think .think-head:hover { color: var(--fg-soft); }
-.a-item.think .chev { display: inline-flex; transition: transform .15s; opacity: .8; }
+/* collapsible "Thought for Ns" block — the chevron only appears when there's
+   actual thinking text to reveal (has-body). */
+.a-item.think .think-head { cursor: default; display: inline-flex; align-items: center; gap: 6px; color: var(--fg-dim); }
+.a-item.think.has-body .think-head { cursor: pointer; }
+.a-item.think.has-body .think-head:hover { color: var(--fg-soft); }
+.a-item.think .chev { display: none; transition: transform .15s; opacity: .8; }
+.a-item.think.has-body .chev { display: inline-flex; }
 .a-item.think.open .chev { transform: rotate(90deg); }
 .a-item.think.live .think-label { animation: thinkpulse 1.4s ease-in-out infinite; }
 @keyframes thinkpulse { 50% { opacity: .5; } }
-.a-item.think .think-body { display: none; margin-top: 6px; color: var(--fg-dim); font-size: 12.5px;
-  line-height: 1.55; white-space: pre-wrap; }
+.a-item.think .think-body { display: none; margin-top: 6px; margin-left: 18px; color: var(--fg-dim);
+  font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; }
 .a-item.think.open .think-body { display: block; }
 .a-body p { margin: 4px 0; } .a-body p:first-child { margin-top: 0; }
 .a-body ul, .a-body ol { margin: 4px 0 4px 20px; } .a-body li { margin: 2px 0; }
@@ -631,14 +645,13 @@ window.addEventListener('resize', clampOpenMenu);
 const input = document.getElementById('input');
 const wrap = document.getElementById('input-wrap');
 const send = document.getElementById('send');
-let isStreaming = false;
 
 input.addEventListener('focus', () => wrap.classList.remove('blur'));
 input.addEventListener('blur',  () => wrap.classList.add('blur'));
 input.addEventListener('input', () => {
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 160) + 'px';
-  send.classList.toggle('disabled', input.value.trim() === '' && !isStreaming);
+  send.classList.toggle('disabled', input.value.trim() === '' && !activeStreaming());
   updateSlashMenu();
 });
 input.addEventListener('keydown', (e) => {
@@ -646,17 +659,17 @@ input.addEventListener('keydown', (e) => {
   // Enter always sends: mid-stream it QUEUES the message (VSCode behavior —
   // claude answers queued messages in succession over the persistent process).
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
-  else if (e.key === 'Escape' && isStreaming) { e.preventDefault(); doCancel(); }
+  else if (e.key === 'Escape' && activeStreaming()) { e.preventDefault(); doCancel(); }
 });
 
-send.addEventListener('click', () => { if (isStreaming) doCancel(); else doSend(); });
+send.addEventListener('click', () => { if (activeStreaming()) doCancel(); else doSend(); });
 
+/* Sets streaming state for the render-target tab (rtab); the composer only
+   changes if that tab is the active one. */
 function setStreaming(v) {
-  isStreaming = v;
-  send.classList.toggle('stop', v);
-  send.classList.toggle('disabled', !v && input.value.trim() === '');
-  send.innerHTML = v ? ICONS.STOP : ICONS.SEND;
-  input.placeholder = v ? 'Queue another message…' : 'Message Claude…';
+  const t = rtab || activeTab();
+  if (t) t.streaming = v;
+  syncComposer();
 }
 
 function copyBlock(el) {
@@ -668,9 +681,41 @@ function copyBlock(el) {
 const messagesEl = document.getElementById('messages');
 
 /* ===================== Tabs ===================== */
-let tabs = [], activeId = null, tabSeq = 0, streamTab = null;
+let tabs = [], activeId = null, tabSeq = 0;
+// Defaults a NEW conversation starts with (not inherited from the last-viewed tab).
+const DEFAULT_EFFORT_IDX = 2;      // "high"
+const DEFAULT_THINKING = false;    // thinking off
+function defaultModel() { return (typeof customModel !== 'undefined' && customModel) ? customModel : ''; }
 function activeTab() { return tabs.find(t => t.id === activeId) || null; }
-function streamPane() { return streamTab ? streamTab.pane : (activeTab() ? activeTab().pane : null); }
+function tabById(id) { return tabs.find(t => t.id === id) || null; }
+
+/* ── Per-tab concurrency ──────────────────────────────────────────────────
+   Each conversation runs its OWN claude process (Java: one ChatProcessManager
+   per tab) and keeps its OWN render state, so tabs never block each other. The
+   streaming render functions still use module globals (curTurn, curBody, curThink,
+   workingEl, …); rather than thread a tab through all of them, we CONTEXT-SWITCH:
+   loadRender(tab) parks the current globals on the previous tab and loads the
+   target tab's, so every render fn transparently operates on the right tab. */
+let rtab = null;   // the tab whose render state is currently loaded into the globals
+function loadRender(tab) {
+  if (!tab || rtab === tab) return;
+  if (rtab) rtab._r = { curTurn, curBody, curText, curThink, curThinkText, thinkStart, turnStart, workingEl };
+  rtab = tab;
+  const r = tab._r || {};
+  curTurn = r.curTurn || null; curBody = r.curBody || null; curText = r.curText || '';
+  curThink = r.curThink || null; curThinkText = r.curThinkText || '';
+  thinkStart = r.thinkStart || 0; turnStart = r.turnStart || 0; workingEl = r.workingEl || null;
+}
+function streamPane() { return rtab ? rtab.pane : (activeTab() ? activeTab().pane : null); }
+function activeStreaming() { return !!(activeTab() && activeTab().streaming); }
+/* Reflect the ACTIVE tab's streaming state in the composer (send/stop + placeholder). */
+function syncComposer() {
+  const s = activeStreaming();
+  send.classList.toggle('stop', s);
+  send.classList.toggle('disabled', !s && input.value.trim() === '');
+  send.innerHTML = s ? ICONS.STOP : ICONS.SEND;
+  input.placeholder = s ? 'Queue another message…' : 'Message Claude…';
+}
 function WELCOME_HTML() {
   return '<div class="welcome"><div class="wc-logo">' + ICONS.SUNBURST + '</div>' +
     '<div class="wc-h">Claude Code</div>' +
@@ -682,7 +727,13 @@ function createTab(opts) {
   const pane = document.createElement('div'); pane.className = 'pane'; pane.dataset.id = id;
   pane.innerHTML = WELCOME_HTML();
   messagesEl.appendChild(pane);
-  tabs.push({ id, title: opts.title || 'Claude Code', sessionId: opts.sessionId || '', pane, titled: !!opts.titled });
+  // Per-conversation model/effort/thinking (VSCode-style). A NEW tab starts at the
+  // DEFAULTS (not whatever the last-viewed convo used); each tab then remembers its
+  // own. Defaults: high effort, thinking off, the user's configured default model.
+  tabs.push({ id, title: opts.title || 'Claude Code', sessionId: opts.sessionId || '', pane, titled: !!opts.titled,
+    model: (opts.model !== undefined ? opts.model : defaultModel()),
+    effortIdx: (opts.effortIdx !== undefined ? opts.effortIdx : DEFAULT_EFFORT_IDX),
+    thinking: (opts.thinking !== undefined ? opts.thinking : DEFAULT_THINKING) });
   switchTab(id);
   return tabs[tabs.length - 1];
 }
@@ -690,30 +741,88 @@ function switchTab(id) {
   activeId = id;
   tabs.forEach(t => { t.pane.style.display = (t.id === id) ? '' : 'none'; });
   const t = activeTab();
-  if (t) document.getElementById('convo-title').textContent = t.title;
+  if (t) {
+    document.getElementById('convo-title').textContent = t.title;
+    applyTabSettings(t);   // restore this conversation's model/effort/thinking
+  }
+  if (typeof renderBottomCard === 'function') renderBottomCard();   // card only in its own tab
+  if (typeof syncComposer === 'function') syncComposer();           // send/stop reflects THIS tab
+  try { if (window._activeTab) window._activeTab(id); } catch (e) {} // status bar follows active tab
   renderTabs();
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+/* Loads a tab's stored model/effort/thinking into the composer UI + status bar. */
+function applyTabSettings(t) {
+  if (t.model !== undefined) { curModel = t.model; updateModelLabel(); }
+  if (t.effortIdx !== undefined) setEffort(t.effortIdx);          // updates sliders + notifies
+  if (t.thinking !== undefined) { thinkingOn = t.thinking; updateThinkingCheck(); }
+  if (typeof notifyStatusSelection === 'function') notifyStatusSelection();
 }
 function closeTab(id) {
   const idx = tabs.findIndex(t => t.id === id);
   if (idx < 0) return;
-  if (streamTab && streamTab.id === id && isStreaming) doCancel();
-  tabs[idx].pane.remove();
-  if (streamTab && streamTab.id === id) streamTab = null;
+  const t = tabs[idx];
+  if (t.streaming && window._cancelRequest) window._cancelRequest(id);   // stop its stream
+  if (window._disposeTab) window._disposeTab(id);                         // free its process
+  if (rtab === t) rtab = null;
+  if (pendingCardOwner === t) { pendingCard = null; pendingCardOwner = null; }
+  t.pane.remove();
   tabs.splice(idx, 1);
   if (!tabs.length) { createTab(); return; }
   if (activeId === id) switchTab(tabs[Math.min(idx, tabs.length - 1)].id);
   else renderTabs();
+}
+let dragTabId = null;
+function clearDropMarks() {
+  document.querySelectorAll('#tabs .tab.drop-before, #tabs .tab.drop-after')
+    .forEach(el => el.classList.remove('drop-before', 'drop-after'));
+}
+/* Move the dragged tab to before/after the target tab, then re-render. */
+function moveTab(fromId, toId, after) {
+  if (fromId === toId) return;
+  const fromIdx = tabs.findIndex(t => t.id === fromId);
+  if (fromIdx < 0) return;
+  const [moved] = tabs.splice(fromIdx, 1);
+  let toIdx = tabs.findIndex(t => t.id === toId);
+  if (toIdx < 0) { tabs.splice(fromIdx, 0, moved); return; }
+  if (after) toIdx += 1;
+  tabs.splice(toIdx, 0, moved);
+  renderTabs();
 }
 function renderTabs() {
   const c = document.getElementById('tabs'); if (!c) return;
   c.innerHTML = '';
   tabs.forEach(t => {
     const el = document.createElement('div'); el.className = 'tab' + (t.id === activeId ? ' active' : '');
+    el.draggable = true; el.dataset.id = t.id;
     el.innerHTML = '<span class="ti">' + ICONS.SUNBURST + '</span><span class="tt"></span><span class="tab-close">' + ICONS.X + '</span>';
     el.querySelector('.tt').textContent = t.title;
     el.title = t.title;
     el.onclick = (e) => { if (e.target.closest('.tab-close')) closeTab(t.id); else switchTab(t.id); };
+    // Drag-to-reorder with a drop-line indicator (best-practice: line before/after).
+    el.addEventListener('dragstart', (e) => {
+      dragTabId = t.id; el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', t.id); } catch (_) {}
+    });
+    el.addEventListener('dragend', () => { dragTabId = null; el.classList.remove('dragging'); clearDropMarks(); });
+    el.addEventListener('dragover', (e) => {
+      if (dragTabId === null || dragTabId === t.id) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+      const r = el.getBoundingClientRect();
+      const after = (e.clientX - r.left) > r.width / 2;
+      clearDropMarks();
+      el.classList.add(after ? 'drop-after' : 'drop-before');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drop-before', 'drop-after'));
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (dragTabId === null) return;
+      const r = el.getBoundingClientRect();
+      const after = (e.clientX - r.left) > r.width / 2;
+      clearDropMarks();
+      moveTab(dragTabId, t.id, after);
+    });
     c.appendChild(el);
   });
   // Scroll the active tab into view so a newly created session (off the right edge
@@ -740,6 +849,9 @@ let curThink = null, curThinkText = '', thinkStart = 0, turnStart = 0;
 function clearWelcome(pane) { if (!pane) return; const w = pane.querySelector('.welcome'); if (w) w.remove(); }
 function scrollBottom() {
   if (workingEl && workingEl.parentNode) workingEl.parentNode.appendChild(workingEl); // keep last
+  // Don't yank the visible view to the bottom for a BACKGROUND tab's stream — only
+  // the active tab's pane is on screen, so a background render must not scroll it.
+  if (rtab && rtab !== activeTab()) return;
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 function addUserMessage(text, ctx) {
@@ -911,16 +1023,32 @@ function ensureThink() {
   if (!ensureTurn()) return null;
   if (!curThink) {
     thinkStart = turnStart || Date.now();
-    curThink = document.createElement('div'); curThink.className = 'a-item think muted live';
-    curThink.innerHTML = '<span class="dot gray"></span>'
-      + '<span class="think-head"><span class="think-label">Thinking…</span></span>';
-    curTurn.appendChild(curThink);
+    const el = document.createElement('div'); el.className = 'a-item think muted live';
+    el.innerHTML = '<span class="dot gray"></span>'
+      + '<span class="think-head"><span class="think-label">Thinking…</span>'
+      + '<span class="chev">' + ICONS.CHEVRON + '</span></span>'
+      + '<div class="think-body"></div>';
+    // Click the head to reveal/collapse the thinking text (only meaningful once
+    // there's text — has-body). Bound to the element so it survives curThink=null.
+    el.querySelector('.think-head').onclick = () => {
+      if (el.classList.contains('has-body')) el.classList.toggle('open');
+    };
+    curThink = el;
+    curTurn.appendChild(el);
     renderThinkLabel();
   }
   return curThink;
 }
 function appendThinking(t) {
-  if (!ensureThink()) return;   // text is always redacted; just surface the marker
+  const el = ensureThink(); if (!el) return;
+  // The reasoning text streams when thinking is on (extended thinking); surface it
+  // in the collapsible body so the chevron reveals what the model is thinking.
+  if (t) {
+    curThinkText += t;
+    const body = el.querySelector('.think-body');
+    if (body) body.textContent = curThinkText;
+    el.classList.add('has-body');
+  }
   relinkTurn(curTurn);
   scrollBottom();
 }
@@ -956,38 +1084,43 @@ function doSend() {
   if (!text) return;
   if (text.startsWith('/') && handleSlashCommand(text)) { input.value = ''; input.style.height = 'auto'; closeSlash(); return; }
   const t = activeTab(); if (!t) return;
-  // Mid-stream sends QUEUE onto the same conversation (persistent process);
-  // a different tab can't queue into someone else's stream — ignore.
-  const queueing = isStreaming;
-  if (queueing && streamTab && t !== streamTab) return;
-  if (!queueing) streamTab = t;
+  loadRender(t);                 // render into (and stream for) THIS tab
+  // Mid-stream sends QUEUE onto THIS tab's own conversation; other tabs stream
+  // independently (each has its own process), so they never block this send.
+  const queueing = !!t.streaming;
   const withCtx = !!(ctxEnabled && ctxData && ctxData.fileName);
   addUserMessage(text, withCtx ? ctxChipLabel() : null);
   if (!t.titled) setTabTitle(t, text);          // title updates immediately on first send
   input.value = ''; input.style.height = 'auto'; closeSlash();
   if (!queueing) { setStreaming(true); showWorking(); }
   else if (!workingEl) showWorking();
-  if (window._sendToJava) window._sendToJava(text, withCtx, t.sessionId || '', permMode, effort, curModel, thinkingOn ? '1' : '0');
+  if (window._sendToJava) window._sendToJava(text, withCtx, t.sessionId || '', permMode, effort, curModel, thinkingOn ? '1' : '0', t.id);
+  persistTabPrefs(t);   // resumed tab already has a sessionId; new ones persist on onSessionId
 }
 function doCancel() {
-  if (window._cancelRequest) window._cancelRequest();
+  const t = activeTab(); if (!t) return;
+  loadRender(t);
+  if (window._cancelRequest) window._cancelRequest(t.id);
   hideWorking(); endAssistant(); setStreaming(false);
   addSystem('Request cancelled.');
 }
 
-/* Java → JS streaming callbacks */
+/* Java → JS streaming callbacks. Each carries the TAB ID its process belongs to;
+   loadRender(tab) points the render globals at that tab so concurrent streams from
+   different tabs never clobber each other. */
 /* onStreamStart also fires when a QUEUED turn begins (after the previous turn's
    onStreamEnd) — restore the working indicator so the succession is visible. */
-window.onStreamStart   = () => { setStreaming(true); ensureWorking(); };
-window.onThinking      = (t) => { appendThinking(t); };
-window.onStreamText    = (t) => { appendAssistant(t); };
-window.onStreamEnd     = () => { hideWorking(); endAssistant(); setStreaming(false); };
-window.onToolStart     = (n) => { addToolLine(n); };
+function withTab(tabId, fn) { const t = tabById(tabId); if (!t) return; loadRender(t); fn(t); }
+window.onStreamStart   = (tabId) => withTab(tabId, () => { setStreaming(true); ensureWorking(); });
+window.onThinking      = (tabId, t) => withTab(tabId, () => appendThinking(t));
+window.onStreamText    = (tabId, t) => withTab(tabId, () => appendAssistant(t));
+window.onStreamEnd     = (tabId) => withTab(tabId, () => { hideWorking(); endAssistant(); setStreaming(false); });
+window.onToolStart     = (tabId, n) => withTab(tabId, () => addToolLine(n));
 window.onToolEnd       = () => {};
 window.onSystemMessage = () => {};   /* backend system/init noise — ignored */
-window.onError         = (m) => { hideWorking(); endAssistant(); setStreaming(false); addSystem('⚠ ' + m); };
+window.onError         = (tabId, m) => withTab(tabId, () => { hideWorking(); endAssistant(); setStreaming(false); addSystem('⚠ ' + m); });
 window.onStatusUpdate  = () => {};
-window.onSessionId     = (id) => { if (streamTab && id) streamTab.sessionId = id; };
+window.onSessionId     = (tabId, id) => { const t = tabById(tabId); if (t && id) { t.sessionId = id; persistTabPrefs(t); } };
 
 /* A "User answered:" card left in the flow (at the decision point) when the user
    types an instruction instead of accepting/rejecting. */
@@ -1023,23 +1156,42 @@ function padForBottomCard() {
 new ResizeObserver(() => {
   if (bottomCardEl.style.display === 'block') { padForBottomCard(); scrollBottom(); }
 }).observe(bottomCardEl);
+/* A pending card belongs to the conversation that raised it (its stream tab). It
+   only shows while THAT tab is active; switching away hides it (composer returns),
+   switching back re-shows it. */
+let pendingCard = null, pendingCardOwner = null;
 function showBottomCard(card) {
-  bottomCardEl.innerHTML = '';
-  bottomCardEl.appendChild(card);
-  bottomCardEl.style.display = 'block';
-  document.getElementById('composer').style.display = 'none';
-  requestAnimationFrame(() => { padForBottomCard(); scrollBottom(); });
+  pendingCard = card;
+  pendingCardOwner = rtab || activeTab();   // set by loadRender in onApprovalRequest/onAskQuestion
+  renderBottomCard();
+}
+function renderBottomCard() {
+  const composer = document.getElementById('composer');
+  const show = pendingCard && pendingCardOwner && pendingCardOwner === activeTab();
+  if (show) {
+    if (bottomCardEl.firstChild !== pendingCard) { bottomCardEl.innerHTML = ''; bottomCardEl.appendChild(pendingCard); }
+    bottomCardEl.style.display = 'block';
+    composer.style.display = 'none';
+    // Card only shows for the active tab → scroll directly (not via scrollBottom's
+    // background guard, whose rtab may be a stale background stream).
+    requestAnimationFrame(() => { padForBottomCard(); messagesEl.scrollTop = messagesEl.scrollHeight; });
+  } else {
+    bottomCardEl.innerHTML = '';
+    bottomCardEl.style.display = 'none';
+    messagesEl.style.paddingBottom = '';
+    composer.style.display = '';
+  }
 }
 function clearBottomCard() {
-  bottomCardEl.innerHTML = '';
-  bottomCardEl.style.display = 'none';
-  messagesEl.style.paddingBottom = '';
-  document.getElementById('composer').style.display = '';
+  const owner = pendingCardOwner;
+  pendingCard = null; pendingCardOwner = null;
+  renderBottomCard();      // hides the card, restores the composer
   input.focus();
   // A blocking card (AskUserQuestion / approval) suspends the turn WITHOUT ending
   // it — dismissing the card resumes the same turn, so no onStreamStart fires to
   // restore the gerund. Guarantee it here (the single dismissal choke point) so
   // the working indicator is present whenever a turn is still processing.
+  if (owner) loadRender(owner);
   ensureWorking();
 }
 
@@ -1123,7 +1275,8 @@ document.addEventListener('contextmenu', (e) => {
 });
 
 /* ---- permission decision card (claude --permission-prompt-tool) ---- */
-window.onApprovalRequest = function(reqId, toolName, detail, rememberLabel) {
+window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabel) {
+  const t = tabById(tabId); if (t) loadRender(t);   // card belongs to this conversation
   const pane = streamPane() || (activeTab() ? activeTab().pane : null);
   if (!pane) { if (window._decide) window._decide(reqId, 'deny', ''); return; }
   hideWorking();
@@ -1206,7 +1359,8 @@ window.onApprovalRequest = function(reqId, toolName, detail, rememberLabel) {
 };
 
 /* ---- AskUserQuestion card (single/multi question, options + Other) ---- */
-window.onAskQuestion = function(reqId, questionsJson) {
+window.onAskQuestion = function(tabId, reqId, questionsJson) {
+  const t = tabById(tabId); if (t) loadRender(t);   // card belongs to this conversation
   const pane = streamPane() || (activeTab() ? activeTab().pane : null);
   let questions = [];
   try { questions = JSON.parse(questionsJson) || []; } catch (e) {}
@@ -1363,11 +1517,15 @@ function hideWorking() { if (workingEl) { workingEl.remove(); workingEl = null; 
 /* Invariant: the gerund is visible whenever a turn is still processing AND no
    card has replaced it. Idempotent — safe to call from any path. */
 function ensureWorking() {
-  if (isStreaming && bottomCardEl.style.display !== 'block' && !workingEl) showWorking();
+  // Operates on the render-target tab; don't show a gerund if that tab's own card
+  // is pending (it replaces the working indicator).
+  if (rtab && rtab.streaming && !workingEl && !(pendingCard && pendingCardOwner === rtab)) showWorking();
 }
 /* Live token count shown beside the "Thinking…" marker (real output tokens via the
    CLI partial-message stream), removed once thinking finalizes to "Thought for Ns". */
-window.onTokens = function(n) {
+window.onTokens = function(tabId, n) {
+  const t = tabById(tabId); if (!t) return;
+  loadRender(t);
   n = parseInt(n, 10) || 0;
   if (n > lastTokens) lastTokens = n;
   renderThinkLabel();
@@ -1383,7 +1541,7 @@ function resetIn(ts) {
   if (secs < 86400) return 'in ' + Math.round(secs / 3600) + 'h';
   return 'in ' + Math.round(secs / 86400) + 'd';
 }
-window.onRateLimit = function(json) {
+window.onRateLimit = function(tabId, json) {   // tabId ignored — usage is account-global
   const el = document.getElementById('usage-warn'); if (!el) return;
   let info = {}; try { info = JSON.parse(json) || {}; } catch (e) { return; }
   // Use a usage % if the CLI provides one (field name varies / may be absent).
@@ -1470,6 +1628,9 @@ function setEffort(idx) {
   document.querySelectorAll('.eff-fill').forEach(el => el.style.width = pct + '%');
   document.querySelectorAll('.eff-knob').forEach(el => el.style.left = pct + '%');
   document.querySelectorAll('.eff-lbl').forEach(el => el.textContent = '(' + EFFORT_LABELS[effortIdx] + ')');
+  const t = (typeof activeTab === 'function') ? activeTab() : null; if (t) t.effortIdx = effortIdx;
+  if (typeof persistTabPrefs === 'function') persistTabPrefs(t);
+  if (typeof notifyStatusSelection === 'function') notifyStatusSelection();
 }
 let effortDragging = false, effortDragSlider = null;
 function effortFromX(slider, clientX) {
@@ -1486,14 +1647,35 @@ document.addEventListener('mousemove', e => { if (effortDragging && effortDragSl
 document.addEventListener('mouseup', () => { effortDragging = false; effortDragSlider = null; });
 
 /* ---- model chooser (claude --model) ---- */
-const MODELS = [
+/* Fallback list until the dynamic /v1/models list arrives (onAvailableModels).
+   The real chooser is built from the account's actually-available models. */
+let MODELS = [
   { id: '',           label: 'Default (recommended)', desc: 'Latest model · efficient for routine tasks' },
-  { id: 'sonnet',     label: 'Sonnet',                desc: 'Sonnet · efficient for routine tasks' },
-  { id: 'sonnet[1m]', label: 'Sonnet (1M context)',   desc: '1M context · draws from usage credits' },
-  { id: 'opus',       label: 'Opus',                  desc: 'Best for everyday, complex tasks · ~2× usage vs Sonnet' },
-  { id: 'haiku',      label: 'Haiku',                 desc: 'Fastest for quick answers' },
-  { id: '__fable',    label: 'Fable (disabled)',      desc: 'Claude Fable 5 is currently unavailable.', disabled: true }
+  { id: 'fable',      label: 'Fable',                 desc: 'Latest flagship model' },
+  { id: 'opus',       label: 'Opus',                  desc: 'Most capable — best for complex tasks' },
+  { id: 'sonnet',     label: 'Sonnet',                desc: 'Balanced capability and speed' },
+  { id: 'sonnet[1m]', label: 'Sonnet (1M context)',   desc: '1M-token context · draws from usage credits' },
+  { id: 'haiku',      label: 'Haiku',                 desc: 'Fastest for quick answers' }
 ];
+/* Java pushes the account's real, curated model list here. */
+window.onAvailableModels = function(json) {
+  let list;
+  try { list = JSON.parse(json); } catch (e) { return; }
+  if (!Array.isArray(list) || !list.length) return;
+  MODELS = list;
+  // Re-add a custom --model from plugin prefs if it isn't already offered.
+  if (customModel && !MODELS.some(m => m.id === customModel)) {
+    MODELS.splice(1, 0, { id: customModel, label: customModel, desc: 'From your plugin settings' });
+  }
+  // If the current selection vanished, fall back to Default (keep the tab in sync).
+  if (curModel && !MODELS.some(m => m.id === curModel) && !/^claude-/.test(curModel)) {
+    curModel = ''; const t = activeTab(); if (t) t.model = '';
+  }
+  updateModelLabel();
+  const menu = document.getElementById('model-menu');
+  if (menu && menu.classList.contains('open')) renderModelList();
+  if (typeof notifyStatusSelection === 'function') notifyStatusSelection();
+};
 let curModel = '';      // '' = Default
 let customModel = '';
 function initModelConfig() {
@@ -1507,7 +1689,17 @@ function initModelConfig() {
 }
 function modelLabelFor(id) {
   const m = MODELS.find(x => x.id === id);
-  return m ? m.label.replace(' (recommended)', '') : (id || 'Default');
+  if (m) return m.label.replace(' (recommended)', '');
+  // A resumed session may carry a full model id (e.g. claude-opus-4-8) with no
+  // chooser entry — show it prettified rather than the raw id.
+  if (id && /^claude-/.test(id)) return prettyModelId(id);
+  return id || 'Default';
+}
+function prettyModelId(id) {
+  const s = String(id).replace(/^claude-/, '').replace(/-\d{8}$/, '');
+  const p = s.split('-'); if (!p.length || !p[0]) return id;
+  const fam = p[0].charAt(0).toUpperCase() + p[0].slice(1);
+  return p.length > 1 ? fam + ' ' + p.slice(1).join('.') : fam;
 }
 function updateModelLabel() {
   const el = document.getElementById('cur-model');
@@ -1537,7 +1729,60 @@ function renderModelList() {
     list.appendChild(it);
   });
 }
-function selectModel(id) { curModel = id; updateModelLabel(); closeMenus(); }
+function selectModel(id) {
+  const prev = curModel;
+  curModel = id; updateModelLabel(); closeMenus();
+  const t = activeTab(); if (t) t.model = id;
+  // Mark the switch in the transcript (VSCode behavior) — only mid-conversation.
+  if (t && id !== prev && !t.pane.querySelector('.welcome')) addModelSwitchDivider(id);
+  persistTabPrefs(t); notifyStatusSelection();
+}
+/* "〰 Switched to <model> 〰" divider element. */
+function makeSwitchDivider(name) {
+  const turn = document.createElement('div'); turn.className = 'turn';
+  const d = document.createElement('div'); d.className = 'switch-divider';
+  d.innerHTML = '<span class="sw-line"></span><span class="sw-text"></span><span class="sw-line"></span>';
+  d.querySelector('.sw-text').textContent = 'Switched to ' + name;
+  turn.appendChild(d);
+  return turn;
+}
+/* Inserted live when the model changes mid-conversation (concrete id via fullId). */
+function addModelSwitchDivider(id) {
+  const pane = activeTab() ? activeTab().pane : messagesEl;
+  if (!pane) return;
+  const entry = MODELS.find(m => m.id === id);
+  const name = (entry && entry.fullId) ? entry.fullId
+             : (/^claude-/.test(id) ? id : modelLabelFor(id));
+  pane.appendChild(makeSwitchDivider(name));
+  scrollBottom();
+}
+
+/* Java tells us the actual model a conversation ran on (resolves "Default").
+   A tab with no explicit selection adopts it so the model persists across
+   tab switches instead of snapping back to "Default". */
+window.onResolvedModel = function(tabId, id) {
+  if (!id) return;
+  const t = tabById(tabId);
+  if (!t || t.model) return;              // only fill in an unset (Default) tab
+  t.model = id;
+  if (t === activeTab()) { curModel = id; updateModelLabel(); notifyStatusSelection(); }
+};
+
+/* Persist this conversation's composer settings (effort/model/thinking) so a
+   resumed session restores them — the sidecar VSCode-equivalent. No-op until the
+   tab has a session id (a fresh conversation persists on onSessionId). */
+function persistTabPrefs(t) {
+  if (!t || !t.sessionId) return;
+  try { if (window._saveSessionPrefs) window._saveSessionPrefs(t.sessionId, String(t.effortIdx), t.model || '', t.thinking ? '1' : '0'); }
+  catch (e) {}
+}
+
+/* Push the current model/effort/thinking selection to the Java status bar so it
+   updates immediately (rather than waiting for the next response). */
+function notifyStatusSelection() {
+  try { if (window._statusSelection) window._statusSelection(modelLabelFor(curModel), effort, thinkingOn ? '1' : '0'); }
+  catch (e) {}
+}
 
 /* ---- thinking toggle (off => MAX_THINKING_TOKENS=0) ---- */
 let thinkingOn = true;
@@ -1545,7 +1790,7 @@ function updateThinkingCheck() {
   const chk = document.getElementById('think-check');
   if (chk) chk.style.visibility = thinkingOn ? '' : 'hidden';
 }
-function toggleThinking(e) { if (e) e.stopPropagation(); thinkingOn = !thinkingOn; updateThinkingCheck(); }
+function toggleThinking(e) { if (e) e.stopPropagation(); thinkingOn = !thinkingOn; updateThinkingCheck(); const t = activeTab(); if (t) t.thinking = thinkingOn; persistTabPrefs(t); notifyStatusSelection(); }
 
 /* ---- Account & usage window ---- */
 function openAccount() {
@@ -1583,11 +1828,12 @@ function buildActionsSlash() {
   });
 }
 
-/* Initialise: first tab + context chip + effort/model/thinking + slash list. */
+/* Initialise: model config FIRST (so the first tab's default model is the user's
+   configured one), then the first tab + context chip + slash list. */
+initModelConfig();
 createTab();
 updateCtxChip();
 setEffort(effortIdx);
-initModelConfig();
 updateThinkingCheck();
 // buildActionsSlash() is called at the end of the script — it needs SLASH_COMMANDS,
 // which is declared further down.
@@ -1709,10 +1955,17 @@ function deleteHistory(id) {
   renderHistoryList();
 }
 /* static (non-streaming) reconstruction helpers for loaded history */
-function appendThinkStatic(turn) {
+function appendThinkStatic(turn, text) {
   const el = document.createElement('div'); el.className = 'a-item think muted';
-  // no saved duration → just "Thinking" (agreed VSCode-style workaround)
-  el.innerHTML = '<span class="dot gray"></span><span class="think-head"><span class="think-label">Thinking</span></span>';
+  // no saved duration → just "Thinking"; if the transcript kept the reasoning
+  // text, make it revealable via the chevron just like a live turn.
+  el.innerHTML = '<span class="dot gray"></span><span class="think-head"><span class="think-label">Thinking</span>'
+    + '<span class="chev">' + ICONS.CHEVRON + '</span></span><div class="think-body"></div>';
+  if (text && text.trim()) {
+    el.querySelector('.think-body').textContent = text;
+    el.classList.add('has-body');
+    el.querySelector('.think-head').onclick = () => el.classList.toggle('open');
+  }
   turn.appendChild(el);
 }
 function appendTextStatic(turn, text) {
@@ -1728,9 +1981,10 @@ function loadHistory(id, title) {
   try { items = JSON.parse(window._loadSession(id) || '[]'); } catch (e) {}
   // Replace the CURRENT tab's content with the selected session (VSCode behaviour).
   const t = activeTab(); if (!t) return;
-  if (isStreaming && streamTab === t) doCancel();
+  loadRender(t);                        // operate on THIS tab's render state
+  if (t.streaming) doCancel();
   hideWorking();
-  curTurn = null; curBody = null; curText = '';
+  curTurn = null; curBody = null; curText = ''; curThink = null; curThinkText = '';
   const pane = t.pane;
   pane.innerHTML = '';
   t.sessionId = id;                                   // continuing this tab resumes the session
@@ -1740,13 +1994,32 @@ function loadHistory(id, title) {
   // Group consecutive assistant blocks (thinking / tool / text) into one turn with
   // its dotted rail; user messages and answer cards are their own turns.
   let aTurn = null;
+  let lastModel = '';    // the model this conversation last used (resume with it)
+  let sawThinking = false; // any thinking block ⇒ this conversation had thinking ON
+  let renderedModel = null; // model in effect while reconstructing → switch dividers
   function assistantTurn() {
     if (!aTurn || !aTurn.parentNode) { aTurn = document.createElement('div'); aTurn.className = 'turn'; pane.appendChild(aTurn); }
     return aTurn;
   }
-  items.forEach(it => {
+  // The model a given turn ran on (the next assistant model before the next user msg).
+  function turnModelAt(idx) {
+    for (let j = idx + 1; j < items.length; j++) {
+      const jt = items[j].t || (items[j].role === 'user' ? 'user' : 'text');
+      if (jt === 'user') break;
+      if (typeof items[j].model === 'string' && items[j].model.indexOf('claude-') === 0) return items[j].model;
+    }
+    return '';
+  }
+  items.forEach((it, i) => {
     const ty = it.t || (it.role === 'user' ? 'user' : 'text');   // back-compat with old text-only format
+    // Only real model ids — skip "<synthetic>" (CLI-injected messages) and blanks.
+    if (typeof it.model === 'string' && it.model.indexOf('claude-') === 0) lastModel = it.model;
+    if (ty === 'thinking') sawThinking = true;
     if (ty === 'user') {
+      // Reconstruct "Switched to <model>" dividers from the transcript (the model
+      // is recorded per turn) so past model switches persist across reloads.
+      const tm = turnModelAt(i);
+      if (tm) { if (renderedModel !== null && tm !== renderedModel) pane.appendChild(makeSwitchDivider(tm)); renderedModel = tm; }
       aTurn = null;
       const p = parseUserContent(it.content || '');
       if (p.text || p.chip) addUserMessage(p.text, p.chip);
@@ -1754,7 +2027,7 @@ function loadHistory(id, title) {
       aTurn = null;
       addAnswered(it.text || '', pane);
     } else if (ty === 'thinking') {
-      appendThinkStatic(assistantTurn());
+      appendThinkStatic(assistantTurn(), it.text || '');
     } else if (ty === 'tool') {
       assistantTurn().appendChild(makeToolLine(it.name || 'tool', it.input || {}));
     } else { // text
@@ -1763,6 +2036,24 @@ function loadHistory(id, title) {
   });
   // draw the connector rails
   pane.querySelectorAll(':scope > .turn').forEach(relinkTurn);
+  // Restore this conversation's settings. Our own sidecar (saved per session id)
+  // is authoritative — it's the ONLY source of effort and it captures the user's
+  // last selection; the transcript is the fallback for model + thinking.
+  let saved = {};
+  try { saved = JSON.parse(window._loadSessionPrefs ? window._loadSessionPrefs(id) : '{}') || {}; } catch (e) {}
+
+  let think = sawThinking;
+  if (saved.thinking === '1') think = true; else if (saved.thinking === '0') think = false;
+  t.thinking = think; thinkingOn = think; updateThinkingCheck();
+
+  const model = saved.model || lastModel;
+  if (model) { t.model = model; curModel = model; updateModelLabel(); }
+
+  if (saved.effort !== undefined && saved.effort !== '') {
+    const ei = parseInt(saved.effort, 10);
+    if (!isNaN(ei)) setEffort(ei);   // updates the sliders + t.effortIdx
+  }
+  if (typeof notifyStatusSelection === 'function') notifyStatusSelection();
   pane.scrollTop = 0;
   messagesEl.scrollTop = 0;
 }

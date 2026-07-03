@@ -37,7 +37,15 @@ public class HttpSseServer {
         // this export, so tolerate UnsatisfiedLinkError — the server still runs, just without
         // the status line.
         try {
-            NativeCore.registerStatusCallback(handle, new StatusBridge());
+            // Wrap StatusBridge (unchanged) so the same statusLine data also
+            // feeds ClaudeStatusStore, letting the Claude GUI show the exact same
+            // account-global usage limits. The bridge still runs identically —
+            // the CLI status bar is unaffected.
+            final StatusBridge bridge = new StatusBridge();
+            NativeCore.registerStatusCallback(handle, (tabToken, statusJson) -> {
+                com.anthropic.claudecode.eclipse.ui.ClaudeStatusStore.acceptStatusLine(statusJson);
+                bridge.onStatusUpdate(tabToken, statusJson);
+            });
         } catch (UnsatisfiedLinkError e) {
             Activator.log("Native library has no registerStatusCallback; status line disabled.");
         }

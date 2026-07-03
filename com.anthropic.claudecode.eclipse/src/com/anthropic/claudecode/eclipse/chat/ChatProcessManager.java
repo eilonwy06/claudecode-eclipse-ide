@@ -35,6 +35,7 @@ public class ChatProcessManager {
     // claude -p: permissions denied, questions dismissed.
     private PermissionHandler onPermissionRequest;
     private java.util.function.Function<String, String> onQuestionRequest;
+    private Consumer<String> onStatus;
 
     /** (toolName, inputJson, rememberLabel) → decision string. See {@link NativeCore.ChatCallbacks#onPermissionRequest}. */
     public interface PermissionHandler {
@@ -64,6 +65,7 @@ public class ChatProcessManager {
                 if (h == null) return "[]";
                 try { return h.apply(questionsJson); } catch (Exception e) { return "[]"; }
             }
+            @Override public void onStatus(String json) { emit(ChatProcessManager.this.onStatus, json); }
         });
     }
 
@@ -88,6 +90,8 @@ public class ChatProcessManager {
     public void setOnQuestionRequest(java.util.function.Function<String, String> cb) {
         this.onQuestionRequest = cb;
     }
+    /** Per-turn GUI status snapshot JSON (model, context %, cost). Persistent mode. */
+    public void setOnStatus(Consumer<String> cb) { this.onStatus = cb; }
 
     /**
      * Opts this manager into the persistent-process protocol (one long-lived

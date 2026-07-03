@@ -12,7 +12,6 @@ import org.eclipse.core.runtime.FileLocator;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.browser.Browser;
 import org.eclipse.swt.browser.BrowserFunction;
-import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.part.ViewPart;
@@ -41,11 +40,17 @@ public class ClaudeGuiView extends ViewPart {
     private long browserHwnd = 0;
     private boolean pageLoaded = false;
 
-    private ChatProcessManager processManager;
+    // One claude process per conversation/tab, so tabs never block each other.
+    private final java.util.Map<String, ChatProcessManager> managers = new java.util.concurrent.ConcurrentHashMap<>();
+    // Which tab is active (for gating the shared status bar) + its last status JSON.
+    private volatile String activeTabId = "";
+    private final java.util.Map<String, String> statusByTab = new java.util.concurrent.ConcurrentHashMap<>();
 
     // Strong references — prevent GC from unregistering the BrowserFunctions.
     @SuppressWarnings("unused") private BrowserFunction sendFn;
     @SuppressWarnings("unused") private BrowserFunction cancelFn;
+    @SuppressWarnings("unused") private BrowserFunction disposeTabFn;
+    @SuppressWarnings("unused") private BrowserFunction activeTabFn;
     @SuppressWarnings("unused") private BrowserFunction newSessionFn;
     @SuppressWarnings("unused") private BrowserFunction listSessionsFn;
     @SuppressWarnings("unused") private BrowserFunction listSessionsAsyncFn;
@@ -56,6 +61,17 @@ public class ClaudeGuiView extends ViewPart {
     @SuppressWarnings("unused") private BrowserFunction answerQuestionFn;
     @SuppressWarnings("unused") private BrowserFunction modelConfigFn;
     @SuppressWarnings("unused") private BrowserFunction accountInfoFn;
+    @SuppressWarnings("unused") private BrowserFunction saveSessionPrefsFn;
+    @SuppressWarnings("unused") private BrowserFunction loadSessionPrefsFn;
+
+    // Status bar (the shared SWT ClaudeStatusBar widget, reused from the CLI view).
+    private ClaudeStatusBar statusBar;
+    @SuppressWarnings("unused") private BrowserFunction statusSelectionFn;
+    private volatile String availableModelsJson;   // curated model list from /v1/models, pushed to the webview
+    private volatile String lastRustStatusJson;   // latest onStatus payload (context %, cost, tokens)
+    private volatile String displayModel = "";     // shown model — live GUI selection OR last actual (whichever changed last)
+    private volatile String lastEffort = "";       // current GUI selection
+    private volatile boolean lastThinking = true;
 
     private volatile boolean contextPolling;
     private String lastContextJson = "";
@@ -69,8 +85,13 @@ public class ClaudeGuiView extends ViewPart {
 
     @Override
     public void createPartControl(Composite parent) {
-        parent.setLayout(new FillLayout());
+        // Browser fills the view; the shared ClaudeStatusBar sits under it as a
+        // fixed-height strip (same widget the CLI uses — one status bar, not two).
+        org.eclipse.swt.layout.GridLayout gl = new org.eclipse.swt.layout.GridLayout(1, false);
+        gl.marginWidth = 0; gl.marginHeight = 0; gl.verticalSpacing = 0; gl.horizontalSpacing = 0;
+        parent.setLayout(gl);
         browser = new Browser(parent, SWT.NONE);
+        browser.setLayoutData(new org.eclipse.swt.layout.GridData(SWT.FILL, SWT.FILL, true, true));
 
         // Extract HWND so WebView2 keyboard input can be activated.
         try {
@@ -84,17 +105,21 @@ public class ClaudeGuiView extends ViewPart {
 
         disableDevTools();
 
-        active = this;
-        processManager = new ChatProcessManager();
-        // Persistent protocol: one long-lived claude per conversation. Permission
-        // and question cards arrive as CLI-enforced control requests (the CLI
-        // blocks until answered) instead of model-dependent MCP shim calls.
-        processManager.setPersistent(true);
-        processManager.setOnPermissionRequest(ClaudeGuiView::handleControlPermission);
-        processManager.setOnQuestionRequest(ClaudeGuiView::requestQuestion);
-        wireChatCallbacks();
+        // The SAME status bar widget the CLI view uses — reused here so the two
+        // are literally identical (one implementation). It reads the shared
+        // PREF_STATUSLINE_* toggles itself; we feed it a ClaudeStatus assembled
+        // from this GUI's own stream plus the account-global limits in the store.
+        statusBar = new ClaudeStatusBar(parent);
+        statusBar.setLayoutData(new org.eclipse.swt.layout.GridData(SWT.FILL, SWT.CENTER, true, false));
+        applyStatusBarEnabled();
+        startStatusTimer();
 
-        // JS → Java bridge.
+        active = this;
+        // Persistent protocol, ONE manager per tab (created on first send) so
+        // conversations run concurrently and independently.
+
+        // JS → Java bridge. The last arg is the TAB ID so each conversation uses
+        // its own process; that's what lets a new/other tab work while one streams.
         sendFn         = new SimpleFunction(browser, "_sendToJava", a -> {
             if (a.length > 0 && a[0] instanceof String s) {
                 boolean withCtx = a.length > 1 && a[1] instanceof Boolean b && b;
@@ -103,12 +128,30 @@ public class ClaudeGuiView extends ViewPart {
                 String effort   = (a.length > 4 && a[4] instanceof String e) ? e : "";
                 String model    = (a.length > 5 && a[5] instanceof String md) ? md : "";
                 String thinking = (a.length > 6 && a[6] instanceof String th) ? th : "";
-                processManager.sendMessage(withCtx ? buildContextPreamble() + s : s, resumeId, permMode, effort, model, thinking);
+                String tabId    = (a.length > 7 && a[7] instanceof String ti) ? ti : "default";
+                // Capture effort/thinking for the status bar (the stream reports
+                // model + context + cost, but not these launch-time choices).
+                this.lastEffort = effort;
+                this.lastThinking = !"0".equals(thinking);
+                managerFor(tabId).sendMessage(withCtx ? buildContextPreamble() + s : s, resumeId, permMode, effort, model, thinking);
             }
             return null;
         });
-        cancelFn       = new SimpleFunction(browser, "_cancelRequest", a -> { processManager.cancel(); return null; });
-        newSessionFn   = new SimpleFunction(browser, "_newSession", a -> { processManager.resetSession(); return null; });
+        cancelFn       = new SimpleFunction(browser, "_cancelRequest", a -> {
+            if (a.length > 0 && a[0] instanceof String ti) { ChatProcessManager m = managers.get(ti); if (m != null) m.cancel(); }
+            return null;
+        });
+        // A tab was closed → free its process.
+        disposeTabFn   = new SimpleFunction(browser, "_disposeTab", a -> {
+            if (a.length > 0 && a[0] instanceof String ti) { ChatProcessManager m = managers.remove(ti); statusByTab.remove(ti); if (m != null) m.stop(); }
+            return null;
+        });
+        // A tab became active → point the shared status bar at its last status.
+        activeTabFn    = new SimpleFunction(browser, "_activeTab", a -> {
+            if (a.length > 0 && a[0] instanceof String ti) { activeTabId = ti; lastRustStatusJson = statusByTab.get(ti); refreshStatusBar(); }
+            return null;
+        });
+        newSessionFn   = new SimpleFunction(browser, "_newSession", a -> null);   // new tab = new manager (JS creates the tab)
         listSessionsFn = new SimpleFunction(browser, "_listSessions", a -> safeSessionList());
         // Async variant: compute the list off the UI thread (first call extracts the
         // bundled PHP runtime + spawns php), then push it back to JS. Keeps the
@@ -134,6 +177,29 @@ public class ClaudeGuiView extends ViewPart {
         currentContextFn = new SimpleFunction(browser, "_currentContext", a -> currentContextJson());
         modelConfigFn  = new SimpleFunction(browser, "_modelConfig", a -> modelConfigJson());
         accountInfoFn  = new SimpleFunction(browser, "_accountInfo", a -> accountInfoJson());
+        // Per-conversation composer prefs (effort/model/thinking) — we persist these
+        // ourselves so a resumed conversation restores them (esp. effort, which the
+        // CLI transcript never records).
+        saveSessionPrefsFn = new SimpleFunction(browser, "_saveSessionPrefs", a -> {
+            if (a.length > 0 && a[0] instanceof String id) {
+                String ef = (a.length > 1 && a[1] instanceof String s) ? s : "";
+                String md = (a.length > 2 && a[2] instanceof String s) ? s : "";
+                String th = (a.length > 3 && a[3] instanceof String s) ? s : "";
+                SessionPrefsStore.save(id, ef, md, th);
+            }
+            return null;
+        });
+        loadSessionPrefsFn = new SimpleFunction(browser, "_loadSessionPrefs", a ->
+            (a.length > 0 && a[0] instanceof String id) ? SessionPrefsStore.load(id) : "{}");
+        // Live model/effort/thinking selection → status bar updates immediately
+        // (no waiting for the next response). Runs on the SWT UI thread.
+        statusSelectionFn = new SimpleFunction(browser, "_statusSelection", a -> {
+            if (a.length > 0 && a[0] instanceof String ml && !ml.isEmpty()) displayModel = ml;
+            if (a.length > 1 && a[1] instanceof String ef) lastEffort = ef;
+            if (a.length > 2 && a[2] instanceof String th) lastThinking = !"0".equals(th);
+            refreshStatusBar();
+            return null;
+        });
         decideFn = new SimpleFunction(browser, "_decide", a -> {
             if (a.length >= 2 && a[0] instanceof String reqId && a[1] instanceof String dec) {
                 String msg = (a.length >= 3 && a[2] instanceof String m) ? m : "";
@@ -156,6 +222,7 @@ public class ClaudeGuiView extends ViewPart {
             pageLoaded = true;
             // WebView2 init is async — retry here where the webview provably exists.
             disableDevTools();
+            pushAvailableModels();   // in case the model list arrived before the page loaded
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
             }
@@ -164,9 +231,20 @@ public class ClaudeGuiView extends ViewPart {
         loadPage();
         ensureServerAsync();
         startContextPolling();
+        // Fetch the account's actually-available models (dynamic chooser).
+        ModelCatalog.fetchCuratedAsync(json -> {
+            availableModelsJson = json;
+            Display.getDefault().asyncExec(this::pushAvailableModels);
+        });
         // Pre-extract the bundled PHP runtime in the background so the first
         // session-history click doesn't pay the one-time extraction cost.
         new Thread(com.anthropic.claudecode.eclipse.bridge.PhpHistory::warmUp, "claude-history-warm").start();
+    }
+
+    /** Pushes the fetched model list to the webview once both are ready. */
+    private void pushAvailableModels() {
+        if (availableModelsJson == null || browser == null || browser.isDisposed() || !pageLoaded) return;
+        browser.execute("window.onAvailableModels && window.onAvailableModels('" + esc(availableModelsJson) + "')");
     }
 
     /** Push the current editor file/selection to the webview when it changes. */
@@ -256,6 +334,117 @@ public class ClaudeGuiView extends ViewPart {
         return "{\"customModel\":\"" + esc(custom) + "\"}";
     }
 
+    // ── Status bar (shared ClaudeStatusBar widget) ───────────────────────────
+
+    /** Rebuilds the {@link ClaudeStatus} from the latest stream data + captured
+     *  effort/thinking + the shared account-global limits, and pushes it to the bar.
+     *  Runs on the UI thread. */
+    private void refreshStatusBar() {
+        if (statusBar == null || statusBar.isDisposed()) return;
+        applyStatusBarEnabled();
+        // Keep the widget's "waiting for status…" placeholder until we have
+        // something to show: a completed turn, a chosen model, or shared limits.
+        boolean haveModel = displayModel != null && !displayModel.isEmpty();
+        if (lastRustStatusJson == null && !haveModel && ClaudeStatusStore.rateLimitsSchema().size() == 0) return;
+        statusBar.setStatus(buildStatus());
+    }
+
+    /** Assembles a statusLine-schema document from this GUI's own data so the shared
+     *  {@link ClaudeStatus#parse}/{@link ClaudeStatusBar} render it exactly like the CLI. */
+    private ClaudeStatus buildStatus() {
+        com.google.gson.JsonObject root = new com.google.gson.JsonObject();
+        // Model: the live GUI selection or the last actual model (whichever changed
+        // most recently) — so switching models updates the bar immediately.
+        if (displayModel != null && !displayModel.isEmpty()) {
+            com.google.gson.JsonObject m = new com.google.gson.JsonObject();
+            m.addProperty("display_name", displayModel);
+            root.add("model", m);
+        }
+        // Session data derived from the stream (context %, cost, tokens).
+        String rj = lastRustStatusJson;
+        if (rj != null) {
+            try {
+                com.google.gson.JsonObject r = com.google.gson.JsonParser.parseString(rj).getAsJsonObject();
+                com.google.gson.JsonObject ctx = new com.google.gson.JsonObject();
+                if (r.has("contextPct")) ctx.addProperty("used_percentage", r.get("contextPct").getAsDouble());
+                if (r.has("contextWindow") && r.get("contextWindow").getAsLong() > 0)
+                    ctx.addProperty("context_window_size", r.get("contextWindow").getAsLong());
+                com.google.gson.JsonObject cu = new com.google.gson.JsonObject();
+                copyLong(r, "inputTokens", cu, "input_tokens");
+                copyLong(r, "outputTokens", cu, "output_tokens");
+                copyLong(r, "cacheCreationTokens", cu, "cache_creation_input_tokens");
+                copyLong(r, "cacheReadTokens", cu, "cache_read_input_tokens");
+                ctx.add("current_usage", cu);
+                root.add("context_window", ctx);
+                if (r.has("costUsd")) {
+                    com.google.gson.JsonObject cost = new com.google.gson.JsonObject();
+                    cost.addProperty("total_cost_usd", r.get("costUsd").getAsDouble());
+                    root.add("cost", cost);
+                }
+            } catch (Exception ignored) {}
+        }
+        // Effort + thinking (launch-time choices captured on send).
+        if (lastEffort != null && !lastEffort.isEmpty()) {
+            com.google.gson.JsonObject e = new com.google.gson.JsonObject();
+            e.addProperty("level", lastEffort);
+            root.add("effort", e);
+        }
+        com.google.gson.JsonObject th = new com.google.gson.JsonObject();
+        th.addProperty("enabled", lastThinking);
+        root.add("thinking", th);
+        // Account-global usage limits shared from the CLI statusLine — identical numbers.
+        com.google.gson.JsonObject rl = ClaudeStatusStore.rateLimitsSchema();
+        if (rl.size() > 0) root.add("rate_limits", rl);
+        return ClaudeStatus.parse(root.toString());
+    }
+
+    private static void copyLong(com.google.gson.JsonObject src, String from,
+                                 com.google.gson.JsonObject dst, String to) {
+        if (src.has(from)) dst.addProperty(to, src.get(from).getAsLong());
+    }
+
+    /** {@code claude-opus-4-8} → {@code "Opus 4.8"} (date suffix stripped). Mirrors the CLI's display name. */
+    private static String prettyModel(String id) {
+        if (id == null || id.isEmpty()) return id;
+        String s = id.replaceFirst("^claude-", "").replaceFirst("-\\d{8}$", "");
+        String[] parts = s.split("-");
+        if (parts.length == 0 || parts[0].isEmpty()) return id;
+        String fam = Character.toUpperCase(parts[0].charAt(0)) + parts[0].substring(1);
+        if (parts.length == 1) return fam;
+        return fam + " " + String.join(".", java.util.Arrays.copyOfRange(parts, 1, parts.length));
+    }
+
+    /** Master switch: show/hide the bar per {@code PREF_STATUSLINE_ENABLED}. */
+    private void applyStatusBarEnabled() {
+        if (statusBar == null || statusBar.isDisposed()) return;
+        boolean enabled = true;
+        try {
+            enabled = Activator.getDefault().getPreferenceStore()
+                    .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_STATUSLINE_ENABLED);
+        } catch (Throwable ignored) {}
+        Object ld = statusBar.getLayoutData();
+        if (ld instanceof org.eclipse.swt.layout.GridData gd) {
+            if (gd.exclude == enabled) {   // state changed → relayout
+                gd.exclude = !enabled;
+                statusBar.setVisible(enabled);
+                if (statusBar.getParent() != null && !statusBar.getParent().isDisposed())
+                    statusBar.getParent().layout(true, true);
+            }
+        }
+    }
+
+    /** Periodic tick so reset countdowns and shared limits stay fresh while idle. */
+    private void startStatusTimer() {
+        Display display = Display.getDefault();
+        final Runnable[] tick = new Runnable[1];
+        tick[0] = () -> {
+            if (statusBar == null || statusBar.isDisposed()) return;
+            refreshStatusBar();
+            display.timerExec(30000, tick[0]);
+        };
+        display.timerExec(30000, tick[0]);
+    }
+
     /** Account info read from {@code ~/.claude.json} (oauthAccount). Usage % isn't exposed
      *  by the CLI, so only account fields are returned here. */
     private String accountInfoJson() {
@@ -296,19 +485,55 @@ public class ClaudeGuiView extends ViewPart {
         return b.toString().trim();
     }
 
-    private void wireChatCallbacks() {
+    /** Gets (or lazily creates + fully wires) the persistent-process manager for a tab. */
+    private ChatProcessManager managerFor(String tabId) {
+        return managers.computeIfAbsent(tabId, id -> {
+            ChatProcessManager m = new ChatProcessManager();
+            m.setPersistent(true);
+            m.setOnPermissionRequest((tool, input, label) -> handleControlPermission(id, tool, input, label));
+            m.setOnQuestionRequest(q -> requestQuestion(id, q));
+            m.setOnStatus(json -> onStatusForTab(id, json));
+            wireManager(m, id);
+            return m;
+        });
+    }
+
+    /** Wires a manager's streaming callbacks to the webview, tagged with its tab id
+     *  so concurrent streams from different tabs render into the right conversation. */
+    private void wireManager(ChatProcessManager m, String tabId) {
         Display display = Display.getDefault();
-        processManager.setOnStreamStart(() -> display.asyncExec(() -> executeJS("window.onStreamStart && window.onStreamStart()")));
-        processManager.setOnText(t -> display.asyncExec(() -> executeJS("window.onStreamText && window.onStreamText('" + esc(t) + "')")));
-        processManager.setOnStreamEnd(() -> display.asyncExec(() -> executeJS("window.onStreamEnd && window.onStreamEnd()")));
-        processManager.setOnToolStart(n -> display.asyncExec(() -> executeJS("window.onToolStart && window.onToolStart('" + esc(n) + "')")));
-        processManager.setOnToolEnd(n -> display.asyncExec(() -> executeJS("window.onToolEnd && window.onToolEnd('" + esc(n) + "')")));
-        processManager.setOnThinking(t -> display.asyncExec(() -> executeJS("window.onThinking && window.onThinking('" + esc(t) + "')")));
-        processManager.setOnTokens(n -> display.asyncExec(() -> executeJS("window.onTokens && window.onTokens('" + esc(n) + "')")));
-        processManager.setOnRateLimit(j -> display.asyncExec(() -> executeJS("window.onRateLimit && window.onRateLimit('" + esc(j) + "')")));
-        processManager.setOnSessionId(id -> display.asyncExec(() -> executeJS("window.onSessionId && window.onSessionId('" + esc(id) + "')")));
-        processManager.setOnError(m -> display.asyncExec(() -> executeJS("window.onError && window.onError('" + esc(m) + "')")));
+        final String tj = esc(tabId);
+        m.setOnStreamStart(() -> display.asyncExec(() -> executeJS("window.onStreamStart && window.onStreamStart('" + tj + "')")));
+        m.setOnText(t -> display.asyncExec(() -> executeJS("window.onStreamText && window.onStreamText('" + tj + "','" + esc(t) + "')")));
+        m.setOnStreamEnd(() -> display.asyncExec(() -> executeJS("window.onStreamEnd && window.onStreamEnd('" + tj + "')")));
+        m.setOnToolStart(n -> display.asyncExec(() -> executeJS("window.onToolStart && window.onToolStart('" + tj + "','" + esc(n) + "')")));
+        m.setOnThinking(t -> display.asyncExec(() -> executeJS("window.onThinking && window.onThinking('" + tj + "','" + esc(t) + "')")));
+        m.setOnTokens(n -> display.asyncExec(() -> executeJS("window.onTokens && window.onTokens('" + tj + "','" + esc(n) + "')")));
+        m.setOnRateLimit(j -> display.asyncExec(() -> executeJS("window.onRateLimit && window.onRateLimit('" + tj + "','" + esc(j) + "')")));
+        m.setOnSessionId(id -> display.asyncExec(() -> executeJS("window.onSessionId && window.onSessionId('" + tj + "','" + esc(id) + "')")));
+        m.setOnError(msg -> display.asyncExec(() -> executeJS("window.onError && window.onError('" + tj + "','" + esc(msg) + "')")));
         // Backend "system"/init events (e.g. "Connected") are noise in the GUI — not wired.
+    }
+
+    /** Per-tab status: always let the tab learn its resolved model; update the shared
+     *  status bar only for the ACTIVE tab (the bar shows one conversation at a time). */
+    private void onStatusForTab(String tabId, String json) {
+        statusByTab.put(tabId, json);
+        String actualId = "";
+        try {
+            com.google.gson.JsonObject r = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+            String mid = str(r, "model");
+            if (mid != null && !mid.isEmpty()) actualId = mid;
+        } catch (Exception ignored) {}
+        final String resolvedId = actualId;
+        final boolean isActive = tabId.equals(activeTabId);
+        if (isActive) { lastRustStatusJson = json; if (!resolvedId.isEmpty()) displayModel = prettyModel(resolvedId); }
+        Display.getDefault().asyncExec(() -> {
+            if (isActive) refreshStatusBar();
+            if (!resolvedId.isEmpty() && browser != null && !browser.isDisposed() && pageLoaded) {
+                browser.execute("window.onResolvedModel && window.onResolvedModel('" + esc(tabId) + "','" + esc(resolvedId) + "')");
+            }
+        });
     }
 
     private void loadPage() {
@@ -440,7 +665,7 @@ public class ClaudeGuiView extends ViewPart {
      * label for the middle "remember" option (empty = no such option). Returns
      * "allow", "allowRemember", "deny", or "deny&lt;message&gt;".
      */
-    private static String handleControlPermission(String toolName, String inputJson, String rememberLabel) {
+    private static String handleControlPermission(String tabId, String toolName, String inputJson, String rememberLabel) {
         com.google.gson.JsonElement input;
         try {
             input = com.google.gson.JsonParser.parseString(inputJson);
@@ -453,16 +678,18 @@ public class ClaudeGuiView extends ViewPart {
                 com.anthropic.claudecode.eclipse.tools.ApprovalPromptTool.detailOf(input),
                 proposal != null ? proposal[0] : null,
                 proposal != null ? proposal[1] : null,
-                rememberLabel);
+                rememberLabel, tabId);
         return decision == null ? "deny" : decision;
     }
 
     /** Legacy overload (MCP {@code ApprovalPromptTool}) — no CLI-derived remember
-     *  label, so it shows the static "allow all edits this session" option. */
+     *  label, so it shows the static "allow all edits this session" option; routes
+     *  the card to the active tab. */
     public static String requestApproval(String toolName, String detail,
                                          String filePath, String proposedContent) {
         return requestApproval(toolName, detail, filePath, proposedContent,
-                               "Yes, allow all edits this session");
+                               "Yes, allow all edits this session",
+                               active != null ? active.activeTabId : "");
     }
 
     /** Sets the legacy session-wide auto-allow flag (MCP path only). */
@@ -476,13 +703,14 @@ public class ClaudeGuiView extends ViewPart {
      */
     public static String requestApproval(String toolName, String detail,
                                          String filePath, String proposedContent,
-                                         String rememberLabel) {
+                                         String rememberLabel, String tabId) {
         if (allowAllSession) return "allow";
         ClaudeGuiView view = active;
         if (view == null || view.browser == null) return "deny";
         String reqId = UUID.randomUUID().toString();
         CompletableFuture<String> future = new CompletableFuture<>();
         PENDING.put(reqId, future);
+        final String tid = esc(tabId == null ? "" : tabId);
         final String tn = esc(toolName == null ? "tool" : toolName);
         final String dt = esc(detail == null ? "" : detail);
         final String rl = esc(rememberLabel == null ? "" : rememberLabel);
@@ -501,7 +729,7 @@ public class ClaudeGuiView extends ViewPart {
         Display.getDefault().asyncExec(() -> {
             if (view.browser != null && !view.browser.isDisposed() && view.pageLoaded) {
                 view.browser.execute("window.onApprovalRequest && window.onApprovalRequest('"
-                        + reqId + "','" + tn + "','" + dt + "','" + rl + "')");
+                        + tid + "','" + reqId + "','" + tn + "','" + dt + "','" + rl + "')");
             } else {
                 CompletableFuture<String> f = PENDING.remove(reqId);
                 if (f != null) f.complete("deny");
@@ -526,17 +754,23 @@ public class ClaudeGuiView extends ViewPart {
      * the answers as a JSON array string ({@code [{header,question,answer}]}) or
      * {@code "[]"} if dismissed.
      */
+    /** Legacy overload (MCP {@code AskUserQuestionTool}) — routes the card to the active tab. */
     public static String requestQuestion(String questionsJson) {
+        return requestQuestion(active != null ? active.activeTabId : "", questionsJson);
+    }
+
+    public static String requestQuestion(String tabId, String questionsJson) {
         ClaudeGuiView view = active;
         if (view == null || view.browser == null) return "[]";
         String reqId = UUID.randomUUID().toString();
         CompletableFuture<String> future = new CompletableFuture<>();
         QPENDING.put(reqId, future);
+        final String tid = esc(tabId == null ? "" : tabId);
         final String qjson = esc(questionsJson == null ? "[]" : questionsJson);
         Display.getDefault().asyncExec(() -> {
             if (view.browser != null && !view.browser.isDisposed() && view.pageLoaded) {
                 view.browser.execute("window.onAskQuestion && window.onAskQuestion('"
-                        + reqId + "','" + qjson + "')");
+                        + tid + "','" + reqId + "','" + qjson + "')");
             } else {
                 CompletableFuture<String> f = QPENDING.remove(reqId);
                 if (f != null) f.complete("[]");
@@ -555,9 +789,10 @@ public class ClaudeGuiView extends ViewPart {
     public void dispose() {
         if (active == this) active = null;
         contextPolling = false;
-        try {
-            if (processManager != null) processManager.stop();
-        } catch (Exception ignored) {}
+        for (ChatProcessManager m : managers.values()) {
+            try { m.stop(); } catch (Exception ignored) {}
+        }
+        managers.clear();
         super.dispose();
     }
 
