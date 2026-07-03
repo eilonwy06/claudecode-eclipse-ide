@@ -121,15 +121,16 @@
                label="Claude Code"
                mnemonic="C">
             <command
-                  commandId="com.anthropic.claudecode.eclipse.commands.toggle"
-                  label="Toggle Claude IDE Server"
-                  mnemonic="T"
-                  style="push"/>
-            <command
                   commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
                   label="Activate Claude Terminal"
                   mnemonic="L"
                   style="push"/>
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.resume"
+                  label="Resume Session"
+                  mnemonic="R"
+                  style="push"/>
+            <separator name="com.anthropic.claudecode.eclipse.separator1" visible="true"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
                   label="Send Selection to Claude"
@@ -137,18 +138,8 @@
                   style="push"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.addFile"
-                  label="Add File to Claude Context"
+                  label="Add File to Claude"
                   mnemonic="A"
-                  style="push"/>
-            <separator name="com.anthropic.claudecode.eclipse.separator1" visible="true"/>
-            <command
-                  commandId="com.anthropic.claudecode.eclipse.commands.resume"
-                  label="Resume Session"
-                  mnemonic="R"
-                  style="push"/>
-            <command
-                  commandId="com.anthropic.claudecode.eclipse.commands.restart"
-                  label="Restart Server"
                   style="push"/>
          </menu>
       </menuContribution>
