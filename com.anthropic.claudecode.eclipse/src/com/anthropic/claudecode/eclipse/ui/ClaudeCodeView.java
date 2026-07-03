@@ -180,13 +180,13 @@ public class ClaudeCodeView extends ViewPart {
         launchButton.setText("Launch Terminal");
         launchButton.addListener(SWT.Selection, e -> startClaude());
 
-        Button restartBtn = new Button(buttonRow, SWT.PUSH);
-        restartBtn.setText("Restart Server");
-        restartBtn.addListener(SWT.Selection, e -> restartServer());
-
         Button resumeBtn = new Button(buttonRow, SWT.PUSH);
         resumeBtn.setText("Resume Session");
         resumeBtn.addListener(SWT.Selection, e -> restartClaude("--resume"));
+
+        Button restartBtn = new Button(buttonRow, SWT.PUSH);
+        restartBtn.setText("Restart Server");
+        restartBtn.addListener(SWT.Selection, e -> restartServer());
     }
 
     private void createLogArea(Composite parent, Display display) {
