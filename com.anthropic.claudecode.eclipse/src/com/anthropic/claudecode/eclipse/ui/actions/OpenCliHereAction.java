@@ -70,7 +70,7 @@ public class OpenCliHereAction implements IObjectActionDelegate {
             ClaudeCliView view = (ClaudeCliView) page.showView(ClaudeCliView.VIEW_ID);
             view.launchProcessInDirectory(cwd, label);
         } catch (Exception e) {
-            Activator.logError("Failed to open Claude CLI", e);
+            Activator.logError("Failed to open Claude Terminal", e);
         }
     }
 
