@@ -53,13 +53,13 @@
             name="Claude Code"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.toggle"
-            name="Toggle Claude IDE Server"
-            description="Toggle the Claude IDE Server view"
+            name="Activate Claude IDE Server"
+            description="Show the Claude IDE Server view"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.toggleGui"
-            name="Toggle Claude Code"
-            description="Toggle the Claude Code view"
+            name="Activate Claude Code"
+            description="Show the Claude Code view"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.sendSelection"
@@ -92,10 +92,10 @@
    <extension point="org.eclipse.ui.handlers">
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.toggle"
-            class="com.anthropic.claudecode.eclipse.ui.handlers.ToggleClaudeHandler"/>
+            class="com.anthropic.claudecode.eclipse.ui.handlers.ActivateClaudeServerHandler"/>
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.toggleGui"
-            class="com.anthropic.claudecode.eclipse.ui.handlers.ToggleClaudeGuiHandler"/>
+            class="com.anthropic.claudecode.eclipse.ui.handlers.ActivateClaudeGuiHandler"/>
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
             class="com.anthropic.claudecode.eclipse.ui.handlers.SendSelectionHandler"/>
@@ -143,7 +143,7 @@
                mnemonic="C">
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.toggleGui"
-                  label="Toggle Claude Code"
+                  label="Activate Claude Code"
                   mnemonic="C"
                   style="push"/>
             <command
@@ -151,6 +151,18 @@
                   label="Activate Claude Terminal"
                   mnemonic="L"
                   style="push"/>
+            <!-- Debug-only: visible only while debug mode is on (see debugMode source variable). -->
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.toggle"
+                  label="Activate Claude IDE Server"
+                  mnemonic="I"
+                  style="push">
+               <visibleWhen checkEnabled="false">
+                  <with variable="com.anthropic.claudecode.eclipse.debugMode">
+                     <equals value="true"/>
+                  </with>
+               </visibleWhen>
+            </command>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.resume"
                   label="Resume Session"
@@ -197,6 +209,43 @@
                   tooltip="Activate Claude Terminal"/>
          </toolbar>
       </menuContribution>
+   </extension>
+
+   <!-- Debug-only UI gating.
+        The debug activity filters the "Claude IDE Server" view (and its Activate
+        command) out of Show View / key bindings. Its enablement is driven purely
+        by the debugMode source variable (published by DebugModeSourceProvider),
+        so it turns on/off with the Debug mode preference with no default-state
+        guesswork and no reliance on runtime activity toggling. -->
+   <extension point="org.eclipse.ui.activities">
+      <activity
+            id="com.anthropic.claudecode.eclipse.activity.debug"
+            name="Claude Code Debug Tools"
+            description="Debug-only Claude Code UI, such as the Claude IDE Server view.">
+         <enabledWhen>
+            <with variable="com.anthropic.claudecode.eclipse.debugMode">
+               <equals value="true"/>
+            </with>
+         </enabledWhen>
+      </activity>
+      <activityPatternBinding
+            activityId="com.anthropic.claudecode.eclipse.activity.debug"
+            isEqualityPattern="true"
+            pattern="com.anthropic.claudecode.eclipse/com.anthropic.claudecode.eclipse.ui.ClaudeCodeView"/>
+      <activityPatternBinding
+            activityId="com.anthropic.claudecode.eclipse.activity.debug"
+            isEqualityPattern="true"
+            pattern="com.anthropic.claudecode.eclipse/com.anthropic.claudecode.eclipse.commands.toggle"/>
+   </extension>
+
+   <!-- Publishes the debugMode source variable used by menu visibleWhen expressions. -->
+   <extension point="org.eclipse.ui.services">
+      <sourceProvider
+            provider="com.anthropic.claudecode.eclipse.ui.DebugModeSourceProvider">
+         <variable
+               name="com.anthropic.claudecode.eclipse.debugMode"
+               priorityLevel="workbench"/>
+      </sourceProvider>
    </extension>
 
    <!-- Preferences -->

@@ -225,6 +225,8 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
             } catch (UnsatisfiedLinkError ignored) {
                 // Native library doesn't have setDebugMode — older build, skip silently.
             }
+            // The debug-only UI (Claude IDE Server view + its menu item) reacts to
+            // this preference change via DebugModeSourceProvider — no call needed here.
 
             Activator activator = Activator.getDefault();
             if (activator.isServerRunning()) {
