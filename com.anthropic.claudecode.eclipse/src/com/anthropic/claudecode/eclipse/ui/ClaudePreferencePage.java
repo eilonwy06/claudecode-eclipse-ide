@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.eclipse.jface.preference.BooleanFieldEditor;
-import org.eclipse.jface.preference.ColorFieldEditor;
 import org.eclipse.jface.preference.FieldEditor;
 import org.eclipse.jface.preference.FieldEditorPreferencePage;
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -77,17 +76,6 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
         addField(new BooleanFieldEditor(
                 Constants.PREF_DEBUG_MODE,
                 "Debug mode",
-                getFieldEditorParent()));
-
-        // Claude Terminal colors — independent of Eclipse's Terminal colors.
-        addField(new ColorFieldEditor(
-                Constants.PREF_CONSOLE_BG_COLOR,
-                "Claude Terminal background:",
-                getFieldEditorParent()));
-
-        addField(new ColorFieldEditor(
-                Constants.PREF_CONSOLE_FG_COLOR,
-                "Claude Terminal foreground:",
                 getFieldEditorParent()));
 
         Label statusSeparator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);

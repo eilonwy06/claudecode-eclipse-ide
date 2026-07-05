@@ -23,6 +23,7 @@ import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.preference.PreferenceConverter;
 import org.eclipse.jface.preference.PreferenceStore;
+import org.eclipse.jface.resource.ColorRegistry;
 import org.eclipse.jface.resource.FontRegistry;
 import org.eclipse.jface.resource.JFaceResources;
 import org.eclipse.jface.util.IPropertyChangeListener;
@@ -99,6 +100,13 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     /** Font definition ID from plugin.xml (Colors and Fonts preference). */
     private static final String FONT_ID = "com.anthropic.claudecode.eclipse.font.console";
 
+    /** Color definition IDs from plugin.xml (Colors and Fonts > Claude Code). */
+    private static final String COLOR_BG_ID = "com.anthropic.claudecode.eclipse.color.terminalBackground";
+    private static final String COLOR_FG_ID = "com.anthropic.claudecode.eclipse.color.terminalForeground";
+    // Fallbacks matching the plugin.xml defaults, used only if the theme registry is unavailable.
+    private static final RGB DEFAULT_BG = new RGB(0x12, 0x13, 0x14);
+    private static final RGB DEFAULT_FG = new RGB(0xE5, 0xE5, 0xE5);
+
     /**
      * Dedicated JFaceResources key the terminal resolves for BOTH drawing and
      * cell-grid measurement. We mirror the user's console font ({@link #FONT_ID},
@@ -118,7 +126,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     // Perceived-luminance cutoff (of 255) below which the terminal background counts as dark.
     private static final double DARK_BG_LUMINANCE_THRESHOLD = 128;
 
-    // Active terminal colors, read from the PREF_CONSOLE_BG/FG_COLOR preferences
+    // Active terminal colors, read from the COLOR_BG_ID/COLOR_FG_ID theme colors
     // (user-configurable, independent of Eclipse's shared Terminal colors).
     private int bgR, bgG, bgB;
     private int fgR, fgG, fgB;
@@ -130,7 +138,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     private boolean launching = false;
     private Color bgColor;
     private IPropertyChangeListener fontChangeListener;
-    private IPropertyChangeListener themeChangeListener;
+    private IPropertyChangeListener colorChangeListener;
     private Action scrollLockAction;
 
     /** Shared entity resolver registry for Ctrl-click navigation, one per view. */
@@ -192,17 +200,16 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         };
         JFaceResources.getFontRegistry().addListener(fontChangeListener);
 
-        themeChangeListener = event -> {
+        colorChangeListener = event -> {
             String p = event.getProperty();
-            if (Constants.PREF_CONSOLE_BG_COLOR.equals(p)
-                    || Constants.PREF_CONSOLE_FG_COLOR.equals(p)) {
+            if (COLOR_BG_ID.equals(p) || COLOR_FG_ID.equals(p)) {
                 display.asyncExec(() -> {
                     if (viewDisposed || tabFolder == null || tabFolder.isDisposed()) return;
                     applyTheme();
                 });
             }
         };
-        Activator.getDefault().getPreferenceStore().addPropertyChangeListener(themeChangeListener);
+        JFaceResources.getColorRegistry().addListener(colorChangeListener);
     }
 
     private void applyTheme() {
@@ -331,16 +338,16 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     }
 
     private void setThemeColors(Display display) {
-        // Background/foreground come from the user-configurable preferences.
-        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
-        RGB bg = PreferenceConverter.getColor(store, Constants.PREF_CONSOLE_BG_COLOR);
-        RGB fg = PreferenceConverter.getColor(store, Constants.PREF_CONSOLE_FG_COLOR);
+        // Background/foreground come from the user-configurable Colors and Fonts entries
+        // (General > Appearance > Colors and Fonts > Claude Code).
+        RGB bg = themeColor(COLOR_BG_ID, DEFAULT_BG);
+        RGB fg = themeColor(COLOR_FG_ID, DEFAULT_FG);
         bgR = bg.red; bgG = bg.green; bgB = bg.blue;
         fgR = fg.red; fgG = fg.green; fgB = fg.blue;
         bgColor = new Color(display, bgR, bgG, bgB);
 
         // COLORFGBG tells Claude's "/theme auto" whether its background is dark or light. We derive it
-        // from the actual configured terminal background (PREF_CONSOLE_BG_COLOR), not Eclipse's
+        // from the actual configured terminal background (the COLOR_BG_ID color), not Eclipse's
         // General > Appearance theme: that color is what is genuinely painted behind the terminal (and
         // can differ from the SWT widget/theme color), so its luminance is the ground truth for the hint.
         // This keeps it correct for any custom color and avoids the discouraged x-friends IThemeEngine
@@ -545,9 +552,9 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             JFaceResources.getFontRegistry().removeListener(fontChangeListener);
             fontChangeListener = null;
         }
-        if (themeChangeListener != null) {
-            Activator.getDefault().getPreferenceStore().removePropertyChangeListener(themeChangeListener);
-            themeChangeListener = null;
+        if (colorChangeListener != null) {
+            JFaceResources.getColorRegistry().removeListener(colorChangeListener);
+            colorChangeListener = null;
         }
         if (tabFolder != null && !tabFolder.isDisposed()) {
             for (CTabItem item : tabFolder.getItems()) {
@@ -601,6 +608,20 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             if (f.isFile() && f.canExecute()) return f.getAbsolutePath();
         }
         return cmd;
+    }
+
+    /** A Claude Terminal color ({@link #COLOR_BG_ID}/{@link #COLOR_FG_ID}) from the
+     *  workbench theme registry, falling back to {@code fallback} if unavailable. */
+    private RGB themeColor(String id, RGB fallback) {
+        try {
+            ColorRegistry themeReg = PlatformUI.getWorkbench().getThemeManager()
+                    .getCurrentTheme().getColorRegistry();
+            RGB rgb = themeReg.getRGB(id);
+            if (rgb != null) return rgb;
+        } catch (Exception ignore) {
+            // Workbench/theme unavailable — fall through.
+        }
+        return fallback;
     }
 
     /** The user's console font ({@link #FONT_ID}) from the theme registry, with
