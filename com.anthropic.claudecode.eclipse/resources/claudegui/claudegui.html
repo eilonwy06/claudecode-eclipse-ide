@@ -1665,7 +1665,7 @@ window.onAvailableModels = function(json) {
   MODELS = list;
   // Re-add a custom --model from plugin prefs if it isn't already offered.
   if (customModel && !MODELS.some(m => m.id === customModel)) {
-    MODELS.splice(1, 0, { id: customModel, label: customModel, desc: 'From your plugin settings' });
+    MODELS.splice(1, 0, { id: customModel, label: prettyModelId(customModel), desc: 'From your plugin settings' });
   }
   // If the current selection vanished, fall back to Default (keep the tab in sync).
   if (curModel && !MODELS.some(m => m.id === curModel) && !/^claude-/.test(curModel)) {
@@ -1682,11 +1682,25 @@ function initModelConfig() {
   try { const c = JSON.parse(window._modelConfig ? window._modelConfig() : '{}'); customModel = (c && c.customModel) || ''; } catch (e) {}
   if (customModel) {
     // surface a --model from the plugin's preference args, selected by default
-    MODELS.splice(1, 0, { id: customModel, label: customModel, desc: 'From your plugin settings' });
+    MODELS.splice(1, 0, { id: customModel, label: prettyModelId(customModel), desc: 'From your plugin settings' });
     curModel = customModel;
   }
   updateModelLabel();
 }
+/* Reliable async push of the configured --model (from prefs), sent by Java alongside
+   the model list — a safety net in case the page-load _modelConfig() didn't land. The
+   configured model IS the default here (matching the Claude Terminal), so adopt it for
+   any tab that's still on the untouched account default. */
+window.onCustomModel = function(id) {
+  if (!id || customModel === id) return;
+  customModel = id;
+  if (!MODELS.some(m => m.id === id))
+    MODELS.splice(1, 0, { id: id, label: prettyModelId(id), desc: 'From your plugin settings' });
+  tabs.forEach(t => { if (t && !t.model) t.model = id; });
+  if (!curModel) curModel = id;
+  updateModelLabel();
+  if (typeof notifyStatusSelection === 'function') notifyStatusSelection();
+};
 function modelLabelFor(id) {
   const m = MODELS.find(x => x.id === id);
   if (m) return m.label.replace(' (recommended)', '');

@@ -127,6 +127,10 @@ public class ClaudeGuiView extends ViewPart {
                 String permMode = (a.length > 3 && a[3] instanceof String m) ? m : "";
                 String effort   = (a.length > 4 && a[4] instanceof String e) ? e : "";
                 String model    = (a.length > 5 && a[5] instanceof String md) ? md : "";
+                // "Default" (empty) → honor the user's configured --model from prefs,
+                // like the Claude Terminal does. Without this, an empty model lets the
+                // CLI pick the account default (e.g. Opus 4.8) instead of the user's.
+                if (model.isEmpty()) model = prefClaudeModel();
                 String thinking = (a.length > 6 && a[6] instanceof String th) ? th : "";
                 String tabId    = (a.length > 7 && a[7] instanceof String ti) ? ti : "default";
                 // Capture effort/thinking for the status bar (the stream reports
@@ -244,6 +248,11 @@ public class ClaudeGuiView extends ViewPart {
     /** Pushes the fetched model list to the webview once both are ready. */
     private void pushAvailableModels() {
         if (availableModelsJson == null || browser == null || browser.isDisposed() || !pageLoaded) return;
+        // Reliably (re)assert the user's configured --model first, so the chooser shows
+        // it even if the page-load _modelConfig() extraction didn't land, then the list.
+        String pref = prefClaudeModel();
+        if (!pref.isEmpty())
+            browser.execute("window.onCustomModel && window.onCustomModel('" + esc(pref) + "')");
         browser.execute("window.onAvailableModels && window.onAvailableModels('" + esc(availableModelsJson) + "')");
     }
 
@@ -318,20 +327,25 @@ public class ClaudeGuiView extends ViewPart {
         }
     }
 
-    /** Detect a {@code --model <x>} the user set in their preference args, so the model
-     *  chooser can offer it as an extra option. Returns {@code {"customModel":"..."}}. */
-    private String modelConfigJson() {
-        String custom = "";
+    /** The {@code --model} the user configured in the Claude args preference, or "".
+     *  This is the same model the Claude Terminal launches with, so the GUI honors
+     *  it too (rather than silently using the account default). Read live, so it is
+     *  reliable at send time even if the page-load extraction hasn't run. */
+    static String prefClaudeModel() {
         try {
             String args = Activator.getDefault().getPreferenceStore()
                     .getString(com.anthropic.claudecode.eclipse.Constants.PREF_CLAUDE_ARGS);
             if (args != null && !args.isBlank()) {
                 java.util.regex.Matcher m = java.util.regex.Pattern
                         .compile("--model[=\\s]+(\"[^\"]+\"|\\S+)").matcher(args);
-                if (m.find()) custom = m.group(1).replace("\"", "");
+                if (m.find()) return m.group(1).replace("\"", "");
             }
         } catch (Throwable ignored) {}
-        return "{\"customModel\":\"" + esc(custom) + "\"}";
+        return "";
+    }
+
+    private String modelConfigJson() {
+        return "{\"customModel\":\"" + esc(prefClaudeModel()) + "\"}";
     }
 
     // ── Status bar (shared ClaudeStatusBar widget) ───────────────────────────
