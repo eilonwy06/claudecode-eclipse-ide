@@ -637,7 +637,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         private ITerminalViewControl termControl;
         private ClaudeStatusBar statusBar;
         private PreferenceStore prefStore;
-        private Listener ctrlCFilter;
+        private Listener keyFilter;
 
         String tabToken() { return tabToken; }
 
@@ -982,10 +982,20 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             // fires before ALL widget listeners; setting e.type = SWT.None there causes
             // EventTable.sendEvent to exit before invoking any widget listener (it checks
             // event.type == 0 at the top of each iteration), so the terminal never sees it.
-            ctrlCFilter = e -> {
+            keyFilter = e -> {
                 if (disposed || e.widget != canvas) return;
                 boolean mod = (e.stateMask & SWT.MOD1) != 0;
                 boolean shift = (e.stateMask & SWT.SHIFT) != 0;
+                boolean alt = (e.stateMask & SWT.ALT) != 0;
+                // Shift+Enter → insert a newline, mirroring the terminal's native Alt+Enter
+                // (ESC+CR). Must swallow here so the terminal never sends the bare CR that
+                // would submit the input to Claude. !alt leaves Alt+Enter to the terminal.
+                if (shift && !mod && !alt
+                        && (e.keyCode == SWT.CR || e.keyCode == SWT.KEYPAD_CR)) {
+                    control.pasteString("\033\r");
+                    e.type = SWT.None; // stops EventTable iteration; terminal never sees this
+                    return;
+                }
                 if (mod && !shift && e.keyCode == 'c') {
                     String sel = control.getSelection();
                     if (sel != null && !sel.isEmpty()) {
@@ -994,7 +1004,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                     }
                 }
             };
-            canvas.getDisplay().addFilter(SWT.KeyDown, ctrlCFilter);
+            canvas.getDisplay().addFilter(SWT.KeyDown, keyFilter);
         }
 
         private void createPopupMenu(OpenEntityHandler openEntityHandler) {
@@ -1096,10 +1106,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
         void dispose() {
             disposed = true;
-            if (ctrlCFilter != null) {
+            if (keyFilter != null) {
                 Display display = Display.getDefault();
-                if (!display.isDisposed()) display.removeFilter(SWT.KeyDown, ctrlCFilter);
-                ctrlCFilter = null;
+                if (!display.isDisposed()) display.removeFilter(SWT.KeyDown, keyFilter);
+                keyFilter = null;
             }
             if (termControl != null && !termControl.isDisposed()) {
                 termControl.disposeTerminal();
