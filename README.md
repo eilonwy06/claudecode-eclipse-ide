@@ -75,14 +75,15 @@ Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
 ### Opening the Views
 
 Go to **Window → Show View → Other → Claude Code** and open the views you want:
+- **Claude Code** — a VS Code-style graphical chat panel: multiple concurrent conversation tabs (each backed by its own Claude process), a model picker with per-conversation model / reasoning effort / extended thinking, an in-panel status bar (live model, context usage, cost), inline permission and question cards, live extended-thinking reveal, session history, and inline file diffs
 - **Claude Terminal** — dedicated interactive terminal, built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, customizable colors, and Ctrl/⌘-click navigation to file paths and links mentioned in Claude's answers
-- **Claude Chat** — web-based chat interface with markdown rendering
-- **Claude IDE Server** — server status, launch/resume/restart controls
+
+> **Claude IDE Server** — a server status / launch / restart view — is an advanced view hidden by default; it appears only when debug mode is enabled.
 
 
 ### Getting Started
 
-1. Open the **Claude Terminal** view, or switch to **Claude Chat** for a richer markdown interface
+1. Open the **Claude Code** view for a graphical chat experience, or the **Claude Terminal** view for the interactive CLI
 2. Claude can read your open files, selection, and workspace context automatically via MCP tools
 
 > **Note (all platforms):** The Claude Terminal view embeds the Eclipse Terminal control and launches `claude` over a local PTY (ConPTY on Windows, native PTY on Linux/macOS), with full ANSI/24-bit color, scrollback, and resize. Copy/paste is available via the right-click menu or the keyboard: `Ctrl/⌘+V` (or `Shift+Insert`) to paste, `Ctrl/⌘+Shift+C` to copy, and `Ctrl/⌘+C` copies when text is selected (otherwise it passes through to interrupt Claude).
@@ -106,10 +107,15 @@ These are also available from the **Claude Code** menu in the menu bar and from 
 
 ### Chat Controls
 
-- **Clear** — clears the chat display
-- **New Session** — starts a fresh conversation
-- **Resume Session** (Claude Code view) — resumes the previous CLI session with `--resume`
-- **Restart Server** (Claude Code view) — restarts the internal MCP server
+In the **Claude Code** view:
+- **New Session** — opens a fresh conversation tab (multiple run concurrently)
+- **Model picker** — sets the model, reasoning effort, and extended thinking for the current conversation
+- **History** — browse, resume, or delete past conversations
+- **Clear** — clears the current conversation's display
+
+From the **Claude Code** menu (or the Claude IDE Server view in debug mode):
+- **Resume Claude Code** — resumes the previous CLI session with `--resume`
+- **Restart Claude Code Server** — restarts the internal MCP server
 
 ### What Claude Can Do in Eclipse
 

@@ -4,7 +4,32 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [2.4.9] — 2026-06-22 *(current)*
+## [3.0.0] — 2026-07-06 *(current)*
+
+Major release introducing the **Claude Code** view — a full graphical chat panel — alongside status-bar, theming, and terminal improvements.
+
+### Added
+- **Claude Code view — a VS Code-style graphical chat panel.** A rich in-IDE chat experience alongside the terminal:
+  - **Multiple concurrent conversation tabs**, each backed by its own persistent Claude process — a streaming conversation in one tab never blocks typing or sending in another. Tabs can be reordered by dragging.
+  - **Per-conversation model, reasoning effort, and extended thinking**, remembered and restored when you reopen a past conversation.
+  - **Dynamic model chooser** — the list is fetched from the models your account can actually use (curated to the latest of each family), so it keeps working as new models ship instead of relying on a hardcoded list.
+  - **In-panel status bar** — the same widget as the terminal, showing the live model, context-window usage, and session cost.
+  - **Inline permission and question cards** — approve or deny tool use and answer Claude's multiple-choice questions right in the panel, enforced by the CLI; a "remember this" choice is scoped correctly to the specific action.
+  - **Live extended-thinking reveal**, **model-switch dividers** within a conversation, **session history** (list / resume / delete past conversations), and **inline file diffs**.
+- **Status bar for the Claude Terminal** — shows the live model, context-window usage, and session cost ([@xgsa](https://github.com/xgsa), PR #63)
+- **Shift+Enter inserts a newline in the Claude Terminal** — for composing multi-line prompts without sending ([@xgsa](https://github.com/xgsa), PR #76)
+
+### Changed
+- **Views renamed for clarity** — "Claude CLI" → **Claude Terminal**, and the former "Claude Code" server view → **Claude IDE Server**; the new graphical chat panel takes the **Claude Code** name. The main menu was reorganized to group related actions, and the advanced "Claude IDE Server" view/menu entry is now hidden unless debug mode is enabled ([@xgsa](https://github.com/xgsa), PR #73)
+- **Claude Terminal colors and font moved to the standard Colors and Fonts preferences** — theme the terminal (and the renamed **Claude Terminal Font**) from **Preferences → General → Appearance → Colors and Fonts**. Note: any terminal colors you previously customized reset once to the new defaults and must be re-picked there ([@xgsa](https://github.com/xgsa), PR #77)
+- **Terminal light/dark hint auto-derived from the terminal background** — the separate "Claude CLI theme" preference is gone; Claude's light/dark hint now follows your terminal's background color automatically ([@xgsa](https://github.com/xgsa), PR #69)
+
+### Fixed
+- **Claude Code view honors your configured `--model`** — when the model picker is on "Default", the panel now launches with the `--model` from your Claude *Arguments* preference (matching the Claude Terminal), instead of silently falling back to the account's default model.
+
+---
+
+## [2.4.9] — 2026-06-22
 
 ### Changed
 - **Unified file-open dialog and faster Ctrl+Click resolution** — the multiple-files open dialog now shares the common entity-selection dialog used by the other resolvers, and identifier/file resolution is faster (resolvers run in parallel, with optimized workspace traversal) ([@xgsa](https://github.com/xgsa), PR #61)
