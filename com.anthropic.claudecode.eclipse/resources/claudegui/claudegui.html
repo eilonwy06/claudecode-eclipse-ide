@@ -73,7 +73,19 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 /* ── Conversation header ─────────────────────────────────── */
 #convo-header { display: flex; align-items: center; justify-content: space-between;
   padding: 9px 14px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
-#convo-header .title { font-weight: 600; font-size: 13px; color: var(--fg); }
+/* The pill (.title-wrap) is the outer container at a fixed 32px height. The input sits
+   INSIDE it at its own smaller natural size, so the pill encompasses the input. Only the
+   pill's height is set here — the input is never forced to the pill's height. */
+#convo-header .title-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 340px;
+  height: 32px; box-sizing: border-box; padding: 0 6px; border-radius: 8px; margin: -1px -6px; cursor: pointer; }
+#convo-header .title-wrap:hover { background: var(--bg-hover); }
+#convo-header .title { font-weight: 600; font-size: 13px; color: var(--fg); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+#convo-header .title-edit { color: var(--fg-faint); display: none; flex-shrink: 0; }
+#convo-header .title-wrap:hover .title-edit { display: inline-flex; }
+#convo-header .title-input { max-width: 340px; box-sizing: border-box;
+  background: var(--bg-code); border: 1px solid var(--accent); border-radius: 5px;
+  padding: 3px 6px; color: var(--fg); font-size: 13px; font-weight: 600; outline: none; }
 #convo-header .actions { display: flex; gap: 2px; }
 
 /* ── Messages ────────────────────────────────────────────── */
@@ -189,7 +201,7 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 .modes-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px;
   border-radius: 6px; color: var(--fg-soft); cursor: pointer; font-size: 12px; }
 .modes-btn:hover { background: var(--bg-hover); }
-#send { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+#send { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 32px;
   border-radius: 7px; background: var(--accent); color: #fff; cursor: pointer; flex-shrink: 0; }
 #send.disabled { background: #4a3a33; color: #8a7a72; cursor: default; }
 #send.stop { background: var(--accent); }
@@ -241,6 +253,12 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 /* working indicator (sunburst + gerund) shown while Claude is processing */
 .working { display: flex; align-items: center; gap: 9px; padding: 8px 0 8px 2px; color: var(--fg); font-weight: 600; }
 .working .sb { color: var(--accent); display: inline-flex; animation: spin 2.6s linear infinite; }
+.working .gerund { display: inline; white-space: pre; }
+/* Block-element glyph (U+258D) renders from Segoe UI / Consolas on Windows; the
+   font-family fallback keeps it a solid bar and never a tofu box. */
+.working .gerund .cursor { font-family: Consolas, 'Segoe UI', monospace; color: var(--accent);
+  animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
 
 /* floating decision / question card — sticks to the bottom of the scroll area so
    messages scroll behind it; full message-column width (like user messages). */
@@ -347,9 +365,13 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 #history-list .h-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 #history-list .h-title { color: var(--fg); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #history-list .h-time { color: var(--fg-faint); font-size: 10.5px; }
-#history-list .h-del { color: var(--fg-faint); padding: 4px; border-radius: 4px; visibility: hidden; flex-shrink: 0; }
-#history-list .item:hover .h-del { visibility: visible; }
-#history-list .h-del:hover { color: #e06c6c; background: var(--bg-hover); }
+#history-list .h-actions { display: flex; gap: 2px; flex-shrink: 0; }
+#history-list .h-action { color: var(--fg-faint); padding: 4px; border-radius: 4px; visibility: hidden; cursor: pointer; }
+#history-list .item:hover .h-action { visibility: visible; }
+#history-list .h-action:hover { color: var(--fg); background: var(--bg-hover); }
+#history-list .h-action.h-del:hover { color: #e06c6c; }
+#history-list .h-rename-input { flex: 1; background: var(--bg-code); border: 1px solid var(--accent); border-radius: 4px;
+  padding: 3px 6px; color: var(--fg); font-size: 12.5px; outline: none; }
 .h-empty { color: var(--fg-dim); font-size: 12px; padding: 14px; text-align: center; }
 
 /* model chooser items */
@@ -411,7 +433,10 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 
   <!-- Conversation header -->
   <div id="convo-header">
-    <span class="title" id="convo-title">Claude Code</span>
+    <div class="title-wrap" id="title-wrap" onclick="startTitleEdit()">
+      <span class="title" id="convo-title">Claude Code</span>
+      <span class="title-edit" id="title-edit" title="Rename">__PENCIL__</span>
+    </div>
     <div class="actions">
       <div class="tbtn" id="history-btn" title="Session history" onclick="toggleHistory(this)">__CLOCK__</div>
       <div class="tbtn" title="New session" onclick="newSession()">__NEWCHAT__</div>
@@ -840,6 +865,52 @@ function setTabTitle(t, raw) {
   if (t.id === activeId) document.getElementById('convo-title').textContent = title;
   renderTabs();
 }
+function startTitleEdit() {
+  const t = activeTab(); if (!t) return;
+  const wrap = document.getElementById('title-wrap'); if (!wrap) return;
+  // Already editing → clicking the input again does nothing (no re-open, no clone).
+  if (wrap.querySelector('.title-input')) return;
+  const titleEl = document.getElementById('convo-title');
+  const editBtn = document.getElementById('title-edit');
+  if (!titleEl || !editBtn) return;
+  const curTitle = t.title || 'Claude Code';
+  titleEl.style.display = 'none';
+  editBtn.style.display = 'none';
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.className = 'title-input'; inp.value = curTitle;
+  wrap.appendChild(inp);
+  // Size the field to its content via a hidden mirror span (inputs don't shrink-wrap).
+  // border-box width = text width + the space the pencil used to take (gap+icon ≈ 19px),
+  // which (a) matches the hovered pill's width and (b) is the allowance that keeps the
+  // text from ever being clipped — the input's own padding/border overhead lives inside it.
+  const EDIT_ALLOWANCE = 20;
+  const meas = document.createElement('span');
+  meas.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-size:13px;font-weight:600;';
+  document.body.appendChild(meas);
+  const sizer = () => { meas.textContent = inp.value || ' '; inp.style.width = Math.min(324, meas.offsetWidth + EDIT_ALLOWANCE) + 'px'; };
+  inp.oninput = sizer; sizer();
+  inp.focus(); inp.select();
+  let done = false;
+  function finish(save) {
+    if (done) return; done = true;
+    const newTitle = inp.value.trim() || 'Claude Code';
+    inp.remove(); meas.remove();
+    titleEl.style.display = '';
+    editBtn.style.display = '';
+    if (save && newTitle !== curTitle) {
+      t.title = newTitle; t.titled = true;
+      titleEl.textContent = newTitle;
+      renderTabs();
+      if (t.sessionId && window._renameSession) window._renameSession(t.sessionId, newTitle);
+    }
+  }
+  inp.onclick = (e) => e.stopPropagation();   // don't bubble to the wrap's onclick
+  inp.onblur = () => finish(true);
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); inp.onblur = null; finish(false); }
+  };
+}
 function newSession() { closeMenus(); createTab(); input.focus(); }
 
 /* ===================== Chat (live, local) ===================== */
@@ -886,6 +957,8 @@ function relinkTurn(turn) {
   const items = turn.querySelectorAll(':scope > .a-item');
   items.forEach((el, i) => el.classList.toggle('linked', i < items.length - 1));
 }
+/* Simple per-chunk render: accumulate text and re-render the whole body each chunk.
+   Streams live because the native side fires onText per delta. */
 function appendAssistant(t) {
   finalizeThink();
   if (!ensureTurn()) return;
@@ -902,6 +975,15 @@ function appendAssistant(t) {
 function endAssistant() {
   finalizeThink();
   if (curBody) curBody.classList.remove('streaming');
+  if (curTurn && !curTurn.querySelector('.a-item') && curTurn.parentNode) curTurn.remove();
+  curTurn = null; curBody = null; curText = '';
+}
+/* Cancel: drop the in-progress assistant body WITHOUT rendering it, so a cancelled
+   turn shows only "Request cancelled." and never a half-baked partial answer. Any
+   tool lines already committed to the turn stay; only the streaming text body goes. */
+function discardAssistant() {
+  finalizeThink();
+  if (curBody && curBody.parentNode) curBody.remove();
   if (curTurn && !curTurn.querySelector('.a-item') && curTurn.parentNode) curTurn.remove();
   curTurn = null; curBody = null; curText = '';
 }
@@ -1101,7 +1183,7 @@ function doCancel() {
   const t = activeTab(); if (!t) return;
   loadRender(t);
   if (window._cancelRequest) window._cancelRequest(t.id);
-  hideWorking(); endAssistant(); setStreaming(false);
+  hideWorking(); discardAssistant(); setStreaming(false);
   addSystem('Request cancelled.');
 }
 
@@ -1496,24 +1578,88 @@ const GERUNDS = [
   'Zigzagging','Zooming'
 ];
 let workingEl = null, workingGerund = '', lastTokens = 0;
+let gerundCycleTimer = null, gerundTypeTimer = null, gerundIdx = 0, gerundHold = 0;
+const GERUND_HOLD_START = 5000;   // first gerund holds 5s, then 6s, 7s, 8s, 9s…
+const GERUND_HOLD_STEP = 1000;
+const GERUND_TYPE_SPEED = 45;
+// Schedule the next cycle, growing the hold by 1s each time.
+function scheduleGerund() {
+  gerundCycleTimer = setTimeout(() => { cycleGerund(); scheduleGerund(); }, gerundHold);
+  gerundHold += GERUND_HOLD_STEP;
+}
 function renderThinkLabel() {
   if (!curThink) return;
   const lbl = curThink.querySelector('.think-label');
   if (lbl) lbl.textContent = 'Thinking…' + (lastTokens > 0 ? ' · ' + lastTokens.toLocaleString() + ' tokens' : '');
 }
+function shuffleGerunds() {
+  const arr = GERUNDS.slice();
+  for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; }
+  return arr;
+}
+let shuffledGerunds = shuffleGerunds();
+const CURSOR = '<span class="cursor">▍</span>';
+function escHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+/* Morph the gerund like VSCode: a cursor (▍) sweeps left→right, a ghost caret (_)
+   sits one slot behind it, new letters land behind the ghost while the tail of the
+   old word is still visible ahead of the cursor. Types from empty on first show. */
+function morphGerund(fromWord, toWord, el, onDone) {
+  const from = (fromWord || '') + '...';
+  const to = toWord + '...';
+  const n = to.length;
+  // Caret column c sweeps 0,2,3,…,n. At column c the ▍ eats the old letter from[c]
+  // (hidden under it); the ghost _ sits at c-2 with one surviving old letter from[c-1]
+  // between it and the caret; everything left of the ghost is the settled new word;
+  // from[c+1..] is the remaining old-word tail.
+  let c = 0;
+  function frame() {
+    if (!workingEl || !el.parentNode) return;
+    if (c >= n) { el.innerHTML = escHtml(to) + CURSOR; if (onDone) onDone(); return; }
+    let html;
+    if (c === 0) {
+      html = CURSOR + escHtml(from.slice(1));                 // bare caret + full old tail
+    } else {
+      const settled = escHtml(to.slice(0, c - 2));            // new letters before the ghost
+      const survive = escHtml(from.slice(c - 1, c));          // one old letter kept behind caret
+      const tail    = escHtml(from.slice(c + 1));             // old word ahead of the caret
+      html = settled + '_' + survive + CURSOR + tail;
+    }
+    el.innerHTML = html;
+    c = c === 0 ? 2 : c + 1;
+    gerundTypeTimer = setTimeout(frame, GERUND_TYPE_SPEED);
+  }
+  frame();
+}
+function cycleGerund() {
+  if (!workingEl) return;
+  const el = workingEl.querySelector('.gerund');
+  if (!el) return;
+  const prev = workingGerund;
+  gerundIdx = (gerundIdx + 1) % shuffledGerunds.length;
+  if (gerundIdx === 0) shuffledGerunds = shuffleGerunds();
+  workingGerund = shuffledGerunds[gerundIdx];
+  morphGerund(prev, workingGerund, el, null);
+}
 function showWorking() {
   hideWorking();
   turnStart = Date.now();
   lastTokens = 0;
-  workingGerund = GERUNDS[Math.floor(Math.random() * GERUNDS.length)];
+  gerundIdx = Math.floor(Math.random() * shuffledGerunds.length);
+  workingGerund = shuffledGerunds[gerundIdx];
   const pane = streamPane(); if (!pane) return;
   workingEl = document.createElement('div'); workingEl.className = 'turn';
-  workingEl.innerHTML = '<div class="working"><span class="sb">' + ICONS.SUNBURST + '</span><span></span></div>';
-  workingEl.querySelector('.working span:last-child').textContent = workingGerund + '…';
+  workingEl.innerHTML = '<div class="working"><span class="sb">' + ICONS.SUNBURST + '</span><span class="gerund"></span></div>';
   pane.appendChild(workingEl);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  const el = workingEl.querySelector('.gerund');
+  gerundHold = GERUND_HOLD_START;
+  morphGerund('', workingGerund, el, () => { scheduleGerund(); });
 }
-function hideWorking() { if (workingEl) { workingEl.remove(); workingEl = null; } }
+function hideWorking() {
+  if (gerundCycleTimer) { clearTimeout(gerundCycleTimer); gerundCycleTimer = null; }
+  if (gerundTypeTimer) { clearTimeout(gerundTypeTimer); gerundTypeTimer = null; }
+  if (workingEl) { workingEl.remove(); workingEl = null; }
+}
 /* Invariant: the gerund is visible whenever a turn is still processing AND no
    card has replaced it. Idempotent — safe to call from any path. */
 function ensureWorking() {
@@ -1951,17 +2097,58 @@ function renderHistoryList() {
     return;
   }
   items.forEach(s => {
-    const it = document.createElement('div'); it.className = 'item';
+    const it = document.createElement('div'); it.className = 'item'; it.dataset.sid = s.sessionId;
     const main = document.createElement('div'); main.className = 'h-main';
     const title = document.createElement('div'); title.className = 'h-title'; title.textContent = stripContext(s.display) || '(untitled)';
     const time = document.createElement('div'); time.className = 'h-time'; time.textContent = relTime(s.timestamp);
     main.appendChild(title); main.appendChild(time);
-    const del = document.createElement('span'); del.className = 'h-del'; del.title = 'Delete conversation'; del.innerHTML = ICONS.TRASH;
+    const actions = document.createElement('div'); actions.className = 'h-actions';
+    const rename = document.createElement('span'); rename.className = 'h-action h-rename'; rename.title = 'Rename';
+    rename.innerHTML = ICONS.PENCIL;
+    rename.onclick = (e) => { e.stopPropagation(); startHistoryRename(it, s); };
+    const del = document.createElement('span'); del.className = 'h-action h-del'; del.title = 'Delete';
+    del.innerHTML = ICONS.TRASH;
     del.onclick = (e) => { e.stopPropagation(); deleteHistory(s.sessionId); };
-    it.appendChild(main); it.appendChild(del);
+    actions.appendChild(rename); actions.appendChild(del);
+    it.appendChild(main); it.appendChild(actions);
     it.onclick = () => loadHistory(s.sessionId, s.display);
     list.appendChild(it);
   });
+}
+function startHistoryRename(itemEl, session) {
+  const main = itemEl.querySelector('.h-main');
+  const titleEl = itemEl.querySelector('.h-title');
+  const timeEl = itemEl.querySelector('.h-time');
+  const actions = itemEl.querySelector('.h-actions');
+  if (!main || !titleEl) return;
+  const curTitle = stripContext(session.display) || '(untitled)';
+  titleEl.style.display = 'none';
+  if (timeEl) timeEl.style.display = 'none';
+  if (actions) actions.style.display = 'none';
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.className = 'h-rename-input'; inp.value = curTitle;
+  main.appendChild(inp);
+  inp.focus(); inp.select();
+  function finish(save) {
+    const newTitle = inp.value.trim() || '(untitled)';
+    inp.remove();
+    titleEl.style.display = '';
+    if (timeEl) timeEl.style.display = '';
+    if (actions) actions.style.display = '';
+    if (save && newTitle !== curTitle) {
+      session.display = newTitle;
+      titleEl.textContent = newTitle;
+      if (window._renameSession) window._renameSession(session.sessionId, newTitle);
+      const t = tabs.find(tab => tab.sessionId === session.sessionId);
+      if (t) { t.title = newTitle; if (t.id === activeId) document.getElementById('convo-title').textContent = newTitle; renderTabs(); }
+    }
+  }
+  inp.onblur = () => finish(true);
+  inp.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); inp.onblur = null; finish(false); }
+  };
 }
 function deleteHistory(id) {
   try { if (window._deleteSession) window._deleteSession(id); } catch (e) {}

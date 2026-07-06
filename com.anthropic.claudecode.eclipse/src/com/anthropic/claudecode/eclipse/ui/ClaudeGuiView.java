@@ -2,10 +2,19 @@ package com.anthropic.claudecode.eclipse.ui;
 
 import java.io.IOException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.FileLocator;
@@ -56,6 +65,7 @@ public class ClaudeGuiView extends ViewPart {
     @SuppressWarnings("unused") private BrowserFunction listSessionsAsyncFn;
     @SuppressWarnings("unused") private BrowserFunction loadSessionFn;
     @SuppressWarnings("unused") private BrowserFunction deleteSessionFn;
+    @SuppressWarnings("unused") private BrowserFunction renameSessionFn;
     @SuppressWarnings("unused") private BrowserFunction currentContextFn;
     @SuppressWarnings("unused") private BrowserFunction decideFn;
     @SuppressWarnings("unused") private BrowserFunction answerQuestionFn;
@@ -176,6 +186,11 @@ public class ClaudeGuiView extends ViewPart {
             (a.length > 0 && a[0] instanceof String id) ? safeSessionLoad(id) : "[]");
         deleteSessionFn = new SimpleFunction(browser, "_deleteSession", a -> {
             if (a.length > 0 && a[0] instanceof String id) deleteSessionFile(id);
+            return null;
+        });
+        renameSessionFn = new SimpleFunction(browser, "_renameSession", a -> {
+            if (a.length > 1 && a[0] instanceof String id && a[1] instanceof String newTitle)
+                renameSessionFile(id, newTitle);
             return null;
         });
         currentContextFn = new SimpleFunction(browser, "_currentContext", a -> currentContextJson());
@@ -586,10 +601,32 @@ public class ClaudeGuiView extends ViewPart {
     // History is served by the bundled PHP (scripts/history.php) so it can be
     // iterated without a native rebuild; the Rust core stays as a fallback.
     private String safeSessionList() {
-        try { String r = PhpHistory.run("list", workspaceRoot(), ""); if (r != null && !r.isBlank()) return r; }
+        String json = "[]";
+        try { String r = PhpHistory.run("list", workspaceRoot(), ""); if (r != null && !r.isBlank()) json = r; }
         catch (Throwable ignored) {}
-        try { return NativeCore.sessionList(workspaceRoot()); }
-        catch (Throwable t) { return "[]"; }
+        if ("[]".equals(json)) {
+            try { json = NativeCore.sessionList(workspaceRoot()); } catch (Throwable t) {}
+        }
+        return mergeCustomTitles(json);
+    }
+
+    private String mergeCustomTitles(String sessionsJson) {
+        try {
+            String home = Activator.isWindows() ? System.getenv("USERPROFILE") : System.getenv("HOME");
+            if (home == null || home.isEmpty()) home = System.getProperty("user.home");
+            if (home == null) return sessionsJson;
+            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(workspaceRoot()), "session-titles.json");
+            if (!Files.exists(titlesPath)) return sessionsJson;
+            Map<String, String> titles = new Gson().fromJson(Files.readString(titlesPath), new TypeToken<Map<String, String>>(){}.getType());
+            if (titles == null || titles.isEmpty()) return sessionsJson;
+            List<Map<String, Object>> sessions = new Gson().fromJson(sessionsJson, new TypeToken<List<Map<String, Object>>>(){}.getType());
+            if (sessions == null) return sessionsJson;
+            for (var s : sessions) {
+                String id = (String) s.get("sessionId");
+                if (id != null && titles.containsKey(id)) s.put("display", titles.get(id));
+            }
+            return new Gson().toJson(sessions);
+        } catch (Exception e) { return sessionsJson; }
     }
 
     private String safeSessionLoad(String id) {
@@ -612,6 +649,26 @@ public class ClaudeGuiView extends ViewPart {
                     home, ".claude", "projects", projectHash(workspaceRoot()), id + ".jsonl");
             java.nio.file.Files.deleteIfExists(p);
         } catch (Exception ignored) {}
+    }
+
+    /** Rename a session by storing a custom title in a separate metadata file. */
+    private void renameSessionFile(String id, String newTitle) {
+        try {
+            if (id == null || id.isEmpty() || newTitle == null) return;
+            String home = Activator.isWindows() ? System.getenv("USERPROFILE") : System.getenv("HOME");
+            if (home == null || home.isEmpty()) home = System.getProperty("user.home");
+            if (home == null) return;
+            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(workspaceRoot()), "session-titles.json");
+            Map<String, String> titles = new HashMap<>();
+            if (Files.exists(titlesPath)) {
+                try { titles = new Gson().fromJson(Files.readString(titlesPath), new TypeToken<Map<String, String>>(){}.getType()); }
+                catch (Exception ignored) {}
+            }
+            if (titles == null) titles = new HashMap<>();
+            titles.put(id, newTitle);
+            Files.createDirectories(titlesPath.getParent());
+            Files.writeString(titlesPath, new Gson().toJson(titles));
+        } catch (Exception e) { Activator.logError("Failed to rename session " + id, e); }
     }
 
     /** Same algorithm as session.rs: every non-ASCII-alphanumeric char becomes '-'. */
