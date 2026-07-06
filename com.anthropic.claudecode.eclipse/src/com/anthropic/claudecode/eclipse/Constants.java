@@ -28,11 +28,6 @@ public final class Constants {
     public static final String PREF_HTTPS_PROXY = "httpsProxy";
     public static final String PREF_NO_PROXY = "noProxy";
 
-    /** Claude Terminal colors (independent of Eclipse's Terminal prefs).
-     *  Stored as PreferenceConverter RGB strings ("r,g,b"). */
-    public static final String PREF_CONSOLE_BG_COLOR = "consoleBgColor";
-    public static final String PREF_CONSOLE_FG_COLOR = "consoleFgColor";
-
     // ── Claude Terminal status bar (statusLine) ─────────────────────────────
     /** Master switch: inject the statusLine and show the per-tab status bar. */
     public static final String PREF_STATUSLINE_ENABLED = "statuslineEnabled";

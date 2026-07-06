@@ -256,12 +256,40 @@
             class="com.anthropic.claudecode.eclipse.ui.ClaudePreferencePage"/>
    </extension>
 
-   <!-- Font Definition -->
+   <!-- Colors and Fonts (General > Appearance > Colors and Fonts) -->
    <extension point="org.eclipse.ui.themes">
+      <themeElementCategory
+            id="com.anthropic.claudecode.eclipse.themeCategory"
+            label="Claude Code">
+         <description>
+            Colors and fonts for the Claude Code integration.
+         </description>
+      </themeElementCategory>
+
+      <colorDefinition
+            id="com.anthropic.claudecode.eclipse.color.terminalBackground"
+            label="Claude Terminal Background"
+            categoryId="com.anthropic.claudecode.eclipse.themeCategory"
+            value="18,19,20">
+         <description>
+            The background color of the Claude Terminal.
+         </description>
+      </colorDefinition>
+
+      <colorDefinition
+            id="com.anthropic.claudecode.eclipse.color.terminalForeground"
+            label="Claude Terminal Foreground"
+            categoryId="com.anthropic.claudecode.eclipse.themeCategory"
+            value="229,229,229">
+         <description>
+            The foreground (text) color of the Claude Terminal.
+         </description>
+      </colorDefinition>
+
       <fontDefinition
             id="com.anthropic.claudecode.eclipse.font.console"
-            label="Claude Terminal Console Font"
-            categoryId="org.eclipse.ui.workbenchMisc"
+            label="Claude Terminal Font"
+            categoryId="com.anthropic.claudecode.eclipse.themeCategory"
             defaultsTo="org.eclipse.jface.textfont">
          <description>
             The font used for the Claude Terminal.

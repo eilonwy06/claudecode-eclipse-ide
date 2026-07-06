@@ -2,8 +2,6 @@ package com.anthropic.claudecode.eclipse.ui;
 
 import org.eclipse.core.runtime.preferences.AbstractPreferenceInitializer;
 import org.eclipse.jface.preference.IPreferenceStore;
-import org.eclipse.jface.preference.PreferenceConverter;
-import org.eclipse.swt.graphics.RGB;
 
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.Constants;
@@ -39,9 +37,5 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_SESSION_5H, true);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_WEEKLY, true);
         store.setDefault(Constants.PREF_STATUSLINE_REFRESH_SECONDS, 60);
-
-        // Claude Terminal colors — default to the dark look (#121314 / #E5E5E5).
-        PreferenceConverter.setDefault(store, Constants.PREF_CONSOLE_BG_COLOR, new RGB(0x12, 0x13, 0x14));
-        PreferenceConverter.setDefault(store, Constants.PREF_CONSOLE_FG_COLOR, new RGB(0xE5, 0xE5, 0xE5));
     }
 }
