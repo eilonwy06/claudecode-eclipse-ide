@@ -61,6 +61,7 @@ import com.google.gson.JsonObject;
 
 import org.eclipse.terminal.connector.ISettingsStore;
 import org.eclipse.terminal.connector.ITerminalConnector;
+import org.eclipse.terminal.connector.ITerminalControl;
 import org.eclipse.terminal.connector.InMemorySettingsStore;
 import org.eclipse.terminal.connector.TerminalConnectorExtension;
 import org.eclipse.terminal.connector.TerminalState;
@@ -119,6 +120,12 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     /** Stable extension ID of the local-process terminal connector. */
     private static final String LOCAL_CONNECTOR_ID =
             "org.eclipse.terminal.connector.local.LocalConnector";
+
+    /** Suffix appended to the tab title when the CLI process has ended. */
+    private static final String TERMINATED_TAB_SUFFIX = " (terminated)";
+    /** Notice appended to the terminal buffer when the CLI process has ended (bold red). */
+    private static final String TERMINATED_TERMINAL_MSG =
+            "\033[1;31m[Claude process terminated]\033[0m";
 
     // COLORFGBG hint for Claude's "/theme auto", derived from the terminal background luminance.
     private static final String DARK_COLORFGBG_ENV_VAL = "15;0";
@@ -655,6 +662,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
          */
         private final String tabToken = UUID.randomUUID().toString();
         private volatile boolean disposed = false;
+        private volatile boolean wasConnected = false;
+        private volatile boolean terminatedShown = false;
         private ITerminalViewControl termControl;
         private ClaudeStatusBar statusBar;
         private PreferenceStore prefStore;
@@ -793,7 +802,15 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
             ITerminalListener listener = new ITerminalListener() {
                 @Override
-                public void setState(TerminalState state) { /* no-op */ }
+                public void setState(TerminalState state) {
+                    if (state == TerminalState.CONNECTED) {
+                        wasConnected = true;
+                    } else if (state == TerminalState.CLOSED && wasConnected) {
+                        // CLOSED without a prior CONNECTED is a spawn failure (bad command,
+                        // IOException) — the connector already shows an error dialog for it.
+                        onProcessTerminated();
+                    }
+                }
                 @Override
                 public void setTerminalSelectionChanged() { /* no-op */ }
                 @Override
@@ -802,7 +819,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                     if (title == null || title.isBlank()) return;
                     Display.getDefault().asyncExec(() -> {
                         if (!disposed && tabItem != null && !tabItem.isDisposed()) {
-                            tabItem.setText(title);
+                            // Buffered output can still deliver a title after the process
+                            // ended — keep the terminated marker in that case.
+                            tabItem.setText(terminatedShown
+                                    ? title + TERMINATED_TAB_SUFFIX : title);
                         }
                     });
                 }
@@ -1116,6 +1136,30 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 setPrefColor(prefStore, TerminalColor.FOREGROUND, fgR, fgG, fgB);
                 setPrefColor(prefStore, TerminalColor.BACKGROUND, bgR, bgG, bgB);
             }
+        }
+
+        /**
+         * Marks this tab once the CLI process has ended: appends a notice to the
+         * terminal buffer and suffixes the tab title. Called from the connector's
+         * reader thread (never the UI thread) via {@link ITerminalListener#setState},
+         * only for a CLOSED transition after a successful CONNECTED. Tab closing
+         * also passes through CLOSED, but {@link #dispose()} sets {@code disposed}
+         * first, so teardown never shows the marker.
+         */
+        private void onProcessTerminated() {
+            if (disposed || terminatedShown) return;
+            terminatedShown = true;
+            // displayTextInTerminal feeds the emulator's screen buffer directly (not
+            // the dead process), so the notice renders even after the child exited.
+            if (termControl instanceof ITerminalControl control && !termControl.isDisposed()) {
+                control.displayTextInTerminal(TERMINATED_TERMINAL_MSG);
+            }
+            Display.getDefault().asyncExec(() -> {
+                if (!disposed && tabItem != null && !tabItem.isDisposed()
+                        && !tabItem.getText().endsWith(TERMINATED_TAB_SUFFIX)) {
+                    tabItem.setText(tabItem.getText() + TERMINATED_TAB_SUFFIX);
+                }
+            });
         }
 
         void disconnect() {
