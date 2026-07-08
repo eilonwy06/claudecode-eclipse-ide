@@ -4,7 +4,26 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.0.0] — 2026-07-06 *(current)*
+## [3.0.1] — 2026-07-08 *(current)*
+
+### Added
+- **Rewind — restore code and fork the conversation.** From the Claude Code view's actions menu (or `/rewind`), pick any earlier message to jump back to: a preview shows exactly which files will change and how many lines are added/removed, then Claude's edits are rolled back to how the files looked at that message and the conversation is forked into a new tab with your message ready to edit and resend. The original conversation is left untouched. Files changed manually or via shell commands aren't affected, and messages from conversations predating this release can only fork (their file states were never checkpointed — the dialog says so).
+- **Rename conversations** — from the conversation header (hover, then click the pencil) or the session-history list; custom titles persist and survive resuming.
+- **Terminated indicator in the Claude Terminal** — the view now shows clearly when the CLI process has exited ([@xgsa](https://github.com/xgsa), PR #79)
+
+### Changed
+- **Richer Markdown rendering in the Claude Code view** — covers the full GitHub-flavored Markdown Claude emits (tables, blockquotes, strikethrough, and more) ([@xgsa](https://github.com/xgsa), PR #81)
+- **Smarter session-history titles and ordering** — past conversations now use the CLI's AI-generated titles when available (falling back to the first message) and are ordered by last activity, matching the CLI's `/resume` list.
+- **Working indicator polish** — the status word now morphs typewriter-style between words instead of switching abruptly.
+- **The composer adapts to narrow panels** — as the view shrinks, button labels collapse to icons (mode first, then the file context) and the send button minimizes, so the input controls never overflow the panel.
+
+### Fixed
+- **Cancelling a turn no longer leaves a half-rendered answer** — the in-progress text is discarded and only "Request cancelled." remains.
+- **Long permission prompts wrap correctly** — an approval option with a long command or path no longer runs past the card's edge.
+
+---
+
+## [3.0.0] — 2026-07-06
 
 Major release introducing the **Claude Code** view — a full graphical chat panel — alongside status-bar, theming, and terminal improvements.
 
