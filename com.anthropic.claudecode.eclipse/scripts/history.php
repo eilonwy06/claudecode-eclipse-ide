@@ -70,23 +70,36 @@ function list_sessions(string $root): array {
         $id = pathinfo($path, PATHINFO_FILENAME);
         $fh = @fopen($path, 'r');
         if (!$fh) continue;
-        $display = ''; $ts = ''; $found = false;
+        // The title shown in the list mirrors the CLI's /resume: the AI-generated
+        // "ai-title" (event has no timestamp) wins, falling back to the first user
+        // message. The user's custom rename (session-titles.json, applied Java-side)
+        // still overrides this. Sort key is the LAST activity timestamp (newest event),
+        // matching /resume's most-recently-used ordering — not the first message.
+        $aiTitle = ''; $firstUser = ''; $lastTs = ''; $seen = false;
         while (($line = fgets($fh)) !== false) {
             $line = trim($line);
             if ($line === '') continue;
             $e = json_decode($line, true);
             if (!is_array($e)) continue;
-            if (($e['type'] ?? '') === 'user') {
+            $seen = true;
+            $type = $e['type'] ?? '';
+            if (is_string($e['timestamp'] ?? null)) $lastTs = $e['timestamp'];
+            if ($type === 'ai-title') {
+                $at = $e['aiTitle'] ?? null;
+                if (is_string($at) && $at !== '') $aiTitle = take($at, DISPLAY_CHARS);
+            } elseif ($type === 'user' && $firstUser === '') {
                 $c = $e['message']['content'] ?? null;
-                if (is_string($c)) $display = take(strip_ide($c), DISPLAY_CHARS);
-                $ts = is_string($e['timestamp'] ?? null) ? $e['timestamp'] : '';
-                $found = true;
-                break;
+                if (is_string($c)) $firstUser = take(strip_ide($c), DISPLAY_CHARS);
             }
         }
         fclose($fh);
-        if (!$found) continue;
-        $out[] = ['sessionId' => $id, 'display' => $display, 'timestamp' => $ts];
+        // Include a session if it has any recognizable title source: an ai-title
+        // (covers title-only stubs that /resume lists) or a first user message.
+        $display = $aiTitle !== '' ? $aiTitle : $firstUser;
+        if (!$seen || $display === '') continue;
+        // Fall back to file mtime when no event carried a timestamp (e.g. stubs).
+        if ($lastTs === '') { $mt = @filemtime($path); if ($mt !== false) $lastTs = gmdate('Y-m-d\TH:i:s\Z', $mt); }
+        $out[] = ['sessionId' => $id, 'display' => $display, 'timestamp' => $lastTs];
     }
     usort($out, fn($a, $b) => strcmp((string) $b['timestamp'], (string) $a['timestamp']));
     return array_slice($out, 0, MAX_SESSIONS);

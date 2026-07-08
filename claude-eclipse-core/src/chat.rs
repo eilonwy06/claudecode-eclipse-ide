@@ -707,6 +707,11 @@ fn spawn_persistent(
         cmd.env("MAX_THINKING_TOKENS", "0");
     }
 
+    // File checkpointing is off by default in -p/SDK mode; without this the CLI
+    // writes no file-history-snapshot entries and the GUI's Rewind cannot
+    // restore code (it can still fork the conversation).
+    cmd.env("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "1");
+
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
         cmd.env("CLAUDE_CODE_SSE_PORT", mcp_port.to_string())
            .env("CLAUDE_IDE_PORT", mcp_port.to_string())

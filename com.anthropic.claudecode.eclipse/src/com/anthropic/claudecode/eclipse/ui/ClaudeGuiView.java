@@ -73,6 +73,9 @@ public class ClaudeGuiView extends ViewPart {
     @SuppressWarnings("unused") private BrowserFunction accountInfoFn;
     @SuppressWarnings("unused") private BrowserFunction saveSessionPrefsFn;
     @SuppressWarnings("unused") private BrowserFunction loadSessionPrefsFn;
+    @SuppressWarnings("unused") private BrowserFunction rewindListFn;
+    @SuppressWarnings("unused") private BrowserFunction rewindPreviewFn;
+    @SuppressWarnings("unused") private BrowserFunction rewindApplyFn;
 
     // Status bar (the shared SWT ClaudeStatusBar widget, reused from the CLI view).
     private ClaudeStatusBar statusBar;
@@ -114,6 +117,7 @@ public class ClaudeGuiView extends ViewPart {
         } catch (Exception ignored) {}
 
         disableDevTools();
+        disableZoom();
 
         // The SAME status bar widget the CLI view uses — reused here so the two
         // are literally identical (one implementation). It reads the shared
@@ -210,6 +214,17 @@ public class ClaudeGuiView extends ViewPart {
         });
         loadSessionPrefsFn = new SimpleFunction(browser, "_loadSessionPrefs", a ->
             (a.length > 0 && a[0] instanceof String id) ? SessionPrefsStore.load(id) : "{}");
+        // Checkpoint rewind (VSCode "Rewind to…"): list a session's user messages,
+        // preview the file restore, then restore + fork into a new session.
+        rewindListFn = new SimpleFunction(browser, "_rewindList", a ->
+            (a.length > 0 && a[0] instanceof String sid)
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.list(workspaceRoot(), sid) : "[]");
+        rewindPreviewFn = new SimpleFunction(browser, "_rewindPreview", a ->
+            (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.preview(workspaceRoot(), sid, mid) : "{}");
+        rewindApplyFn = new SimpleFunction(browser, "_rewindApply", a ->
+            (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.apply(workspaceRoot(), sid, mid) : "{}");
         // Live model/effort/thinking selection → status bar updates immediately
         // (no waiting for the next response). Runs on the SWT UI thread.
         statusSelectionFn = new SimpleFunction(browser, "_statusSelection", a -> {
@@ -241,6 +256,7 @@ public class ClaudeGuiView extends ViewPart {
             pageLoaded = true;
             // WebView2 init is async — retry here where the webview provably exists.
             disableDevTools();
+            disableZoom();
             pushAvailableModels();   // in case the model list arrived before the page loaded
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
@@ -723,6 +739,25 @@ public class ClaudeGuiView extends ViewPart {
             Object settings = f.get(edge);
             if (settings == null) return;
             settings.getClass().getMethod("put_AreDevToolsEnabled", boolean.class)
+                    .invoke(settings, false);
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Disables WebView2 zoom control ({@code IsZoomControlEnabled=false}) so Ctrl+wheel
+     * and Ctrl+[+/-/0] can't zoom the panel at the host level — a belt-and-suspenders to
+     * the JS wheel/keydown guards in claudegui.html. Same reflective reach into SWT's Edge
+     * internals as {@link #disableDevTools()}; silently a no-op on other backends.
+     */
+    private void disableZoom() {
+        try {
+            Object edge = browser.getWebBrowser();
+            if (edge == null || !edge.getClass().getName().endsWith(".Edge")) return;
+            java.lang.reflect.Field f = edge.getClass().getDeclaredField("settings");
+            f.setAccessible(true);
+            Object settings = f.get(edge);
+            if (settings == null) return;
+            settings.getClass().getMethod("put_IsZoomControlEnabled", boolean.class)
                     .invoke(settings, false);
         } catch (Exception ignored) {}
     }

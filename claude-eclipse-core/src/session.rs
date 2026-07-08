@@ -47,6 +47,32 @@ fn projects_dir(workspace_root: &str) -> Option<PathBuf> {
     }
 }
 
+/// Formats a Unix epoch-seconds value as an ISO-8601 UTC string
+/// (`YYYY-MM-DDTHH:MM:SSZ`) using the civil-from-days algorithm (Howard Hinnant's,
+/// public domain) — no external crate. Only used as a sort-key fallback for the rare
+/// title-only session stubs whose events carry no timestamp, so it string-sorts
+/// interleaved with the real ISO timestamps from normal sessions.
+fn epoch_to_iso8601(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    // Days since 1970-01-01 → civil (year, month, day).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as i64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, m, d, hh, mm, ss
+    )
+}
+
 /// Platform-agnostic home directory lookup.
 fn dirs_home() -> Option<PathBuf> {
     #[cfg(windows)]
@@ -94,9 +120,15 @@ pub fn list_sessions(workspace_root: &str) -> String {
         };
         let reader = BufReader::new(file);
 
-        let mut display = String::new();
-        let mut timestamp = String::new();
-        let mut found_user = false;
+        // The list title mirrors the CLI's /resume: the AI-generated "ai-title"
+        // (its event carries no timestamp) wins, falling back to the first user
+        // message. The user's custom rename (session-titles.json, applied Java-side)
+        // still overrides this. Sort key is the LAST activity timestamp (newest
+        // event scanned), matching /resume's most-recently-used ordering.
+        let mut ai_title = String::new();
+        let mut first_user = String::new();
+        let mut last_ts = String::new();
+        let mut saw_line = false;
 
         for line in reader.lines() {
             let line = match line {
@@ -107,30 +139,54 @@ pub fn list_sessions(workspace_root: &str) -> String {
                 Ok(v) => v,
                 Err(_) => continue,
             };
+            saw_line = true;
 
-            if event["type"].as_str() == Some("user") && !found_user {
-                // Extract display text — first 120 chars of the user message content,
-                // with any injected <ide_selection>/<ide_context> preamble removed so
-                // the session title is the user's actual text, not the editor context.
-                if let Some(content) = event["message"]["content"].as_str() {
-                    display = strip_ide_preamble(content).chars().take(120).collect();
+            if let Some(ts) = event["timestamp"].as_str() {
+                last_ts = ts.to_string();
+            }
+            match event["type"].as_str() {
+                Some("ai-title") => {
+                    if let Some(at) = event["aiTitle"].as_str() {
+                        if !at.is_empty() {
+                            ai_title = at.chars().take(120).collect();
+                        }
+                    }
                 }
-                if let Some(ts) = event["timestamp"].as_str() {
-                    timestamp = ts.to_string();
+                Some("user") if first_user.is_empty() => {
+                    // Extract display text — first 120 chars of the user message content,
+                    // with any injected <ide_selection>/<ide_context> preamble removed so
+                    // the fallback title is the user's actual text, not the editor context.
+                    if let Some(content) = event["message"]["content"].as_str() {
+                        first_user = strip_ide_preamble(content).chars().take(120).collect();
+                    }
                 }
-                found_user = true;
-                break;
+                _ => {}
             }
         }
 
-        if !found_user {
-            continue; // Skip sessions with no user messages.
+        // Include a session with any recognizable title source: an ai-title (covers
+        // title-only stubs that /resume lists) or a first user message.
+        let display = if !ai_title.is_empty() { ai_title } else { first_user };
+        if !saw_line || display.is_empty() {
+            continue;
+        }
+        // Fall back to file mtime when no event carried a timestamp (e.g. stubs).
+        // Format as an ISO-8601 UTC string so it string-sorts interleaved with the
+        // real event timestamps (the PHP reader does the same via gmdate()).
+        if last_ts.is_empty() {
+            if let Ok(meta) = fs::metadata(&path) {
+                if let Ok(modified) = meta.modified() {
+                    if let Ok(dur) = modified.duration_since(std::time::UNIX_EPOCH) {
+                        last_ts = epoch_to_iso8601(dur.as_secs());
+                    }
+                }
+            }
         }
 
         sessions.push(serde_json::json!({
             "sessionId": session_id,
             "display": display,
-            "timestamp": timestamp,
+            "timestamp": last_ts,
         }));
     }
 
