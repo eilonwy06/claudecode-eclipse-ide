@@ -314,9 +314,20 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 .a-item.think.open .think-body { display: block; }
 .a-body p { margin: 4px 0; } .a-body p:first-child { margin-top: 0; }
 .a-body ul, .a-body ol { margin: 4px 0 4px 20px; } .a-body li { margin: 2px 0; }
-.a-body h1,.a-body h2,.a-body h3 { margin: 8px 0 4px; color: var(--fg); }
+.a-body h1,.a-body h2,.a-body h3,.a-body h4,.a-body h5,.a-body h6 { margin: 8px 0 4px; color: var(--fg); }
 .a-body h1 { font-size: 16px; } .a-body h2 { font-size: 14px; } .a-body h3 { font-size: 13px; }
+.a-body h4 { font-size: 12.5px; } .a-body h5 { font-size: 12px; } .a-body h6 { font-size: 12px; color: var(--fg-dim); }
 .a-body a { color: var(--link); text-decoration: none; }
+.a-body a:hover { text-decoration: underline; }
+.a-body del { color: var(--fg-dim); }
+.a-body blockquote { margin: 6px 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--fg-dim); }
+.a-body hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
+.a-body li.task { list-style: none; margin-left: -18px; }
+.a-body li.task input { margin-right: 6px; vertical-align: -1px; }
+.a-body table { border-collapse: collapse; margin: 8px 0; font-size: 12px; display: block; overflow-x: auto; }
+.a-body th, .a-body td { border: 1px solid var(--border); padding: 4px 9px; text-align: left; }
+.a-body th { background: var(--bg-chip); color: var(--fg); font-weight: 600; }
+.a-body td { color: var(--fg-soft); }
 .a-body pre { margin: 8px 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: var(--bg-code); }
 .a-body pre .cb-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: #181818; font-size: 11px; color: var(--fg-dim); }
 .a-body pre .cb-head button { background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 11px; }
@@ -2144,29 +2155,120 @@ function handleSlashCommand(text) {
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+/* Inline markdown: code, images, links, emphasis, strikethrough, autolinks.
+   Input is raw (unescaped) markdown; output is safe HTML. */
+function mdInline(s) {
+  s = escapeHtml(s);
+  // pull inline code out first so nothing else formats its contents
+  const codes = [];
+  s = s.replace(/`([^`]+)`/g, (_, c) => ' C' + (codes.push(c) - 1) + ' ');
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img alt="$1" src="$2">');
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>');
+  s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+  s = s.replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  s = s.replace(/(^|[^_\w])_([^_\n]+)_/g, '$1<em>$2</em>');
+  s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2">$2</a>');
+  s = s.replace(/ C(\d+) /g, (_, i) => '<code class="ic">' + codes[+i] + '</code>');
+  return s;
+}
+function mdListMarker(line) { return /^(\s*)([-*+]|\d+\.)\s+/.exec(line); }
+function mdIsTable(lines, i) {
+  return i + 1 < lines.length && /\|/.test(lines[i]) &&
+    /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[i + 1]);
+}
+function mdIsBlockStart(lines, i) {
+  const line = lines[i];
+  return /^\s*$/.test(line)
+    || /^ B\d+ $/.test(line)
+    || /^#{1,6}\s+/.test(line)
+    || /^\s*>/.test(line)
+    || /^\s*([-*_])\1\1+\s*$/.test(line)   // hr
+    || !!mdListMarker(line)
+    || mdIsTable(lines, i);
+}
+function mdSplitRow(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '')
+    .replace(/\\\|/g, '').split('|')
+    .map(c => c.trim().replace(//g, '|'));
+}
+/* Nested list starting at `start`; returns [html, nextIndex]. */
+function mdParseList(lines, start, blocks) {
+  const base = /^(\s*)/.exec(lines[start])[1].length;
+  const ordered = /^\s*\d+\./.test(lines[start]);
+  let out = ordered ? '<ol>' : '<ul>', i = start;
+  while (i < lines.length) {
+    if (/^\s*$/.test(lines[i])) { i++; continue; }
+    const m = /^(\s*)([-*+]|\d+\.)\s+([\s\S]*)$/.exec(lines[i]);
+    if (!m || m[1].length !== base) break;
+    let content = m[3], cls = '', box = '';
+    const tm = /^\[([ xX])\]\s+([\s\S]*)$/.exec(content);
+    if (tm) {
+      cls = ' class="task"';
+      box = '<input type="checkbox" disabled' + (/[xX]/.test(tm[1]) ? ' checked' : '') + '> ';
+      content = tm[2];
+    }
+    i++;
+    let sub = '';
+    const sm = i < lines.length && mdListMarker(lines[i]);
+    if (sm && sm[1].length > base) { const r = mdParseList(lines, i, blocks); sub = r[0]; i = r[1]; }
+    out += '<li' + cls + '>' + box + mdInline(content) + sub + '</li>';
+  }
+  return [out + (ordered ? '</ol>' : '</ul>'), i];
+}
+function mdParseTable(lines, start, blocks) {
+  const header = mdSplitRow(lines[start]);
+  let i = start + 2, out = '<table><thead><tr>';
+  header.forEach(h => out += '<th>' + mdInline(h) + '</th>');
+  out += '</tr></thead><tbody>';
+  while (i < lines.length && /\|/.test(lines[i]) && !/^\s*$/.test(lines[i])) {
+    const cells = mdSplitRow(lines[i]);
+    out += '<tr>';
+    for (let c = 0; c < header.length; c++) out += '<td>' + mdInline(cells[c] || '') + '</td>';
+    out += '</tr>';
+    i++;
+  }
+  return [out + '</tbody></table>', i];
+}
+/* Block-level parse over a slice of lines. `blocks` holds extracted code fences. */
+function mdRenderBlocks(lines, blocks) {
+  let html = '', i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const bm = /^ B(\d+) $/.exec(line);
+    if (bm) { html += blocks[+bm[1]]; i++; continue; }
+    if (/^\s*$/.test(line)) { i++; continue; }
+    if (/^\s*([-*_])\1\1+\s*$/.test(line)) { html += '<hr>'; i++; continue; }
+    const hm = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (hm) { const l = hm[1].length; html += '<h' + l + '>' + mdInline(hm[2]) + '</h' + l + '>'; i++; continue; }
+    if (/^\s*>/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
+      html += '<blockquote>' + mdRenderBlocks(buf, blocks) + '</blockquote>';
+      continue;
+    }
+    if (mdIsTable(lines, i)) { const r = mdParseTable(lines, i, blocks); html += r[0]; i = r[1]; continue; }
+    if (mdListMarker(line)) { const r = mdParseList(lines, i, blocks); html += r[0]; i = r[1]; continue; }
+    const buf = [];
+    while (i < lines.length && !mdIsBlockStart(lines, i)) { buf.push(lines[i]); i++; }
+    html += '<p>' + mdInline(buf.join('\n')).replace(/\n/g, '<br>') + '</p>';
+  }
+  return html;
+}
 function renderMarkdown(text) {
   if (!text) return '';
-  let html = text;
   const blocks = [];
-  // fenced code blocks
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    const i = blocks.length;
-    const label = lang || 'code';
-    blocks.push('<pre><div class="cb-head"><span>' + label + '</span><button onclick="copyCode(this)">Copy</button></div><code>' + escapeHtml(code.replace(/\n$/, '')) + '</code></pre>');
-    return ' B' + i + ' ';
+  // extract fenced code blocks first (kept verbatim, restored at the end)
+  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    blocks.push('<pre><div class="cb-head"><span>' + escapeHtml(lang || 'code') +
+      '</span><button onclick="copyCode(this)">Copy</button></div><code>' +
+      escapeHtml(code.replace(/\n$/, '')) + '</code></pre>');
+    return ' B' + (blocks.length - 1) + ' ';
   });
-  html = escapeHtml(html);
-  html = html.replace(/`([^`\n]+)`/g, '<code class="ic">$1</code>');
-  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>')
-             .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-             .replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-             .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-  html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>');
-  html = html.replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>[\s\S]*?<\/li>)/g, m => '<ul>' + m + '</ul>').replace(/<\/ul>\s*<ul>/g, '');
-  html = html.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-  if (!/^\s*<(h\d|ul|pre|p)/.test(html)) html = '<p>' + html + '</p>';
+  let html = mdRenderBlocks(text.split('\n'), blocks);
+  // restore any code fences that ended up inline rather than on their own line
   html = html.replace(/ B(\d+) /g, (_, i) => blocks[+i]);
   return html;
 }
