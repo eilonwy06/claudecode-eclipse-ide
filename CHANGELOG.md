@@ -4,7 +4,19 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.0.1] — 2026-07-08 *(current)*
+## [3.0.2] — 2026-07-09 *(current)*
+
+### Changed
+- **Renaming a conversation is now shared with the CLI and other IDEs.** Renaming in the Claude Code view is written into the conversation itself (via the CLI's native rename), so the new title also shows up in `claude`'s `/resume` picker, the VS Code extension, and any other Claude Code client reading the same project — and a rename made in those places shows up here too. Previously a rename was only visible inside Eclipse. (Thanks to [@xgsa](https://github.com/xgsa) for pointing out the cross-client approach.)
+- **Session-history list now matches the CLI's `/resume` exactly.** Titles use your rename first, then the CLI's AI-generated title, then the first message; conversations that only have a title (no messages yet) are listed too; and everything is ordered by last activity — so the history panel and `/resume` show the same conversations in the same order.
+
+### Fixed
+- **Each conversation tab keeps its own unsent draft.** Text typed but not sent no longer follows you when you switch tabs — every tab restores what you had in its composer.
+- **Windows: the Claude Terminal reliably finds `claude` installed via npm.** A bare `claude` command is now resolved against `PATH`/`PATHEXT` (so `claude.cmd` is found) and launched without mangling its arguments (#83).
+
+---
+
+## [3.0.1] — 2026-07-08
 
 ### Added
 - **Rewind — restore code and fork the conversation.** From the Claude Code view's actions menu (or `/rewind`), pick any earlier message to jump back to: a preview shows exactly which files will change and how many lines are added/removed, then Claude's edits are rolled back to how the files looked at that message and the conversation is forked into a new tab with your message ready to edit and resend. The original conversation is left untouched. Files changed manually or via shell commands aren't affected, and messages from conversations predating this release can only fork (their file states were never checkpointed — the dialog says so).
