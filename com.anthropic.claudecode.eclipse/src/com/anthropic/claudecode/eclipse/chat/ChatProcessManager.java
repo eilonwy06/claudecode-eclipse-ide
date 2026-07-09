@@ -143,6 +143,15 @@ public class ChatProcessManager {
         NativeCore.chatCancel(handle);
     }
 
+    /**
+     * Renames the conversation this manager's live process is on, via the CLI's
+     * control channel (shared {@code custom-title}, visible to /resume and VSCode).
+     * Returns false when this manager isn't live on {@code sessionId}.
+     */
+    public boolean renameSession(String sessionId, String title) {
+        return NativeCore.chatRenameSession(handle, sessionId, title);
+    }
+
     public void resetSession() {
         NativeCore.chatResetSession(handle);
     }

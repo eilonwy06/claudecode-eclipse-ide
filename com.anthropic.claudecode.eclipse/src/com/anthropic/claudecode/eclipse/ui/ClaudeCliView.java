@@ -617,6 +617,60 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         return cmd;
     }
 
+    /** Resolves a bare command to an absolute path on Windows, probing PATHEXT
+     *  in each PATH directory so "claude" finds npm's "claude.cmd". Returns
+     *  {@code cmd} unchanged if it is already a path, PATH is empty, or nothing
+     *  matches (CreateProcess then reports the original error). Mirrors the Rust
+     *  side's resolve_windows so the terminal and chat views behave the same. */
+    private static String resolveExecutableWindows(String cmd, String pathValue) {
+        if (cmd == null || cmd.isEmpty()) return cmd;
+        // Already a path: if it exists as given, use it; if it lacks an
+        // extension, still try PATHEXT next to it below.
+        boolean hasSep = cmd.indexOf('\\') >= 0 || cmd.indexOf('/') >= 0;
+        if (hasSep && new File(cmd).isFile()) return cmd;
+        if (pathValue == null || pathValue.isEmpty()) pathValue = System.getenv("PATH");
+        if (pathValue == null) pathValue = "";
+
+        String pathext = System.getenv("PATHEXT");
+        if (pathext == null || pathext.isBlank()) pathext = ".COM;.EXE;.BAT;.CMD";
+        String[] exts = pathext.split(";");
+
+        // Does cmd already end in a known executable extension? (e.g. claude.cmd)
+        boolean alreadyHasExt = false;
+        for (String ext : exts) {
+            if (!ext.isEmpty() && cmd.toLowerCase().endsWith(ext.toLowerCase())) {
+                alreadyHasExt = true;
+                break;
+            }
+        }
+
+        // A path with a separator: probe extensions next to it, don't walk PATH.
+        if (hasSep) {
+            if (alreadyHasExt && new File(cmd).isFile()) return cmd;
+            for (String ext : exts) {
+                if (ext.isEmpty()) continue;
+                File f = new File(cmd + ext);
+                if (f.isFile()) return f.getAbsolutePath();
+            }
+            return cmd;
+        }
+
+        // Bare name: walk PATH, probing PATHEXT in each directory.
+        for (String dir : pathValue.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+            if (dir.isEmpty()) continue;
+            if (alreadyHasExt) {
+                File f = new File(dir, cmd);
+                if (f.isFile()) return f.getAbsolutePath();
+            }
+            for (String ext : exts) {
+                if (ext.isEmpty()) continue;
+                File f = new File(dir, cmd + ext);
+                if (f.isFile()) return f.getAbsolutePath();
+            }
+        }
+        return cmd;
+    }
+
     /** A Claude Terminal color ({@link #COLOR_BG_ID}/{@link #COLOR_FG_ID}) from the
      *  workbench theme registry, falling back to {@code fallback} if unavailable. */
     private RGB themeColor(String id, RGB fallback) {
@@ -755,10 +809,14 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             // (the Eclipse terminal renders truecolor). Inlines xgsa's PR #26.
             env.add("COLORTERM=truecolor");
 
-            // macOS/Linux: resolve a bare command against the captured PATH.
-            if (!IS_WINDOWS) {
-                claudeCmd = resolveExecutable(claudeCmd, pathFrom(shellEnv));
-            }
+            // Resolve a bare command (e.g. the default "claude") to a concrete
+            // file. macOS/Linux search the captured PATH; Windows must also probe
+            // PATHEXT so a bare "claude" finds npm's "claude.cmd" — the Eclipse
+            // terminal connector spawns via CreateProcess, which (unlike a shell)
+            // does NOT consult PATHEXT and otherwise fails with "error=2".
+            claudeCmd = IS_WINDOWS
+                    ? resolveExecutableWindows(claudeCmd, pathFrom(shellEnv))
+                    : resolveExecutable(claudeCmd, pathFrom(shellEnv));
 
             String image = quoteArg(claudeCmd);
             List<String> argTokens = new ArrayList<>();

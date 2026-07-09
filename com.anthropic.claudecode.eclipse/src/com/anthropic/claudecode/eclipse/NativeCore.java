@@ -95,9 +95,6 @@ public final class NativeCore {
     /** Broadcasts a JSON string to every connected SSE client. */
     public static native void serverBroadcast(long handle, String json);
 
-    /** Returns true if the server is running. */
-    public static native boolean serverIsRunning(long handle);
-
     /** Returns the number of currently connected SSE clients. */
     public static native int serverGetClientCount(long handle);
 
@@ -161,9 +158,6 @@ public final class NativeCore {
     /** Removes the lock file created by the most recent {@link #lockFileWrite} call. */
     public static native void lockFileRemove();
 
-    /** Removes all lock files EXCEPT the one for our port. Call before launching CLI. */
-    public static native void lockFileRemoveOthers(int ourPort);
-
     // ── Chat process manager ──────────────────────────────────────────────────
 
     /** Creates a new ChatManager. Returns an opaque native handle. */
@@ -200,6 +194,15 @@ public final class NativeCore {
 
     /** Frees the native memory for this chat manager. */
     public static native void chatDestroy(long handle);
+
+    /**
+     * Renames the live conversation on this manager's persistent process via the
+     * CLI's {@code rename_session} control request (writes a shared
+     * {@code custom-title} event, same as VSCode). Returns false when the manager
+     * has no live process on {@code sessionId} — fall back to
+     * {@link #sessionRename(String, String, String, String)}.
+     */
+    public static native boolean chatRenameSession(long handle, String sessionId, String title);
 
     /**
      * Switches this manager to persistent mode: one long-lived
@@ -247,42 +250,6 @@ public final class NativeCore {
          */
         default void onStatus(String statusJson) {}
     }
-
-    // ── PTY process manager ───────────────────────────────────────────────────
-
-    /** Creates a new PtySession. Returns an opaque native handle. */
-    public static native long ptyCreate();
-
-    /**
-     * Registers PTY event callbacks. Must be called before {@link #ptyStart}.
-     */
-    public static native void ptyRegisterCallbacks(long handle, PtyCallbacks callbacks);
-
-    /**
-     * Spawns the PTY process.
-     *
-     * @param cmd          executable (e.g. "cmd.exe" on Windows, "claude" on Unix)
-     * @param argsJson     JSON array of arguments, e.g. {@code ["/c","claude"]}
-     * @param extraEnvJson JSON array of [key,value] pairs
-     * @param cwd          working directory
-     * @param cols         initial terminal width
-     * @param rows         initial terminal height
-     */
-    public static native void ptyStart(long handle, String cmd, String argsJson,
-                                       String extraEnvJson, String cwd,
-                                       int cols, int rows);
-
-    /** Writes raw keyboard input to the PTY stdin. */
-    public static native void ptyWriteInput(long handle, String input);
-
-    /** Notifies the PTY of a terminal resize. */
-    public static native void ptyResize(long handle, int cols, int rows);
-
-    /**
-     * Kills the process, closes the PTY, and frees native memory.
-     * The handle MUST NOT be used after this call.
-     */
-    public static native void ptyDestroy(long handle);
 
     // ── Embedded console (replaces PTY + xterm.js for the CLI view) ─────────
 
@@ -363,7 +330,6 @@ public final class NativeCore {
     public static native boolean bridgeConnect(int port, String token);
     public static native void bridgeDisconnect();
     public static native boolean bridgeIsConnected();
-    public static native boolean bridgeSend(String data);
 
     // ── Proxy configuration ──────────────────────────────────────────────────
 
@@ -389,6 +355,18 @@ public final class NativeCore {
     public static native String sessionLoad(String workspaceRoot, String sessionId);
 
     /**
+     * Renames an inactive session the CLI-native way: resumes it headless and sends
+     * the {@code rename_session} control request, which appends a {@code custom-title}
+     * event to the session's own jsonl — so the title is shared with {@code /resume}
+     * and every other Claude Code client. No model turn, no cost. Blocks up to ~15s;
+     * call from a background thread.
+     *
+     * @return true when the CLI confirmed the rename
+     */
+    public static native boolean sessionRename(String claudeCmd, String workspaceRoot,
+            String sessionId, String title);
+
+    /**
      * Returns the login-shell environment to inject into a spawned terminal
      * process, as {@code KEY=VALUE} entries (e.g. {@code PATH=...},
      * {@code HTTPS_PROXY=...}).
@@ -405,12 +383,4 @@ public final class NativeCore {
      * Enables or disables debug logging in native code.
      */
     public static native void setDebugMode(boolean enabled);
-
-    /** Callbacks fired from Rust reader thread. */
-    public interface PtyCallbacks {
-        /** JSON-encoded screen state from the vt100 parser in Rust. */
-        void onScreenUpdate(String screenJson);
-        /** Called when the child process has exited. */
-        void onExit();
-    }
 }

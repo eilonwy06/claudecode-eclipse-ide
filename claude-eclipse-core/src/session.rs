@@ -1,6 +1,10 @@
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 /// Compute the Claude CLI project hash for a workspace path.
 ///
@@ -120,11 +124,14 @@ pub fn list_sessions(workspace_root: &str) -> String {
         };
         let reader = BufReader::new(file);
 
-        // The list title mirrors the CLI's /resume: the AI-generated "ai-title"
-        // (its event carries no timestamp) wins, falling back to the first user
-        // message. The user's custom rename (session-titles.json, applied Java-side)
-        // still overrides this. Sort key is the LAST activity timestamp (newest
-        // event scanned), matching /resume's most-recently-used ordering.
+        // The list title mirrors the CLI's /resume: the user's rename ("custom-title"
+        // event, written by the rename_session control request — LAST one wins) beats
+        // the AI-generated "ai-title", which beats the first user message. Neither
+        // title event carries a timestamp. The legacy Eclipse-only rename sidecar
+        // (session-titles.json, applied Java-side) still overrides all of these.
+        // Sort key is the LAST activity timestamp (newest event scanned), matching
+        // /resume's most-recently-used ordering.
+        let mut custom_title = String::new();
         let mut ai_title = String::new();
         let mut first_user = String::new();
         let mut last_ts = String::new();
@@ -145,6 +152,13 @@ pub fn list_sessions(workspace_root: &str) -> String {
                 last_ts = ts.to_string();
             }
             match event["type"].as_str() {
+                Some("custom-title") => {
+                    if let Some(ct) = event["customTitle"].as_str() {
+                        if !ct.is_empty() {
+                            custom_title = ct.chars().take(120).collect();
+                        }
+                    }
+                }
                 Some("ai-title") => {
                     if let Some(at) = event["aiTitle"].as_str() {
                         if !at.is_empty() {
@@ -164,9 +178,16 @@ pub fn list_sessions(workspace_root: &str) -> String {
             }
         }
 
-        // Include a session with any recognizable title source: an ai-title (covers
-        // title-only stubs that /resume lists) or a first user message.
-        let display = if !ai_title.is_empty() { ai_title } else { first_user };
+        // Include a session with any recognizable title source: a custom-title
+        // (user rename), an ai-title (covers title-only stubs that /resume lists)
+        // or a first user message.
+        let display = if !custom_title.is_empty() {
+            custom_title
+        } else if !ai_title.is_empty() {
+            ai_title
+        } else {
+            first_user
+        };
         if !saw_line || display.is_empty() {
             continue;
         }
@@ -287,4 +308,227 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
     }
 
     serde_json::to_string(&messages).unwrap_or_else(|_| "[]".into())
+}
+
+// ---------------------------------------------------------------------------
+// rename_session_offline — rename a session that has NO live process, by
+// resuming it headless and sending the CLI's rename_session control request.
+// ---------------------------------------------------------------------------
+
+/// Renames an inactive session the CLI-native way (verified on claude 2.1.177):
+/// spawn `claude -p --resume <id> --input-format stream-json --output-format
+/// stream-json --verbose`, write one `rename_session` control request, close
+/// stdin. The CLI appends a `custom-title` event to the ORIGINAL session jsonl
+/// (no fork), runs zero model turns (zero cost) and exits on its own. Success =
+/// the CLI's control_response for our request id. Blocks up to ~15s; callers
+/// run it off the UI thread.
+pub fn rename_session_offline(
+    claude_cmd: &str,
+    workspace_root: &str,
+    session_id: &str,
+    title: &str,
+) -> bool {
+    if claude_cmd.is_empty() || session_id.is_empty() || title.is_empty() {
+        return false;
+    }
+
+    // crate::launch handles Windows PATH/PATHEXT resolution (bare `claude`
+    // → `claude.cmd`) and `.cmd` shim quoting, same as the chat spawn paths.
+    let args: Vec<String> = [
+        "-p",
+        "--resume",
+        session_id,
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let mut cmd = crate::launch::claude_command(claude_cmd, &args);
+    cmd.current_dir(workspace_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+    for (k, v) in crate::shell_env::captured_env().to_inject() {
+        cmd.env(k, v);
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    let req_id = "eclipse-ren-offline";
+    let request = serde_json::json!({
+        "type": "control_request",
+        "request_id": req_id,
+        "request": { "subtype": "rename_session", "title": title }
+    });
+
+    // Write the request, then drop stdin (EOF) so the CLI exits after answering.
+    if let Some(mut stdin) = child.stdin.take() {
+        let ok = stdin
+            .write_all(request.to_string().as_bytes())
+            .and_then(|_| stdin.write_all(b"\n"))
+            .and_then(|_| stdin.flush())
+            .is_ok();
+        drop(stdin);
+        if !ok {
+            let _ = child.kill();
+            return false;
+        }
+    } else {
+        let _ = child.kill();
+        return false;
+    }
+
+    // Watch stdout for the success control_response. The read loop alone can
+    // block forever on a silent child (auth prompt, network stall), so a
+    // watchdog kills the child at the deadline — that forces stdout EOF and
+    // unblocks the loop.
+    let stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => {
+            let _ = child.kill();
+            return false;
+        }
+    };
+
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watchdog = {
+        let done = std::sync::Arc::clone(&done);
+        // Killing via the child handle needs ownership; signal the watchdog to
+        // kill by pid instead so the main thread keeps `child` for reaping.
+        let pid = child.id();
+        std::thread::spawn(move || {
+            for _ in 0..150 {
+                if done.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            kill_pid(pid);
+        })
+    };
+
+    let mut renamed = false;
+    let reader = BufReader::new(stdout);
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        let event: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if event["type"].as_str() == Some("control_response")
+            && event["response"]["request_id"].as_str() == Some(req_id)
+            && event["response"]["subtype"].as_str() == Some("success")
+        {
+            renamed = true;
+            break;
+        }
+    }
+    done.store(true, std::sync::atomic::Ordering::Relaxed);
+
+    // Reap (or put down) the child either way; the rename outcome is decided.
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = watchdog.join();
+    renamed
+}
+
+/// Best-effort kill by pid, used only by the offline-rename watchdog.
+#[cfg(windows)]
+fn kill_pid(pid: u32) {
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Best-effort kill by pid, used only by the offline-rename watchdog.
+#[cfg(target_os = "macos")]
+fn kill_pid(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Best-effort kill by pid, used only by the offline-rename watchdog.
+#[cfg(target_os = "linux")]
+fn kill_pid(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    /// Hermetic fixture (same one the PHP reader was verified against): builds a
+    /// fake home + ~/.claude/projects/<hash>/ under a temp dir and points the
+    /// home env var at it, so the test runs anywhere. Asserts: custom-title beats
+    /// ai-title (LAST custom-title wins), ai-title-only stubs are listed (with an
+    /// mtime-derived sort key), untitled sessions fall back to the stripped first
+    /// user message, and ordering is last-activity descending.
+    #[test]
+    fn list_sessions_title_precedence_matches_php_reader() {
+        let home = std::env::temp_dir().join("claude-eclipse-session-test-home");
+        let root = r"C:\histtest";
+        let dir = home.join(".claude").join("projects").join("C--histtest");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("aaaa1111.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"first user words here"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+            r#"{"type":"ai-title","aiTitle":"AI generated title","sessionId":"aaaa1111"}"#, "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]},"timestamp":"2026-07-01T10:00:05.000Z"}"#, "\n",
+            r#"{"type":"custom-title","customTitle":"Old rename","sessionId":"aaaa1111"}"#, "\n",
+            r#"{"type":"custom-title","customTitle":"USER RENAMED TITLE","sessionId":"aaaa1111"}"#, "\n",
+        )).unwrap();
+        fs::write(dir.join("bbbb2222.jsonl"), concat!(
+            r#"{"type":"ai-title","aiTitle":"title-only stub","sessionId":"bbbb2222"}"#, "\n",
+            r#"{"type":"agent-name","agentName":"title-only stub","sessionId":"bbbb2222"}"#, "\n",
+        )).unwrap();
+        fs::write(dir.join("cccc3333.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"<ide_selection a=\"b\">junk</ide_selection>real question text"},"timestamp":"2026-07-02T09:00:00.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"answer"}]},"timestamp":"2026-07-02T09:00:04.000Z"}"#, "\n",
+        )).unwrap();
+
+        // dirs_home() reads USERPROFILE on Windows, HOME elsewhere.
+        #[cfg(windows)]
+        std::env::set_var("USERPROFILE", &home);
+        #[cfg(not(windows))]
+        std::env::set_var("HOME", &home);
+
+        let json = super::list_sessions(root);
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 3, "all three fixture sessions listed: {json}");
+        let displays: Vec<&str> = arr.iter().map(|s| s["display"].as_str().unwrap()).collect();
+        // bbbb2222 has no event timestamps → sort key is its (fresh) mtime → newest.
+        assert_eq!(
+            displays,
+            vec!["title-only stub", "real question text", "USER RENAMED TITLE"],
+            "titles + last-activity order must match the PHP reader"
+        );
+    }
 }

@@ -667,10 +667,55 @@ public class ClaudeGuiView extends ViewPart {
         } catch (Exception ignored) {}
     }
 
-    /** Rename a session by storing a custom title in a separate metadata file. */
+    /**
+     * Renames a session the CLI-native way so the title is SHARED with /resume and
+     * every other Claude Code client (the CLI appends a {@code custom-title} event
+     * to the session's own jsonl). Preferred paths, in order:
+     * <ol>
+     *   <li>the conversation is live in some tab → rename over that process's
+     *       control channel (no extra process);</li>
+     *   <li>inactive → short-lived headless {@code claude -p --resume} rename
+     *       (no model turn, no cost).</li>
+     * </ol>
+     * On native success the legacy sidecar entry for this id is removed so a stale
+     * Eclipse-only title can't mask the shared one. If both native paths fail
+     * (e.g. the DLL predates chatRenameSession/sessionRename), falls back to the
+     * legacy sidecar write so renaming keeps working — just Eclipse-only.
+     */
     private void renameSessionFile(String id, String newTitle) {
+        if (id == null || id.isEmpty() || newTitle == null || newTitle.isBlank()) return;
+        final String title = newTitle.trim();
+        // Live-channel rename runs HERE on the UI thread: it is one stdin write, and
+        // tab disposal (chatDestroy) also runs on this thread — scanning managers from
+        // a worker would race a dispose and touch a freed native handle.
+        boolean live = false;
         try {
-            if (id == null || id.isEmpty() || newTitle == null) return;
+            for (ChatProcessManager m : managers.values()) {
+                if (m.renameSession(id, title)) { live = true; break; }
+            }
+        } catch (Throwable ignored) {} // old DLL: chatRenameSession missing
+        final boolean liveOk = live;
+        // The offline path spawns a headless claude (seconds) — keep it off the UI
+        // thread. Sidecar file IO rides along on the same worker.
+        new Thread(() -> {
+            boolean ok = liveOk;
+            if (!ok) {
+                try {
+                    String claudeCmd = Activator.getDefault().getPreferenceStore()
+                            .getString(com.anthropic.claudecode.eclipse.Constants.PREF_CLAUDE_CMD);
+                    if (claudeCmd == null || claudeCmd.isBlank())
+                        claudeCmd = com.anthropic.claudecode.eclipse.Constants.DEFAULT_CLAUDE_CMD;
+                    ok = NativeCore.sessionRename(claudeCmd, workspaceRoot(), id, title);
+                } catch (Throwable ignored) {} // old DLL: sessionRename missing
+            }
+            if (ok) removeSidecarTitle(id);
+            else writeSidecarTitle(id, title);
+        }, "claude-session-rename").start();
+    }
+
+    /** Legacy Eclipse-only rename: store the title in session-titles.json. */
+    private void writeSidecarTitle(String id, String newTitle) {
+        try {
             String home = Activator.isWindows() ? System.getenv("USERPROFILE") : System.getenv("HOME");
             if (home == null || home.isEmpty()) home = System.getProperty("user.home");
             if (home == null) return;
@@ -685,6 +730,24 @@ public class ClaudeGuiView extends ViewPart {
             Files.createDirectories(titlesPath.getParent());
             Files.writeString(titlesPath, new Gson().toJson(titles));
         } catch (Exception e) { Activator.logError("Failed to rename session " + id, e); }
+    }
+
+    /**
+     * Drops a session's legacy sidecar title after a successful CLI-native rename;
+     * mergeCustomTitles overrides unconditionally, so a stale entry would forever
+     * mask the shared custom-title this and other clients now show.
+     */
+    private void removeSidecarTitle(String id) {
+        try {
+            String home = Activator.isWindows() ? System.getenv("USERPROFILE") : System.getenv("HOME");
+            if (home == null || home.isEmpty()) home = System.getProperty("user.home");
+            if (home == null) return;
+            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(workspaceRoot()), "session-titles.json");
+            if (!Files.exists(titlesPath)) return;
+            Map<String, String> titles = new Gson().fromJson(Files.readString(titlesPath), new TypeToken<Map<String, String>>(){}.getType());
+            if (titles == null || titles.remove(id) == null) return;
+            Files.writeString(titlesPath, new Gson().toJson(titles));
+        } catch (Exception ignored) {}
     }
 
     /** Same algorithm as session.rs: every non-ASCII-alphanumeric char becomes '-'. */

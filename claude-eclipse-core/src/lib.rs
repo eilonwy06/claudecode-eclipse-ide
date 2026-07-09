@@ -1,13 +1,12 @@
 mod chat;
 mod console;
+mod launch;
 mod lock_file;
 mod mcp;
 mod php_bridge;
-mod pty;
 mod server;
 mod session;
 mod shell_env;
-mod vterm;
 
 use chat::ChatManager;
 use jni::objects::{JClass, JObject, JString};
@@ -155,19 +154,6 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_serverBr
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_serverIsRunning(
-    _env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-) -> jboolean {
-    if handle == 0 {
-        return 0;
-    }
-    let server = unsafe { &*(handle as *const Server) };
-    server.is_running() as jboolean
-}
-
-#[no_mangle]
 pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_serverGetClientCount(
     _env: JNIEnv,
     _class: JClass,
@@ -263,15 +249,6 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_lockFile
     _class: JClass,
 ) {
     lock_file::remove();
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_lockFileRemoveOthers(
-    _env: JNIEnv,
-    _class: JClass,
-    our_port: jint,
-) {
-    lock_file::remove_other_lock_files(our_port as u16);
 }
 
 // ===========================================================================
@@ -405,103 +382,6 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatDest
     }
     let manager = unsafe { Box::from_raw(handle as *mut ChatManager) };
     drop(manager);
-}
-
-// ===========================================================================
-// PTY JNI entry points
-// ===========================================================================
-
-#[no_mangle]
-pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_ptyCreate(
-    _env: JNIEnv,
-    _class: JClass,
-) -> jlong {
-    let session = pty::PtySession::new();
-    Box::into_raw(Box::new(session)) as jlong
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_ptyRegisterCallbacks(
-    env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-    callbacks: JObject,
-) {
-    if handle == 0 { return; }
-    let session = unsafe { &*(handle as *const pty::PtySession) };
-    let global_ref = env.new_global_ref(callbacks).expect("new_global_ref failed");
-    session.register_callbacks(java_vm(), global_ref);
-}
-
-/// cmd and args are already platform-wrapped by Java (cmd.exe /c on Windows).
-/// args_json: JSON array of strings.
-/// extra_env_json: JSON array of [key, value] pairs.
-#[no_mangle]
-pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_ptyStart(
-    mut env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-    cmd: JString,
-    args_json: JString,
-    extra_env_json: JString,
-    cwd: JString,
-    cols: jint,
-    rows: jint,
-) {
-    if handle == 0 { return; }
-    let session = unsafe { &*(handle as *const pty::PtySession) };
-
-    let cmd_s:  String = env.get_string(&cmd).map(|s| s.into()).unwrap_or_default();
-    let args_s: String = env.get_string(&args_json).map(|s| s.into()).unwrap_or_default();
-    let env_s:  String = env.get_string(&extra_env_json).map(|s| s.into()).unwrap_or_default();
-    let cwd_s:  String = env.get_string(&cwd).map(|s| s.into()).unwrap_or_default();
-
-    let args: Vec<String> = serde_json::from_str(&args_s).unwrap_or_default();
-    let raw_env: Vec<[String; 2]> = serde_json::from_str(&env_s).unwrap_or_default();
-    let extra_env: Vec<(String, String)> = raw_env.into_iter()
-        .map(|pair| (pair[0].clone(), pair[1].clone()))
-        .collect();
-
-    session.start(cmd_s, args, extra_env, cwd_s, cols as u16, rows as u16);
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_ptyWriteInput(
-    mut env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-    input: JString,
-) {
-    if handle == 0 { return; }
-    let session = unsafe { &*(handle as *const pty::PtySession) };
-    let s: Result<String, _> = env.get_string(&input).map(|js| js.into());
-    if let Ok(s) = s {
-        session.write_input(s.as_bytes());
-    }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_ptyResize(
-    _env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-    cols: jint,
-    rows: jint,
-) {
-    if handle == 0 { return; }
-    let session = unsafe { &*(handle as *const pty::PtySession) };
-    session.resize(cols as u16, rows as u16);
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_ptyDestroy(
-    _env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-) {
-    if handle == 0 { return; }
-    let session = unsafe { Box::from_raw(handle as *mut pty::PtySession) };
-    drop(session);
 }
 
 // ===========================================================================
@@ -751,16 +631,6 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeIs
     php_bridge::is_connected() as jboolean
 }
 
-#[no_mangle]
-pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeSend(
-    mut env: JNIEnv,
-    _class: JClass,
-    data: JString,
-) -> jboolean {
-    let s: String = env.get_string(&data).map(|js| js.into()).unwrap_or_default();
-    php_bridge::send_str(&s) as jboolean
-}
-
 // ===========================================================================
 // Proxy configuration JNI entry points
 // ===========================================================================
@@ -835,6 +705,60 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionL
     };
     let json = session::load_session_history(&root, &id);
     env.new_string(json).unwrap_or_else(|_| env.new_string("[]").unwrap()).into_raw()
+}
+
+/// Renames an INACTIVE session the CLI-native way (headless --resume + the
+/// rename_session control request → `custom-title` event in the shared jsonl,
+/// visible to /resume and VSCode). Blocks up to ~15s; call off the UI thread.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionRename(
+    mut env: JNIEnv,
+    _class: JClass,
+    claude_cmd: JString,
+    workspace_root: JString,
+    session_id: JString,
+    title: JString,
+) -> jboolean {
+    let get = |env: &mut JNIEnv, s: &JString| -> String {
+        if s.is_null() {
+            String::new()
+        } else {
+            env.get_string(s).ok().map(|v| v.into()).unwrap_or_default()
+        }
+    };
+    let cmd = get(&mut env, &claude_cmd);
+    let root = get(&mut env, &workspace_root);
+    let id = get(&mut env, &session_id);
+    let title = get(&mut env, &title);
+    session::rename_session_offline(&cmd, &root, &id, &title) as jboolean
+}
+
+/// Renames the LIVE conversation on this chat manager's process via its control
+/// channel (no extra process). Returns false if the manager isn't currently on
+/// `session_id` — caller falls back to sessionRename.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatRenameSession(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    session_id: JString,
+    title: JString,
+) -> jboolean {
+    if handle == 0 {
+        return 0;
+    }
+    let manager = unsafe { &*(handle as *const ChatManager) };
+    let id: String = if session_id.is_null() {
+        String::new()
+    } else {
+        env.get_string(&session_id).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let title: String = if title.is_null() {
+        String::new()
+    } else {
+        env.get_string(&title).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    manager.rename_session(&id, &title) as jboolean
 }
 
 // ===========================================================================

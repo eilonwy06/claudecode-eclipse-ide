@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -222,6 +222,31 @@ impl ChatManager {
                 }
             }
         }
+    }
+
+    /// Renames the conversation this manager's live process is on, via the CLI's
+    /// `rename_session` control request (same path the VSCode plugin uses). The CLI
+    /// appends a `custom-title` event to the session's own jsonl, so /resume and
+    /// every other Claude Code client see the new title too. Returns false when
+    /// this manager has no live process on `session_id` — the caller then falls
+    /// back to the offline rename (session::rename_session_offline).
+    pub fn rename_session(&self, session_id: &str, title: &str) -> bool {
+        if session_id.is_empty() || title.is_empty() {
+            return false;
+        }
+        let proc = self.state.lock().unwrap().proc.clone();
+        let Some(p) = proc else { return false };
+        if p.is_dead() || p.session_id.lock().unwrap().as_deref() != Some(session_id) {
+            return false;
+        }
+        static REN_SEQ: AtomicU64 = AtomicU64::new(1);
+        let req_id = format!("eclipse-ren-{}", REN_SEQ.fetch_add(1, Ordering::Relaxed));
+        let msg = serde_json::json!({
+            "type": "control_request",
+            "request_id": req_id,
+            "request": { "subtype": "rename_session", "title": title }
+        });
+        p.write_line(&msg.to_string()).is_ok()
     }
 
     pub fn reset_session(&self) {
@@ -486,14 +511,12 @@ fn run_turn(
         cmd_args.push(resume_id.to_string());
     }
 
-    // Rust 1.77+ properly handles .cmd/.bat files on Windows: it resolves
-    // the full path, quotes it correctly (even with spaces), and escapes
-    // special characters in arguments for cmd.exe.  No manual cmd.exe /c
-    // wrapping needed — that actually broke special chars like " \ / '
-    // because cmd.exe re-interprets the command line.
-    let mut cmd = Command::new(claude_cmd);
-    cmd.args(&cmd_args)
-        .current_dir(workspace_root)
+    // crate::launch resolves the command (PATH + PATHEXT for a bare `claude`)
+    // and, for a `.cmd`/`.bat` shim, drives cmd.exe with a raw_arg command line
+    // — Rust's own BatBadBut `"`-doubling would corrupt the --mcp-config JSON
+    // (it arrives as {mcpServers:{…}} and the CLI reads it as a bogus file path).
+    let mut cmd = crate::launch::claude_command(claude_cmd, &cmd_args);
+    cmd.current_dir(workspace_root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -689,9 +712,10 @@ fn spawn_persistent(
         cmd_args.push(resume_id.to_string());
     }
 
-    let mut cmd = Command::new(claude_cmd);
-    cmd.args(&cmd_args)
-        .current_dir(workspace_root)
+    // See crate::launch: PATH/PATHEXT resolution + cmd.exe raw_arg for `.cmd`
+    // shims so the --mcp-config JSON isn't mangled by Rust's BatBadBut escaping.
+    let mut cmd = crate::launch::claude_command(claude_cmd, &cmd_args);
+    cmd.current_dir(workspace_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

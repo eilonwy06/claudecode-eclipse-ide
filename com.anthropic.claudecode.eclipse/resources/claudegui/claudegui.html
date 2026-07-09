@@ -821,7 +821,7 @@ function createTab(opts) {
   // Per-conversation model/effort/thinking (VSCode-style). A NEW tab starts at the
   // DEFAULTS (not whatever the last-viewed convo used); each tab then remembers its
   // own. Defaults: high effort, thinking off, the user's configured default model.
-  tabs.push({ id, title: opts.title || 'Claude Code', sessionId: opts.sessionId || '', pane, titled: !!opts.titled,
+  tabs.push({ id, title: opts.title || 'Claude Code', sessionId: opts.sessionId || '', pane, titled: !!opts.titled, draft: '',
     model: (opts.model !== undefined ? opts.model : defaultModel()),
     effortIdx: (opts.effortIdx !== undefined ? opts.effortIdx : DEFAULT_EFFORT_IDX),
     thinking: (opts.thinking !== undefined ? opts.thinking : DEFAULT_THINKING) });
@@ -829,12 +829,19 @@ function createTab(opts) {
   return tabs[tabs.length - 1];
 }
 function switchTab(id) {
+  // Each tab keeps its own unsent draft: stash the composer into the outgoing tab,
+  // then restore the incoming tab's draft so drafts don't bleed across tabs.
+  const prev = tabById(activeId);
+  if (prev && prev.id !== id) prev.draft = input.value;
   activeId = id;
   tabs.forEach(t => { t.pane.style.display = (t.id === id) ? '' : 'none'; });
   const t = activeTab();
   if (t) {
     document.getElementById('convo-title').textContent = t.title;
     applyTabSettings(t);   // restore this conversation's model/effort/thinking
+    input.value = t.draft || '';                                    // restore this tab's draft
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 160) + 'px';  // resize to the draft
   }
   if (typeof renderBottomCard === 'function') renderBottomCard();   // card only in its own tab
   if (typeof syncComposer === 'function') syncComposer();           // send/stop reflects THIS tab
@@ -1230,7 +1237,7 @@ function addSystem(text) {
 function doSend() {
   const text = input.value.trim();
   if (!text) return;
-  if (text.startsWith('/') && handleSlashCommand(text)) { input.value = ''; input.style.height = 'auto'; closeSlash(); return; }
+  if (text.startsWith('/') && handleSlashCommand(text)) { input.value = ''; input.style.height = 'auto'; const at = activeTab(); if (at) at.draft = ''; closeSlash(); return; }
   const t = activeTab(); if (!t) return;
   loadRender(t);                 // render into (and stream for) THIS tab
   // Mid-stream sends QUEUE onto THIS tab's own conversation; other tabs stream
@@ -1239,7 +1246,7 @@ function doSend() {
   const withCtx = !!(ctxEnabled && ctxData && ctxData.fileName);
   addUserMessage(text, withCtx ? ctxChipLabel() : null);
   if (!t.titled) setTabTitle(t, text);          // title updates immediately on first send
-  input.value = ''; input.style.height = 'auto'; closeSlash();
+  input.value = ''; input.style.height = 'auto'; t.draft = ''; closeSlash();
   if (!queueing) { setStreaming(true); showWorking(); }
   else if (!workingEl) showWorking();
   if (window._sendToJava) window._sendToJava(text, withCtx, t.sessionId || '', permMode, effort, curModel, thinkingOn ? '1' : '0', t.id);

@@ -70,12 +70,14 @@ function list_sessions(string $root): array {
         $id = pathinfo($path, PATHINFO_FILENAME);
         $fh = @fopen($path, 'r');
         if (!$fh) continue;
-        // The title shown in the list mirrors the CLI's /resume: the AI-generated
-        // "ai-title" (event has no timestamp) wins, falling back to the first user
-        // message. The user's custom rename (session-titles.json, applied Java-side)
-        // still overrides this. Sort key is the LAST activity timestamp (newest event),
-        // matching /resume's most-recently-used ordering — not the first message.
-        $aiTitle = ''; $firstUser = ''; $lastTs = ''; $seen = false;
+        // The title shown in the list mirrors the CLI's /resume: the user's rename
+        // ("custom-title" event, appended by the rename_session control request —
+        // LAST one wins) beats the AI-generated "ai-title", which beats the first
+        // user message. Neither title event carries a timestamp. The legacy
+        // Eclipse-only sidecar (session-titles.json, applied Java-side) still
+        // overrides all of these. Sort key is the LAST activity timestamp (newest
+        // event), matching /resume's most-recently-used ordering.
+        $customTitle = ''; $aiTitle = ''; $firstUser = ''; $lastTs = ''; $seen = false;
         while (($line = fgets($fh)) !== false) {
             $line = trim($line);
             if ($line === '') continue;
@@ -84,7 +86,10 @@ function list_sessions(string $root): array {
             $seen = true;
             $type = $e['type'] ?? '';
             if (is_string($e['timestamp'] ?? null)) $lastTs = $e['timestamp'];
-            if ($type === 'ai-title') {
+            if ($type === 'custom-title') {
+                $ct = $e['customTitle'] ?? null;
+                if (is_string($ct) && $ct !== '') $customTitle = take($ct, DISPLAY_CHARS);
+            } elseif ($type === 'ai-title') {
                 $at = $e['aiTitle'] ?? null;
                 if (is_string($at) && $at !== '') $aiTitle = take($at, DISPLAY_CHARS);
             } elseif ($type === 'user' && $firstUser === '') {
@@ -93,9 +98,10 @@ function list_sessions(string $root): array {
             }
         }
         fclose($fh);
-        // Include a session if it has any recognizable title source: an ai-title
-        // (covers title-only stubs that /resume lists) or a first user message.
-        $display = $aiTitle !== '' ? $aiTitle : $firstUser;
+        // Include a session if it has any recognizable title source: a custom-title
+        // (user rename), an ai-title (covers title-only stubs that /resume lists)
+        // or a first user message.
+        $display = $customTitle !== '' ? $customTitle : ($aiTitle !== '' ? $aiTitle : $firstUser);
         if (!$seen || $display === '') continue;
         // Fall back to file mtime when no event carried a timestamp (e.g. stubs).
         if ($lastTs === '') { $mt = @filemtime($path); if ($mt !== false) $lastTs = gmdate('Y-m-d\TH:i:s\Z', $mt); }
