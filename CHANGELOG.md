@@ -205,6 +205,84 @@ Major release introducing the **Claude Code** view — a full graphical chat pan
 
 ## [2.3.11] — 2026-04-21
 
+### Changed
+- **"Debug mode" preference** — the Claude Code preference that controls verbose logging is now simply labelled **Debug mode**, and all internal diagnostic console output consistently respects it (no log spam when it's off)
+- **Connection status in the Claude Code view** — the view now surfaces the IDE-integration connection state more clearly, including a distinct indicator and message on macOS when the direct connection path is active
+
+---
+
+## [2.3.10] — 2026-04-21
+
+### Changed
+- **Version alignment** — brought the manifest and packaging files up to the correct version so every bundle reports a consistent release number
+
+---
+
+## [2.3.9] — 2026-04-21
+
+### Fixed
+- **macOS IDE integration falls back gracefully** — when the standard connection path can't be established on macOS, the plugin now switches to a direct connection instead of showing an "off" state, so the IDE integration keeps working; the Claude Code view reflects this with a distinct status indicator
+
+---
+
+## [2.3.8] — 2026-04-21
+
+### Fixed
+- **macOS connectivity — Homebrew tooling and Gatekeeper quarantine** — on macOS the plugin now prefers a Homebrew-installed helper when present (Apple Silicon `/opt/homebrew`, Intel `/usr/local`) and otherwise clears quarantine attributes from the bundled binary first, so the IDE integration starts on freshly downloaded installs
+
+---
+
+## [2.3.7] — 2026-04-21
+
+### Fixed
+- **Unix startup reliability** — the helper process is now launched through a login shell on all non-Windows platforms (previously macOS only), giving it a proper environment so the IDE integration starts consistently on Linux and macOS
+
+---
+
+## [2.3.6] — 2026-04-21
+
+### Fixed
+- **macOS process startup** — the IDE-integration helper is now spawned through a shell on macOS so it inherits a complete environment, fixing cases where launching from an `.app` bundle left it partially initialized
+
+---
+
+## [2.3.5] — 2026-04-21
+
+### Fixed
+- **macOS startup diagnostics** — added earlier, more precise readiness reporting so genuine startup failures surface immediately instead of appearing to hang (part of the ongoing macOS connectivity fixes)
+
+---
+
+## [2.3.4] — 2026-04-21
+
+### Fixed
+- **macOS startup handshake** — replaced the pipe-based readiness signal with a more robust file-based one to work around macOS pipe-buffering that could prevent Eclipse from detecting that the IDE-integration helper had started
+
+---
+
+## [2.3.3] — 2026-04-21
+
+### Fixed
+- **macOS startup detection** — hardened readiness detection with early-exit reporting and a fallback signal path, so a helper process that dies during startup is reported instead of silently timing out
+
+---
+
+## [2.3.2] — 2026-04-21
+
+### Fixed
+- **macOS startup diagnostics** — added detailed startup logging to pin down why the IDE integration wasn't coming up on some macOS setups (first of the 2.3.2–2.3.9 macOS connectivity fixes)
+
+---
+
+## [2.3.1] — 2026-04-21
+
+### Changed
+- **Packaging/update-site refresh** — rebuilt the p2 update site and bumped the bundle version; no functional changes
+
+---
+
+## [2.3.0] — 2026-04-21
+
 ### Added
 - **Open Claude CLI Here** — right-click context menu in any navigator (Package Explorer, Project Explorer, etc.) to launch a Claude CLI session scoped to the selected folder or project
 - **Show In → Claude CLI** — Package Explorer now supports "Show In → Claude CLI" across 30+ perspectives (Java, Java EE, Node.js, Python, C/C++, etc.)
