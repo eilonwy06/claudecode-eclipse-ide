@@ -4,6 +4,13 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **The bundled PHP runtime is gone.** Everything it did (the session-history reader and the bridge relay) now runs inside the plugin's native core — same behavior, same ports, same session-history output, but the plugin is ~150 MB smaller, starts these features faster, and no longer extracts a scripting runtime to a temp folder.
+
+---
+
 ## [3.0.3] — 2026-07-10 *(current)*
 
 ### Added
