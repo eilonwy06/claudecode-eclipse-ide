@@ -25,7 +25,7 @@ import org.eclipse.ui.part.ViewPart;
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.Constants;
 import com.anthropic.claudecode.eclipse.NativeCore;
-import com.anthropic.claudecode.eclipse.bridge.PhpBridge;
+import com.anthropic.claudecode.eclipse.bridge.Bridge;
 import com.anthropic.claudecode.eclipse.editor.UiHelper;
 
 public class ClaudeCodeView extends ViewPart {
@@ -42,7 +42,7 @@ public class ClaudeCodeView extends ViewPart {
     private Button launchButton;
     private ScheduledExecutorService statusPoller;
     private volatile boolean launching = false;
-    private PhpBridge phpBridge;
+    private Bridge bridge;
 
     private Image greenLight;
     private Image yellowLight;
@@ -83,7 +83,7 @@ public class ClaudeCodeView extends ViewPart {
             appendLog("Lock file: ~/.claude/ide/" + port + ".lock\n\n");
         }
 
-        startPhpBridge();
+        startBridge();
         logBridgeInfo();
         appendLog("Click 'Launch Claude Terminal' to open the Claude Terminal.\n\n");
 
@@ -222,11 +222,11 @@ public class ClaudeCodeView extends ViewPart {
             appendLog("New token: " + newToken.substring(0, 8) + "...\n");
             appendLog("Lock file updated: ~/.claude/ide/" + newPort + ".lock\n");
 
-            if (phpBridge != null) {
+            if (bridge != null) {
                 NativeCore.bridgeDisconnect();
-                phpBridge.stop();
+                bridge.stop();
             }
-            startPhpBridge();
+            startBridge();
             logBridgeInfo();
             updateStatus();
 
@@ -272,20 +272,20 @@ public class ClaudeCodeView extends ViewPart {
 
     // Show bridge info for Windows/Linux, or override message for macOS
     private void logBridgeInfo() {
-        if (phpBridge != null && phpBridge.isOverridden()) {
+        if (bridge != null && bridge.isOverridden()) {
             appendLog("macOS detected, direct protocol active.\n\n");
-        } else if (phpBridge != null && phpBridge.isRunning()) {
-            String phpMsg = phpBridge.getPhpMessage();
-            if (phpMsg != null && !phpMsg.isEmpty()) {
-                appendLog(phpMsg + "\n");
+        } else if (bridge != null && bridge.isRunning()) {
+            String msg = bridge.getMessage();
+            if (msg != null && !msg.isEmpty()) {
+                appendLog(msg + "\n");
             }
-            appendLog("Bridge relay ports: " + phpBridge.getPortA() + " ↔ " + phpBridge.getPortB() + "\n\n");
+            appendLog("Bridge relay ports: " + bridge.getPortA() + " ↔ " + bridge.getPortB() + "\n\n");
         }
     }
 
-    private void startPhpBridge() {
-        phpBridge = new PhpBridge();
-        boolean started = phpBridge.start(data -> {
+    private void startBridge() {
+        bridge = new Bridge();
+        boolean started = bridge.start(data -> {
             if (isDebugMode()) {
                 String msg = new String(data, java.nio.charset.StandardCharsets.UTF_8);
                 Display.getDefault().asyncExec(() -> appendLog("[BRIDGE] " + msg));
@@ -294,9 +294,9 @@ public class ClaudeCodeView extends ViewPart {
 
         if (started) {
             if (isDebugMode()) {
-                appendLog("Bridge started on port " + phpBridge.getPortA() + "\n");
+                appendLog("Bridge started on port " + bridge.getPortA() + "\n");
             }
-            boolean connected = NativeCore.bridgeConnect(phpBridge.getPortA(), phpBridge.getToken());
+            boolean connected = NativeCore.bridgeConnect(bridge.getPortA(), bridge.getToken());
             if (isDebugMode()) {
                 if (connected) {
                     appendLog("Rust connected to Bridge.\n\n");
@@ -366,9 +366,9 @@ public class ClaudeCodeView extends ViewPart {
             setServerStatus(Status.RED, "Stopped");
         }
 
-        if (phpBridge != null && phpBridge.isOverridden()) {
+        if (bridge != null && bridge.isOverridden()) {
             setBridgeStatus(Status.BLUE, "Overridden");
-        } else if (phpBridge != null && phpBridge.isRunning()) {
+        } else if (bridge != null && bridge.isRunning()) {
             if (NativeCore.bridgeIsConnected()) {
                 setBridgeStatus(Status.GREEN, "Connected");
             } else {
@@ -402,9 +402,9 @@ public class ClaudeCodeView extends ViewPart {
         if (statusPoller != null) {
             statusPoller.shutdownNow();
         }
-        if (phpBridge != null) {
+        if (bridge != null) {
             NativeCore.bridgeDisconnect();
-            phpBridge.stop();
+            bridge.stop();
         }
         if (greenLight != null && !greenLight.isDisposed()) greenLight.dispose();
         if (yellowLight != null && !yellowLight.isDisposed()) yellowLight.dispose();
