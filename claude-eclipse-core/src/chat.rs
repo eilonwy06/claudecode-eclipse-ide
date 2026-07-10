@@ -8,6 +8,37 @@ use std::os::windows::process::CommandExt;
 
 use jni::objects::{JObject, JString, JValue};
 
+/// Materializes the `--mcp-config` value for the `claude` command line.
+///
+/// **Windows:** inline JSON (`{"mcpServers":…}`) is mangled when the Claude
+/// command is a `.cmd`/`.bat` shim — cmd.exe plus the shim's `%*` re-quoting
+/// strip the JSON's quotes, so the CLI reads the value as a bogus file path
+/// ("MCP config file not found: C:\ws\{mcpServers:…"). That is the BatBadBut
+/// class of bug and is why the GUI chat broke with a `claude.cmd` command
+/// (issue #64) while a full `.exe` path worked — no arg-quoting scheme survives
+/// cmd.exe + `%*` reliably. So we write the JSON to a temp file (keyed by the
+/// server port, so concurrent tabs share one identical file) and pass its path;
+/// a plain path has no shell-special characters and passes through intact. If
+/// the temp write fails we fall back to the inline JSON (the macOS/Linux form,
+/// still correct for a `.exe` target).
+#[cfg(windows)]
+fn mcp_config_value(mcp_port: u16, cfg: String) -> String {
+    let path = std::env::temp_dir().join(format!("claude-eclipse-mcp-{mcp_port}.json"));
+    match std::fs::write(&path, &cfg) {
+        Ok(()) => path.to_string_lossy().into_owned(),
+        Err(_) => cfg,
+    }
+}
+
+/// **macOS and Linux:** unchanged. `Command` hands argv straight to `execvp`
+/// with no shell in between, so inline `--mcp-config` JSON has always been
+/// passed verbatim and never had the Windows mangling problem — keep it exactly
+/// as before.
+#[cfg(not(windows))]
+fn mcp_config_value(_mcp_port: u16, cfg: String) -> String {
+    cfg
+}
+
 // ---------------------------------------------------------------------------
 // Shared mutable state (Arc'd into spawned threads — no raw pointers)
 // ---------------------------------------------------------------------------
@@ -466,7 +497,7 @@ fn run_turn(
             mcp_port
         );
         cmd_args.push("--mcp-config".into());
-        cmd_args.push(cfg);
+        cmd_args.push(mcp_config_value(mcp_port, cfg));
 
         // The built-in AskUserQuestion auto-dismisses in headless -p mode (no
         // interactive surface), so disable it and steer claude to our MCP tool,
@@ -694,7 +725,7 @@ fn spawn_persistent(
             mcp_port
         );
         cmd_args.push("--mcp-config".into());
-        cmd_args.push(cfg);
+        cmd_args.push(mcp_config_value(mcp_port, cfg));
 
         // Blocking diff tools stay disallowed (the approval card + DiffPreview
         // handle edits). The two legacy shim tools are superseded here: questions

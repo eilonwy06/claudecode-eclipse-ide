@@ -205,6 +205,7 @@ public class Activator extends AbstractUIPlugin {
         putImage(registry, getBundle(), Constants.IMG_CLEAR_REFRESH, "clear_co.svg");
         putImage(registry, getBundle(), Constants.IMG_NEW_CLI_SESSION, "new_cli_session.svg");
         putImage(registry, getBundle(), Constants.IMG_SCROLL_LOCK, "scroll_lock.svg");
+        putImage(registry, getBundle(), Constants.IMG_SESSION_HISTORY, "session_history.svg");
     }
 
     private static void putImage(ImageRegistry registry, Bundle bundle, String key, String fileName) {

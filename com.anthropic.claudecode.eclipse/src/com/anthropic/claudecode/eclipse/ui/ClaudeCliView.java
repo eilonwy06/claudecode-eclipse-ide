@@ -318,6 +318,17 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
     private void configureActionBars() {
         IToolBarManager toolBar = getViewSite().getActionBars().getToolBarManager();
+        Action sessionHistory = new Action("Session history") {
+            @Override
+            public void run() {
+                // New tab running `claude --resume`, i.e. the interactive session-history picker.
+                openNewSession(null, null, "--resume");
+            }
+        };
+        sessionHistory.setToolTipText("Session history");
+        sessionHistory.setImageDescriptor(Activator.getImageDescriptor(Constants.IMG_SESSION_HISTORY));
+        toolBar.add(sessionHistory);
+
         Action newSession = new Action("New Session") {
             @Override
             public void run() {
