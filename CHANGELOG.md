@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.0.2] — 2026-07-09 *(current)*
+## [3.0.3] — 2026-07-10 *(current)*
+
+### Added
+- **Session history in the Claude Terminal** — a new "Session history" toolbar button opens a fresh tab running `claude --resume`, the interactive picker for jumping back into a past conversation.
+
+---
+
+## [3.0.2] — 2026-07-09
 
 ### Changed
 - **Renaming a conversation is now shared with the CLI and other IDEs.** Renaming in the Claude Code view is written into the conversation itself (via the CLI's native rename), so the new title also shows up in `claude`'s `/resume` picker, the VS Code extension, and any other Claude Code client reading the same project — and a rename made in those places shows up here too. Previously a rename was only visible inside Eclipse. (Thanks to [@xgsa](https://github.com/xgsa) for pointing out the cross-client approach.)
