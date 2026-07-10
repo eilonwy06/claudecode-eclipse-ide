@@ -1,9 +1,9 @@
+mod bridge;
 mod chat;
 mod console;
 mod launch;
 mod lock_file;
 mod mcp;
-mod php_bridge;
 mod server;
 mod session;
 mod shell_env;
@@ -589,12 +589,12 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_browserA
 }
 
 // ===========================================================================
-// PHP Bridge JNI entry points
+// Bridge JNI entry points
 // ===========================================================================
 
 /// Generates a fresh random handshake token for one relay session.
-/// Java distributes it to the relay (env var) and to its own socket, then
-/// passes it back here via bridgeConnect so the Rust side authenticates too.
+/// Java hands it to the relay and to its own socket, then passes it back here
+/// via bridgeConnect so the Rust side authenticates too.
 #[no_mangle]
 pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeGenerateToken(
     env: JNIEnv,
@@ -602,6 +602,43 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeGe
 ) -> jstring {
     let token = uuid::Uuid::new_v4().to_string();
     env.new_string(token).unwrap().into_raw()
+}
+
+/// Starts the in-process relay: binds the first two free ports in
+/// [portMin, portMax] and returns "portA portB", or "" when no pair is free.
+/// Every peer must present `token` on its first line (see bridgeGenerateToken).
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeStartRelay(
+    mut env: JNIEnv,
+    _class: JClass,
+    port_min: jint,
+    port_max: jint,
+    token: JString,
+) -> jstring {
+    let token: String = env.get_string(&token).map(|s| s.into()).unwrap_or_default();
+    let out = match bridge::relay_start(port_min as u16, port_max as u16, &token) {
+        Some((a, b)) => format!("{} {}", a, b),
+        None => String::new(),
+    };
+    env.new_string(out)
+        .unwrap_or_else(|_| env.new_string("").unwrap())
+        .into_raw()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeStopRelay(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    bridge::relay_stop();
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeRelayIsRunning(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jboolean {
+    bridge::relay_is_running() as jboolean
 }
 
 #[no_mangle]
@@ -612,7 +649,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeCo
     token: JString,
 ) -> jboolean {
     let token: String = env.get_string(&token).map(|s| s.into()).unwrap_or_default();
-    php_bridge::connect(port as u16, &token) as jboolean
+    bridge::connect(port as u16, &token) as jboolean
 }
 
 #[no_mangle]
@@ -620,7 +657,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeDi
     _env: JNIEnv,
     _class: JClass,
 ) {
-    php_bridge::disconnect();
+    bridge::disconnect();
 }
 
 #[no_mangle]
@@ -628,7 +665,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_bridgeIs
     _env: JNIEnv,
     _class: JClass,
 ) -> jboolean {
-    php_bridge::is_connected() as jboolean
+    bridge::is_connected() as jboolean
 }
 
 // ===========================================================================
@@ -705,6 +742,28 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionL
     };
     let json = session::load_session_history(&root, &id);
     env.new_string(json).unwrap_or_else(|_| env.new_string("[]").unwrap()).into_raw()
+}
+
+/// Deletes one local session jsonl. Rejects ids that could escape the
+/// projects directory; returns whether the file was actually removed.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionDelete(
+    mut env: JNIEnv,
+    _class: JClass,
+    workspace_root: JString,
+    session_id: JString,
+) -> jboolean {
+    let root: String = if workspace_root.is_null() {
+        String::new()
+    } else {
+        env.get_string(&workspace_root).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let id: String = if session_id.is_null() {
+        String::new()
+    } else {
+        env.get_string(&session_id).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    session::delete_session(&root, &id) as jboolean
 }
 
 /// Renames an INACTIVE session the CLI-native way (headless --resume + the
