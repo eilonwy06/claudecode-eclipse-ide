@@ -1622,33 +1622,33 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
 
 /* ---- working indicator (sunburst + gerund) ---- */
 const GERUNDS = [
-  'Absquatulating','Accomplishing','Actioning','Actualizing','Architecting','Baking','Beaming','Beboppin\'','Befuddling',
+  'Absquatulating','Abstracting','Accomplishing','Actioning','Actualizing','Architecting','Baking','Beaming','Beboppin\'','Befuddling',
   'Billowing','Blanching','Bloviating','Boogieing','Boondoggling','Booping','Bootstrapping','Brainstorming',
   'Brainrotting','Brewing','Bunning','Burrowing','Calculating','Canoodling','Caramelizing','Cascading',
   'Catapulting','Cerebrating','Channeling','Channelling','Chock-a-blocking','Choreographing','Churning','Clauding',
   'Coalescing','Cogitating','Combobulating','Compartmentalizing','Composing','Computing','Concocting','Confabulating','Considering',
-  'Contemplating','Cooking','Coruscating','Crafting','Creating','Crunching','Crystallizing','Cultivating','Deciphering',
-  'Deliberating','Determining','Dilly-dallying','Discombobulating','Doing','Doodling','Drizzling','Ebbing',
-  'Effecting','Effervescing','Elucidating','Embellishing','Enchanting','Envisioning','Evaporating','Fanum taxing','Fermenting',
+  'Contemplating','Cooking','Coruscating','Crafting','Creating','Crocheting','Crunching','Crystallizing','Cultivating','Deciphering',
+  'Deliberating','Determining','Dilly-dallying','Discombobulating','Doing','Doodling','Drizzling','Ebbing','Eclipsing',
+  'Effecting','Effervescing','Elucidating','Embellishing','Encapsulating','Enchanting','Envisioning','Evaporating','Fanum taxing','Felting','Fermenting',
   'Fiddle-faddling','Finagling','Fishmongering','Flabbergasting','Flambéing','Flibbertigibbeting','Flowing','Flummoxing','Fluttering',
   'Fluxing','Forging','Forming','Frolicking','Frosting','Gallivanting','Galloping','Garnishing',
-  'Generating','Gesticulating','Germinating','Gerrymandering','Gibbergaberring','Gitifying','Gooning','Grooving',
-  'Gusting','Harmonizing','Hashing','Hatching','Herding','Honking','Hullaballooing','Hyperspacing',
-  'Hyperenthusiasticating','Ideating','Imagining','Improvising','Incubating','Inferring','Infusing','Intellectualizing',
+  'Generating','Gesticulating','Germinating','Gerrymandering','Gibbergaberring','Gitifying','Gooning','Gravitating','Grooving',
+  'Gusting','Harmonizing','Hashing','Hatching','Herding','Honking','Hullaballooing','Hyperspacing','Hypnotizing',
+  'Hyperenthusiasticating','Ideating','Imagining','Improvising','Incubating','Inferring','Infusing','Inheriting','Intellectualizing',
   'Ionizing','Jitterbugging','Journaling','Julienning','Kneading','Leavening','Levitating','Lollygagging',
   'Malding','Manifesting','Marinating','Meandering','Meowing','Metamorphosing','Mewing','Misting','Moonwalking',
   'Moseying','Mulling','Mustering','Musing','Nebulizing','Nesting','Newspapering','Noodling',
   'Nucleating','Orbiting','Orchestrating','Osmosing','Perambulating','Percolating','Perplexing','Perusing',
-  'Philosophising','Photosynthesizing','Pollinating','Pondering','Pontificating','Pouncing','Precipitating','Prestidigitating',
+  'Philosophising','Photosynthesizing','Pollinating','Polymorphing','Pondering','Pontificating','Pouncing','Precipitating','Prestidigitating',
   'Processing','Proofing','Propagating','Puttering','Puzzling','Quantumizing','Razzle-dazzling','Razzmatazzing',
   'Ratiocinating','Recombobulating','Reticulating','Rizzing','Rizzmastering','Roosting','Ruminating','Sautéing','Scampering',
   'Schlepping','Scurrying','Seasoning','Shenaniganing','Shimmying','Simmering','Skedaddling','Sketching',
   'Skibidirizzing','Skitterscattering','Skylarking','Slithering','Smooshing','Sock-hopping','Sous-viding','Spelunking','Spinning',
   'Sprouting','Stewing','Sublimating','Susurrating','Swirling','Swooping','Symbioting','Synthesizing','Tempering',
   'Thinking','Thundering','Tinkering','Tomfoolering','Topsy-turvying','Transfiguring','Transmogrifying','Transmuting','Twisting',
-  'Undulating','Unfurling','Unravelling','Vibing','Waddling','Wandering','Warping','Whatchamacalliting',
-  'Whirlpooling','Whirring','Whisking','Wibbling','Wewertsing','Woolgathering','Working','Wrangling','Zambasdting','Zesting',
-  'Zigzagging','Zooming'
+  'Undulating','Unfurling','Unravelling','Vibing','Vulcanizing','Waddling','Wandering','Warping','Whatchamacalliting',
+  'Whirlpooling','Whirring','Whisking','Wibbling','Wewertsing','Woolgathering','Working','Wrangling','Xanthating','Xeriscaping','Xylographing','Zambasdting',
+  'Zesting','Zigzagging','Zooming'
 ];
 let workingEl = null, workingGerund = '', lastTokens = 0;
 let gerundCycleTimer = null, gerundTypeTimer = null, gerundIdx = 0, gerundHold = 0;
@@ -2278,6 +2278,10 @@ function startHistoryRename(itemEl, session) {
   if (actions) actions.style.display = 'none';
   const inp = document.createElement('input');
   inp.type = 'text'; inp.className = 'h-rename-input'; inp.value = curTitle;
+  // While editing, clicking the field must behave like a normal input — never
+  // bubble up to the item's onclick (which would open the session) nor blur it.
+  inp.onclick = (e) => e.stopPropagation();
+  inp.onmousedown = (e) => e.stopPropagation();
   main.appendChild(inp);
   inp.focus(); inp.select();
   function finish(save) {
@@ -2305,6 +2309,11 @@ function deleteHistory(id) {
   try { if (window._deleteSession) window._deleteSession(id); } catch (e) {}
   histSessions = histSessions.filter(s => s.sessionId !== id);
   renderHistoryList();
+  // If this session is open in a tab, close that tab. closeTab() replaces the
+  // last remaining tab with a fresh blank session, so deleting the only open
+  // conversation just clears the view (VSCode behaviour).
+  const open = tabs.find(t => t.sessionId === id);
+  if (open) closeTab(open.id);
 }
 /* static (non-streaming) reconstruction helpers for loaded history */
 function appendThinkStatic(turn, text) {
