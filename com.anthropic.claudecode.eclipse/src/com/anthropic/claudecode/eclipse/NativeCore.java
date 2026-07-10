@@ -327,6 +327,16 @@ public final class NativeCore {
 
     /** Generates a fresh random handshake token for one relay session. */
     public static native String bridgeGenerateToken();
+
+    /**
+     * Starts the in-process relay: binds the first two free ports in
+     * {@code [portMin, portMax]} and returns {@code "portA portB"}, or {@code ""}
+     * when no pair is free. Every peer must present {@code token} on its first line.
+     */
+    public static native String bridgeStartRelay(int portMin, int portMax, String token);
+    public static native void bridgeStopRelay();
+    public static native boolean bridgeRelayIsRunning();
+
     public static native boolean bridgeConnect(int port, String token);
     public static native void bridgeDisconnect();
     public static native boolean bridgeIsConnected();
@@ -349,10 +359,18 @@ public final class NativeCore {
     public static native String sessionList(String workspaceRoot);
 
     /**
-     * Loads one past conversation as a JSON array of
-     * {@code {role, content, timestamp}} messages (final text only).
+     * Loads one past conversation as an ordered JSON array of render items —
+     * {@code {t:user|thinking|tool|answered|text, ...}}, assistant items carrying
+     * the model that turn ran on — so the GUI can reconstruct the session exactly
+     * as it looked live.
      */
     public static native String sessionLoad(String workspaceRoot, String sessionId);
+
+    /**
+     * Deletes one local session jsonl (id guarded against escaping the projects
+     * directory). Returns true when the file was actually removed.
+     */
+    public static native boolean sessionDelete(String workspaceRoot, String sessionId);
 
     /**
      * Renames an inactive session the CLI-native way: resumes it headless and sends

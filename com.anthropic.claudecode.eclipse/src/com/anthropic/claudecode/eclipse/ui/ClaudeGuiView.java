@@ -27,7 +27,6 @@ import org.eclipse.ui.part.ViewPart;
 
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.NativeCore;
-import com.anthropic.claudecode.eclipse.bridge.PhpHistory;
 import com.anthropic.claudecode.eclipse.chat.ChatProcessManager;
 
 /**
@@ -171,9 +170,9 @@ public class ClaudeGuiView extends ViewPart {
         });
         newSessionFn   = new SimpleFunction(browser, "_newSession", a -> null);   // new tab = new manager (JS creates the tab)
         listSessionsFn = new SimpleFunction(browser, "_listSessions", a -> safeSessionList());
-        // Async variant: compute the list off the UI thread (first call extracts the
-        // bundled PHP runtime + spawns php), then push it back to JS. Keeps the
-        // history button click from freezing the UI.
+        // Async variant: compute the list off the UI thread (scanning many jsonl
+        // files can take a moment), then push it back to JS. Keeps the history
+        // button click from freezing the UI.
         listSessionsAsyncFn = new SimpleFunction(browser, "_listSessionsAsync", a -> {
             final Browser b = browser;
             new Thread(() -> {
@@ -271,9 +270,6 @@ public class ClaudeGuiView extends ViewPart {
             availableModelsJson = json;
             Display.getDefault().asyncExec(this::pushAvailableModels);
         });
-        // Pre-extract the bundled PHP runtime in the background so the first
-        // session-history click doesn't pay the one-time extraction cost.
-        new Thread(com.anthropic.claudecode.eclipse.bridge.PhpHistory::warmUp, "claude-history-warm").start();
     }
 
     /** Pushes the fetched model list to the webview once both are ready. */
@@ -614,15 +610,11 @@ public class ClaudeGuiView extends ViewPart {
         return ResourcesPlugin.getWorkspace().getRoot().getLocation().toOSString();
     }
 
-    // History is served by the bundled PHP (scripts/history.php) so it can be
-    // iterated without a native rebuild; the Rust core stays as a fallback.
+    // History is served by the Rust core (session.rs), which reads the CLI's
+    // per-project jsonl logs directly.
     private String safeSessionList() {
         String json = "[]";
-        try { String r = PhpHistory.run("list", workspaceRoot(), ""); if (r != null && !r.isBlank()) json = r; }
-        catch (Throwable ignored) {}
-        if ("[]".equals(json)) {
-            try { json = NativeCore.sessionList(workspaceRoot()); } catch (Throwable t) {}
-        }
+        try { json = NativeCore.sessionList(workspaceRoot()); } catch (Throwable t) {}
         return mergeCustomTitles(json);
     }
 
@@ -646,15 +638,13 @@ public class ClaudeGuiView extends ViewPart {
     }
 
     private String safeSessionLoad(String id) {
-        try { String r = PhpHistory.run("load", workspaceRoot(), id); if (r != null && !r.isBlank()) return r; }
-        catch (Throwable ignored) {}
         try { return NativeCore.sessionLoad(workspaceRoot(), id); }
         catch (Throwable t) { return "[]"; }
     }
 
-    /** Delete one local session file (PHP first; Java file-delete as fallback). */
+    /** Delete one local session file (Rust core; Java file-delete as fallback). */
     private void deleteSessionFile(String id) {
-        try { String r = PhpHistory.run("delete", workspaceRoot(), id); if (r != null && !r.isBlank()) return; }
+        try { if (NativeCore.sessionDelete(workspaceRoot(), id)) return; }
         catch (Throwable ignored) {}
         try {
             if (id == null || id.isEmpty() || id.contains("/") || id.contains("\\") || id.contains("..")) return;
