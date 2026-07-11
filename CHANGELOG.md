@@ -4,14 +4,19 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [Unreleased]
+## [3.1.0] — 2026-07-11 *(current)*
 
 ### Changed
-- **The bundled PHP runtime is gone.** Everything it did (the session-history reader and the bridge relay) now runs inside the plugin's native core — same behavior, same ports, same session-history output, but the plugin is ~150 MB smaller, starts these features faster, and no longer extracts a scripting runtime to a temp folder.
+- **The bundled PHP runtime is removed.** Everything it did (the session-history reader and the bridge relay) now runs inside the plugin's native core — same behavior, same ports, same session-history output, but the plugin is ~150 MB smaller, starts these features faster, and no longer extracts a scripting runtime to a temp folder.
+- **Deleting a conversation also closes its tab.** Removing a conversation from the session-history list now closes the tab it was open in (deleting the only open conversation just clears the view), matching the VS Code extension.
+- **More variety in the working indicator** — the status word draws from a bigger pool while Claude works.
+
+### Fixed
+- **Renaming in the session-history list no longer fights your clicks.** Clicking inside the rename field to position the cursor or select text now behaves like a normal text field — previously it could open the conversation or abort the edit.
 
 ---
 
-## [3.0.3] — 2026-07-10 *(current)*
+## [3.0.3] — 2026-07-10
 
 ### Added
 - **Session history in the Claude Terminal** — a new "Session history" toolbar button opens a fresh tab running `claude --resume`, the interactive picker for jumping back into a past conversation.
