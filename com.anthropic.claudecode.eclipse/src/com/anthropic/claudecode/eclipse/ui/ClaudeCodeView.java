@@ -67,7 +67,7 @@ public class ClaudeCodeView extends ViewPart {
         createButtonRow(container);
         createLogArea(container, display);
 
-        appendLog("Claude Code for Eclipse v3.1.0\n");
+        appendLog("Claude Code for Eclipse v3.1.1\n");
         appendLog("─────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {
@@ -89,10 +89,9 @@ public class ClaudeCodeView extends ViewPart {
 
         updateStatus();
         startStatusPoller();
-
-        if (isAutoLaunchEnabled()) {
-            Display.getCurrent().asyncExec(this::startClaude);
-        }
+        // Auto-launch of the Claude Terminal is driven from ClaudeStartup.earlyStartup()
+        // (PREF_AUTO_START), so it works even though this view is debug-gated and hidden
+        // by default. Triggering it here too would open a duplicate tab.
     }
 
     private void createIndicatorImages(Display display) {
@@ -314,11 +313,6 @@ public class ClaudeCodeView extends ViewPart {
     private boolean isDebugMode() {
         IPreferenceStore store = Activator.getDefault().getPreferenceStore();
         return store.getBoolean(Constants.PREF_DEBUG_MODE);
-    }
-
-    private boolean isAutoLaunchEnabled() {
-        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
-        return store.getBoolean(Constants.PREF_AUTO_LAUNCH_CLI);
     }
 
     private void appendLog(String text) {

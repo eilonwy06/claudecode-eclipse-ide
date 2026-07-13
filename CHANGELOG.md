@@ -4,7 +4,19 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.0] — 2026-07-11 *(current)*
+## [3.1.1] — 2026-07-14 *(current)*
+
+### Changed
+- **The MCP server now always starts on launch.** The plugin can't function without it, so it starts unconditionally rather than depending on a preference. As a result, the old "Start server automatically on Eclipse launch" checkbox has been repurposed into **"Open new Claude Terminal automatically on Eclipse launch"** — tick it to have a Claude Terminal tab open by itself when Eclipse starts (off by default).
+- **Status bar preference changes now apply live.** Toggling which segments the status bar shows (model, cost, context, usage limits, and so on) — and, in the Claude Code view, the refresh interval — takes effect immediately in already-open Claude Terminal and Claude Code views, without relaunching a session. (The Terminal's refresh interval still binds on the next launch.)
+- **Preferences: the status bar section is retitled** "Claude status bar configuration" (it governs both the Claude Terminal and Claude Code status bars, not just the terminal).
+
+### Fixed
+- **Diff highlights now span the full width of a scrolled line.** In the Claude Code view, the red/green background on an added or removed line used to stop at the visible edge; scrolling a long line sideways revealed unhighlighted text. The highlight now extends across the entire line.
+
+---
+
+## [3.1.0] — 2026-07-11
 
 ### Changed
 - **The bundled PHP runtime is removed.** Everything it did (the session-history reader and the bridge relay) now runs inside the plugin's native core — same behavior, same ports, same session-history output, but the plugin is ~150 MB smaller, starts these features faster, and no longer extracts a scripting runtime to a temp folder.

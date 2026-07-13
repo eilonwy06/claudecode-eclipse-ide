@@ -146,6 +146,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
     private Color bgColor;
     private IPropertyChangeListener fontChangeListener;
     private IPropertyChangeListener colorChangeListener;
+    private IPropertyChangeListener statusPrefListener;
     private Action scrollLockAction;
 
     /** Shared entity resolver registry for Ctrl-click navigation, one per view. */
@@ -217,6 +218,23 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             }
         };
         JFaceResources.getColorRegistry().addListener(colorChangeListener);
+
+        // Live-apply status-line preference changes to already-running sessions (enable
+        // toggle + per-element toggles), so an edit in Preferences takes effect without
+        // relaunching the terminal — mirroring the Claude Code (GUI) view. The refresh
+        // interval still binds on next launch (it's the external CLI's re-invocation cadence).
+        statusPrefListener = event -> {
+            String p = event.getProperty();
+            if (p == null || !p.startsWith("statusline")) return;
+            display.asyncExec(() -> {
+                if (viewDisposed || tabFolder == null || tabFolder.isDisposed()) return;
+                for (CTabItem item : tabFolder.getItems()) {
+                    TerminalSession session = (TerminalSession) item.getData();
+                    if (session != null) session.applyStatusPrefsLive();
+                }
+            });
+        };
+        Activator.getDefault().getPreferenceStore().addPropertyChangeListener(statusPrefListener);
     }
 
     private void applyTheme() {
@@ -574,6 +592,11 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             JFaceResources.getColorRegistry().removeListener(colorChangeListener);
             colorChangeListener = null;
         }
+        if (statusPrefListener != null) {
+            try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(statusPrefListener); }
+            catch (Throwable ignored) {}
+            statusPrefListener = null;
+        }
         if (tabFolder != null && !tabFolder.isDisposed()) {
             for (CTabItem item : tabFolder.getItems()) {
                 TerminalSession session = (TerminalSession) item.getData();
@@ -740,6 +763,33 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         void setStatus(ClaudeStatus status) {
             if (!disposed && statusBar != null && !statusBar.isDisposed()) {
                 statusBar.setStatus(status);
+            }
+        }
+
+        /**
+         * Live-applies a status-line preference change to this already-running session, so an
+         * edit in Preferences takes effect without relaunching the terminal (mirrors the GUI
+         * view). The per-element toggles are re-read on each paint, so a repaint applies them;
+         * the enable toggle creates the bar on-enable and hides it on-disable. The refresh
+         * <em>interval</em> is not touched here — it is the external CLI's re-invocation cadence,
+         * fixed for the life of the process and rebound only on the next launch.
+         */
+        void applyStatusPrefsLive() {
+            if (disposed || content == null || content.isDisposed()) return;
+            boolean enabled = Activator.getDefault().getPreferenceStore()
+                    .getBoolean(Constants.PREF_STATUSLINE_ENABLED);
+            if (enabled) {
+                if (statusBar == null || statusBar.isDisposed()) {
+                    statusBar = new ClaudeStatusBar(content);
+                    statusBar.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+                    content.layout(true, true);
+                } else {
+                    statusBar.redraw();   // re-reads the per-element toggles
+                }
+            } else if (statusBar != null && !statusBar.isDisposed()) {
+                statusBar.dispose();
+                statusBar = null;
+                content.layout(true, true);
             }
         }
 
