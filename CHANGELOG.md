@@ -4,7 +4,18 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.1] — 2026-07-14 *(current)*
+## [3.1.2] — 2026-07-14 *(current)*
+
+### Changed
+- **The Claude Code view's step dots now follow VS Code's meaning.** A dot is gray while a step is pending or in progress (and for plain conversational replies), turns green only once a tool has finished, and turns red when a step is interrupted or a permission request is rejected. While a permission or question card is open, that step's dot stays gray, then resolves to green (accepted) or red (rejected).
+
+### Fixed
+- **Pressing Stop now really stops.** Previously a reply already in flight could still slip in just after you cancelled; the view now drops anything the stopped turn sends after you press Stop, so nothing new appears.
+- **Interrupting a turn is clearer.** The step you stopped at is marked in red, followed by "Request cancelled." and an italic "Tool interrupted" (or "Interrupted" when no tool was running) note.
+
+---
+
+## [3.1.1] — 2026-07-14
 
 ### Changed
 - **The MCP server now always starts on launch.** The plugin can't function without it, so it starts unconditionally rather than depending on a preference. As a result, the old "Start server automatically on Eclipse launch" checkbox has been repurposed into **"Open new Claude Terminal automatically on Eclipse launch"** — tick it to have a Claude Terminal tab open by itself when Eclipse starts (off by default).
