@@ -4,7 +4,31 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.0.3] — 2026-07-10 *(current)*
+## [3.1.1.exp] — 2026-07-14 *(current)*
+
+### Changed
+- **The MCP server now always starts on launch.** The plugin can't function without it, so it starts unconditionally rather than depending on a preference. As a result, the old "Start server automatically on Eclipse launch" checkbox has been repurposed into **"Open new Claude Terminal automatically on Eclipse launch"** — tick it to have a Claude Terminal tab open by itself when Eclipse starts (off by default).
+- **Status bar preference changes now apply live.** Toggling which segments the status bar shows (model, cost, context, usage limits, and so on) — and, in the Claude Code view, the refresh interval — takes effect immediately in already-open Claude Terminal and Claude Code views, without relaunching a session. (The Terminal's refresh interval still binds on the next launch.)
+- **Preferences: the status bar section is retitled** "Claude status bar configuration" (it governs both the Claude Terminal and Claude Code status bars, not just the terminal).
+
+### Fixed
+- **Diff highlights now span the full width of a scrolled line.** In the Claude Code view, the red/green background on an added or removed line used to stop at the visible edge; scrolling a long line sideways revealed unhighlighted text. The highlight now extends across the entire line.
+
+---
+
+## [3.1.0] — 2026-07-11
+
+### Changed
+- **This is the experimental (PHP-bridge) line.** Unlike the mainline 3.1.0, the bundled PHP runtime is **retained** here — the session-history reader and the bridge relay still run through the PHP bridge, not the native core. This is the sole intended divergence of the experimental build.
+- **Deleting a conversation also closes its tab.** Removing a conversation from the session-history list now closes the tab it was open in (deleting the only open conversation just clears the view), matching the VS Code extension.
+- **More variety in the working indicator** — the status word draws from a bigger pool while Claude works.
+
+### Fixed
+- **Renaming in the session-history list no longer fights your clicks.** Clicking inside the rename field to position the cursor or select text now behaves like a normal text field — previously it could open the conversation or abort the edit.
+
+---
+
+## [3.0.3] — 2026-07-10
 
 ### Added
 - **Session history in the Claude Terminal** — a new "Session history" toolbar button opens a fresh tab running `claude --resume`, the interactive picker for jumping back into a past conversation.

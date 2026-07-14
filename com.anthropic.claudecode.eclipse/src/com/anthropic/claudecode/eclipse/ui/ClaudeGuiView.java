@@ -79,6 +79,8 @@ public class ClaudeGuiView extends ViewPart {
 
     // Status bar (the shared SWT ClaudeStatusBar widget, reused from the CLI view).
     private ClaudeStatusBar statusBar;
+    // Live-applies PREF_STATUSLINE_* changes (enable/toggles/refresh) without a restart.
+    private org.eclipse.jface.util.IPropertyChangeListener statusPrefListener;
     @SuppressWarnings("unused") private BrowserFunction statusSelectionFn;
     private volatile String availableModelsJson;   // curated model list from /v1/models, pushed to the webview
     private volatile String lastRustStatusJson;   // latest onStatus payload (context %, cost, tokens)
@@ -127,6 +129,7 @@ public class ClaudeGuiView extends ViewPart {
         statusBar.setLayoutData(new org.eclipse.swt.layout.GridData(SWT.FILL, SWT.CENTER, true, false));
         applyStatusBarEnabled();
         startStatusTimer();
+        registerStatusPrefListener();
 
         active = this;
         // Persistent protocol, ONE manager per tab (created on first send) so
@@ -478,16 +481,48 @@ public class ClaudeGuiView extends ViewPart {
         }
     }
 
-    /** Periodic tick so reset countdowns and shared limits stay fresh while idle. */
+    /** Live-applies status-line preference changes: any {@code PREF_STATUSLINE_*} edit
+     *  (enable, per-element toggle, or refresh interval) takes effect immediately — the bar
+     *  is shown/hidden and repainted without waiting for the next stream event or a restart.
+     *  Mirrors the Terminal view, which registers the same listener. */
+    private void registerStatusPrefListener() {
+        statusPrefListener = event -> {
+            String p = event.getProperty();
+            if (p == null || !p.startsWith("statusline")) return;
+            Display.getDefault().asyncExec(() -> {
+                if (statusBar == null || statusBar.isDisposed()) return;
+                refreshStatusBar();   // applyStatusBarEnabled() + repaint (re-reads toggles)
+            });
+        };
+        Activator.getDefault().getPreferenceStore().addPropertyChangeListener(statusPrefListener);
+    }
+
+    /** Periodic tick so reset countdowns and shared limits stay fresh while idle. The
+     *  interval honors {@code PREF_STATUSLINE_REFRESH_SECONDS} (same preference the CLI
+     *  status line uses), re-read on every tick so a preference change takes effect on the
+     *  next tick without a restart. */
     private void startStatusTimer() {
         Display display = Display.getDefault();
         final Runnable[] tick = new Runnable[1];
         tick[0] = () -> {
             if (statusBar == null || statusBar.isDisposed()) return;
             refreshStatusBar();
-            display.timerExec(30000, tick[0]);
+            display.timerExec(statusRefreshMillis(), tick[0]);
         };
-        display.timerExec(30000, tick[0]);
+        display.timerExec(statusRefreshMillis(), tick[0]);
+    }
+
+    /** The idle-refresh interval in ms from {@code PREF_STATUSLINE_REFRESH_SECONDS}
+     *  (clamped to a sane floor), defaulting to 30s if the preference is unreadable. */
+    private static int statusRefreshMillis() {
+        try {
+            int secs = Activator.getDefault().getPreferenceStore()
+                    .getInt(com.anthropic.claudecode.eclipse.Constants.PREF_STATUSLINE_REFRESH_SECONDS);
+            if (secs < 1) secs = 1;
+            return secs * 1000;
+        } catch (Throwable ignored) {
+            return 30000;
+        }
     }
 
     /** Account info read from {@code ~/.claude.json} (oauthAccount). Usage % isn't exposed
@@ -958,6 +993,11 @@ public class ClaudeGuiView extends ViewPart {
     public void dispose() {
         if (active == this) active = null;
         contextPolling = false;
+        if (statusPrefListener != null) {
+            try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(statusPrefListener); }
+            catch (Throwable ignored) {}
+            statusPrefListener = null;
+        }
         for (ChatProcessManager m : managers.values()) {
             try { m.stop(); } catch (Exception ignored) {}
         }

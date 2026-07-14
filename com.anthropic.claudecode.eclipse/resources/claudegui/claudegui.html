@@ -156,7 +156,11 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 .code-block pre { padding: 2px 0 10px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
 .code-block pre::-webkit-scrollbar { height: 8px; }
 .code-block pre::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 4px; }
-.code-block .ln { display: block; padding: 0 12px; white-space: pre; color: var(--fg-soft); }
+/* width:max-content + min-width:100% so the row (and its add/del background) spans the
+   FULL horizontal scroll width, not just the visible width — otherwise the red/green
+   highlight cuts off once a long line is scrolled right. */
+.code-block .ln { display: block; box-sizing: border-box; width: max-content; min-width: 100%;
+  padding: 0 12px; white-space: pre; color: var(--fg-soft); }
 .code-block .ln.add { background: var(--green-bg); box-shadow: inset 2px 0 0 var(--green); }
 .code-block .ln.del { background: var(--red-bg); box-shadow: inset 2px 0 0 #dc5a5a; }
 .code-block .ln.hunk { color: var(--hunk); }

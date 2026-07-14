@@ -36,7 +36,7 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
     protected void createFieldEditors() {
         addField(new BooleanFieldEditor(
                 Constants.PREF_AUTO_START,
-                "Start server automatically on Eclipse launch",
+                "Open new Claude Terminal automatically on Eclipse launch",
                 getFieldEditorParent()));
 
         addField(new BooleanFieldEditor(
@@ -69,11 +69,6 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
         addField(portMax);
 
         addField(new BooleanFieldEditor(
-                Constants.PREF_AUTO_LAUNCH_CLI,
-                "Auto-launch Claude Terminal on workspace open",
-                getFieldEditorParent()));
-
-        addField(new BooleanFieldEditor(
                 Constants.PREF_DEBUG_MODE,
                 "Debug mode",
                 getFieldEditorParent()));
@@ -82,7 +77,7 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
         statusSeparator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
 
         Label statusLabel = new Label(getFieldEditorParent(), SWT.NONE);
-        statusLabel.setText("Claude Terminal status bar configuration:");
+        statusLabel.setText("Claude status bar configuration:");
         statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
 
         statuslineEnabled = new BooleanFieldEditor(
@@ -128,7 +123,7 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
 
         IntegerFieldEditor refreshSeconds = new IntegerFieldEditor(
                 Constants.PREF_STATUSLINE_REFRESH_SECONDS,
-                "Status refresh interval (seconds, applies on next launch):",
+                "Status refresh interval (seconds; Terminal applies on next launch):",
                 getFieldEditorParent());
         refreshSeconds.setValidRange(1, 3600);
         addStatuslineDependent(refreshSeconds);

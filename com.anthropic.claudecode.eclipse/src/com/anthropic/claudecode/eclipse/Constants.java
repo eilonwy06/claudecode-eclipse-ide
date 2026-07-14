@@ -10,6 +10,8 @@ public final class Constants {
     public static final int PORT_RANGE_MIN = 10000;
     public static final int PORT_RANGE_MAX = 65535;
 
+    // Legacy key "autoStart": now controls auto-opening a Claude Terminal on Eclipse launch.
+    // (The MCP server always starts unconditionally, so this no longer gates the server.)
     public static final String PREF_AUTO_START = "autoStart";
     public static final String PREF_PORT_MIN = "portMin";
     public static final String PREF_PORT_MAX = "portMax";
@@ -18,7 +20,6 @@ public final class Constants {
     public static final String PREF_LOG_LEVEL = "logLevel";
     public static final String PREF_TRACK_SELECTION = "trackSelection";
     public static final String PREF_TERMINAL_POSITION = "terminalPosition";
-    public static final String PREF_AUTO_LAUNCH_CLI = "autoLaunchCli";
     public static final String PREF_DEBUG_MODE = "debugMode";
 
     /** Set once the user dismisses the Ctrl+Click hint bar in the Claude Terminal view (per-workspace). */
