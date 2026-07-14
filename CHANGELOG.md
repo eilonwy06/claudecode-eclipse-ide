@@ -4,7 +4,18 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.1.exp] — 2026-07-14 *(current)*
+## [3.1.2.exp] — 2026-07-14 *(current)*
+
+### Changed
+- **Simpler step dots in the Claude Code view.** Tool-line dots now default to green (finished) instead of tracking pending/done/interrupted states — cleaner and less visual noise.
+
+### Removed
+- **Removed the "interrupted" styling and notes.** The red-dot / "Tool interrupted" / "Interrupted" labels after pressing Stop are gone; the view just shows "Request cancelled." and moves on.
+- **Removed the post-cancel callback guard.** The `t.cancelled` flag that dropped late streaming callbacks is no longer needed with the simplified dot logic.
+
+---
+
+## [3.1.1.exp] — 2026-07-14
 
 ### Changed
 - **The MCP server now always starts on launch.** The plugin can't function without it, so it starts unconditionally rather than depending on a preference. As a result, the old "Start server automatically on Eclipse launch" checkbox has been repurposed into **"Open new Claude Terminal automatically on Eclipse launch"** — tick it to have a Claude Terminal tab open by itself when Eclipse starts (off by default).

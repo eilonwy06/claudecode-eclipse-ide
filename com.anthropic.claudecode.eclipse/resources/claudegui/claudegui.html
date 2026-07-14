@@ -125,12 +125,20 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 
 /* assistant block — dotted left rail per item */
 .a-item { position: relative; padding-left: 22px; margin: 9px 0; line-height: 1.55; color: var(--fg-soft); }
+/* Dots default to GRAY (pending / in-progress / conversational text, matching
+   VSCode). They turn GREEN only once the step has FINISHED (.done), or RED when a
+   step is interrupted / a decision is rejected. */
 .a-item .dot { position: absolute; left: 4px; top: 6px; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--green); }
+  background: var(--fg-faint); }
+.a-item .dot.done { background: var(--green); }
 .a-item .dot.gray { background: var(--fg-faint); }
+.a-item .dot.red { background: #dc5a5a; border: none; animation: none; }
 .a-item .dot.spin { background: transparent; border: 2px solid var(--accent); border-top-color: transparent;
   width: 11px; height: 11px; left: 2px; top: 4px; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* italic "Tool interrupted" / "Interrupted" note shown when the user stops a turn;
+   aligned to the dot rail (4px), not the text indent */
+.interrupted { font-style: italic; color: var(--fg-faint); font-size: 12.5px; margin: 9px 0; padding-left: 4px; }
 .a-item.muted { color: var(--fg-dim); }
 .a-item strong { color: var(--fg); font-weight: 600; }
 
@@ -1051,9 +1059,30 @@ function appendAssistant(t) {
 }
 function endAssistant() {
   finalizeThink();
+  markToolsDone(curTurn);   // every tool in this turn ran to completion → green dots
   if (curBody) curBody.classList.remove('streaming');
   if (curTurn && !curTurn.querySelector('.a-item') && curTurn.parentNode) curTurn.remove();
   curTurn = null; curBody = null; curText = '';
+}
+/* Turn every not-yet-resolved tool line's dot GREEN (finished). Conversational text
+   lines keep their gray dot; a tool still awaiting a decision card (.pending) or one
+   already interrupted (red) is skipped. Called when the next step starts and when the
+   turn ends cleanly — inferring completion without a native onToolEnd signal. */
+function markToolsDone(turn) {
+  if (!turn) return;
+  turn.querySelectorAll(':scope > .tool-line').forEach(line => {
+    if (line.classList.contains('pending')) return;          // waiting on a decision card
+    const dot = line.querySelector('.dot');
+    if (dot && !dot.classList.contains('red')) dot.className = 'dot done';
+  });
+}
+/* Last tool line in a turn (the one a decision card belongs to). Uses the full
+   node list, not :last-of-type — a text .a-item div after the tool would fool the
+   type selector. */
+function lastToolLine(turn) {
+  if (!turn) return null;
+  const tools = turn.querySelectorAll(':scope > .tool-line');
+  return tools.length ? tools[tools.length - 1] : null;
 }
 /* Cancel: drop the in-progress assistant body WITHOUT rendering it, so a cancelled
    turn shows only "Request cancelled." and never a half-baked partial answer. Any
@@ -1109,6 +1138,7 @@ function makeToolLine(name, input) {
 function addToolLine(payload) {
   finalizeThink();
   if (!ensureTurn()) return;
+  markToolsDone(curTurn);   // a new tool starting means the previous one finished → green
   let info; try { info = JSON.parse(payload); } catch (e) { info = { name: payload, input: {} }; }
   curTurn.appendChild(makeToolLine(info.name || 'tool', info.input || {}));
   // End the current text body so any text Claude emits AFTER this tool starts a new
@@ -1243,6 +1273,7 @@ function doSend() {
   if (!text) return;
   if (text.startsWith('/') && handleSlashCommand(text)) { input.value = ''; input.style.height = 'auto'; const at = activeTab(); if (at) at.draft = ''; closeSlash(); return; }
   const t = activeTab(); if (!t) return;
+  t.cancelled = false;           // new user turn: lift the post-cancel callback guard
   loadRender(t);                 // render into (and stream for) THIS tab
   // Mid-stream sends QUEUE onto THIS tab's own conversation; other tabs stream
   // independently (each has its own process), so they never block this send.
@@ -1259,9 +1290,40 @@ function doSend() {
 function doCancel() {
   const t = activeTab(); if (!t) return;
   loadRender(t);
+  // Fire the native interrupt AND raise a front-end guard: chatCancel lands
+  // asynchronously, so a delta already in flight can still arrive after this. The
+  // flag makes withTab() drop EVERY further stream callback for this tab, so once
+  // Stop is pressed nothing from the stopped turn ever renders (joebiden18). Cleared
+  // when the next turn starts (doSend / onStreamStart).
+  t.cancelled = true;
   if (window._cancelRequest) window._cancelRequest(t.id);
+  // Mark the stop point: if a tool was running, turn only THAT tool line's dot red
+  // (earlier dots stay green) → note "Tool interrupted"; otherwise it was a plain
+  // text turn → note "Interrupted". Redden BEFORE discardAssistant nulls curTurn.
+  const stoppedTool = markInterrupted();
   hideWorking(); discardAssistant(); setStreaming(false);
+  // "Request cancelled." first, then the italic note LAST — each in its own turn so
+  // the note sits below the system line (not tucked under the reddened tool).
   addSystem('Request cancelled.');
+  addInterrupted(stoppedTool ? 'Tool interrupted' : 'Interrupted');
+}
+/* Redden the last (in-progress) tool line's dot in the current turn. Returns true
+   if a tool line was found, so the caller can pick the right interrupted label. */
+function markInterrupted() {
+  const line = lastToolLine(curTurn);
+  if (!line) return false;
+  const dot = line.querySelector('.dot');
+  if (dot) dot.className = 'dot red';
+  return true;
+}
+/* Append the italic "Tool interrupted" / "Interrupted" note as its own turn, last
+   (below the "Request cancelled." system line). */
+function addInterrupted(text) {
+  const pane = streamPane() || (activeTab() ? activeTab().pane : messagesEl);
+  if (!pane) return;
+  const note = document.createElement('div'); note.className = 'interrupted'; note.textContent = text;
+  const turn = document.createElement('div'); turn.className = 'turn'; turn.appendChild(note); pane.appendChild(turn);
+  scrollBottom();
 }
 
 /* Java → JS streaming callbacks. Each carries the TAB ID its process belongs to;
@@ -1269,7 +1331,11 @@ function doCancel() {
    different tabs never clobber each other. */
 /* onStreamStart also fires when a QUEUED turn begins (after the previous turn's
    onStreamEnd) — restore the working indicator so the succession is visible. */
-function withTab(tabId, fn) { const t = tabById(tabId); if (!t) return; loadRender(t); fn(t); }
+/* Drop any streaming callback for a tab whose turn was cancelled: chatCancel is
+   async, so late deltas from the stopped process keep arriving — swallow them all
+   until the user starts a new turn (doSend clears the flag). This is what makes Stop
+   truly stop the front-end (joebiden18). */
+function withTab(tabId, fn) { const t = tabById(tabId); if (!t || t.cancelled) return; loadRender(t); fn(t); }
 window.onStreamStart   = (tabId) => withTab(tabId, () => { setStreaming(true); ensureWorking(); });
 window.onThinking      = (tabId, t) => withTab(tabId, () => appendThinking(t));
 window.onStreamText    = (tabId, t) => withTab(tabId, () => appendAssistant(t));
@@ -1435,10 +1501,17 @@ document.addEventListener('contextmenu', (e) => {
 
 /* ---- permission decision card (claude --permission-prompt-tool) ---- */
 window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabel) {
-  const t = tabById(tabId); if (t) loadRender(t);   // card belongs to this conversation
+  const t = tabById(tabId);
+  if (t && t.cancelled) { if (window._decide) window._decide(reqId, 'deny', ''); return; }  // stopped: auto-deny, no card
+  if (t) loadRender(t);   // card belongs to this conversation
   const pane = streamPane() || (activeTab() ? activeTab().pane : null);
   if (!pane) { if (window._decide) window._decide(reqId, 'deny', ''); return; }
   hideWorking();
+  // The tool line awaiting this decision is the last one in the turn. Keep its dot
+  // GRAY while the card is open (mark .pending so markToolsDone skips it); decide()
+  // flips it green on allow / red on deny.
+  const pendingTool = lastToolLine(curTurn);
+  if (pendingTool) pendingTool.classList.add('pending');
   const isEdit = /edit|write|multiedit|str_replace|notebook|create/i.test(toolName || '');
   const card = document.createElement('div'); card.className = 'decision';
 
@@ -1460,6 +1533,12 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   function decide(d, msg) {
     if (resolved) return; resolved = true;
     document.removeEventListener('keydown', onKey, true);
+    // Resolve the pending tool's dot: allow → green (finished), deny → red (rejected).
+    if (pendingTool) {
+      pendingTool.classList.remove('pending');
+      const dot = pendingTool.querySelector('.dot');
+      if (dot) dot.className = (d === 'deny') ? 'dot red' : 'dot done';
+    }
     if (window._decide) window._decide(reqId, d, msg || '');
     clearBottomCard();                          // card disappears — composer returns
     if (d === 'deny' && msg) {
@@ -1519,12 +1598,23 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
 
 /* ---- AskUserQuestion card (single/multi question, options + Other) ---- */
 window.onAskQuestion = function(tabId, reqId, questionsJson) {
-  const t = tabById(tabId); if (t) loadRender(t);   // card belongs to this conversation
+  const t = tabById(tabId);
+  if (t && t.cancelled) { if (window._answerQuestion) window._answerQuestion(reqId, '[]'); return; }  // stopped: no card
+  if (t) loadRender(t);   // card belongs to this conversation
   const pane = streamPane() || (activeTab() ? activeTab().pane : null);
   let questions = [];
   try { questions = JSON.parse(questionsJson) || []; } catch (e) {}
   if (!pane || !questions.length) { if (window._answerQuestion) window._answerQuestion(reqId, '[]'); return; }
   hideWorking();
+  // Keep the Asking tool's dot GRAY while the card is open; answered → green, dismissed → red.
+  const pendingTool = lastToolLine(curTurn);
+  if (pendingTool) pendingTool.classList.add('pending');
+  const resolveDot = (rejected) => {
+    if (!pendingTool) return;
+    pendingTool.classList.remove('pending');
+    const dot = pendingTool.querySelector('.dot');
+    if (dot) dot.className = rejected ? 'dot red' : 'dot done';
+  };
 
   const state = questions.map(() => ({ choice: null, other: '' })); // choice = option index or 'other'
   let activeQ = 0, resolved = false;
@@ -1542,6 +1632,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   function finish() {
     if (resolved || !allAnswered()) return; resolved = true;
     document.removeEventListener('keydown', onKey, true);
+    resolveDot(false);
     const answers = questions.map((q, i) => ({
       header: q.header || q.question || ('Question ' + (i + 1)),
       question: q.question || '', answer: answeredText(i)
@@ -1554,6 +1645,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   function cancel() {
     if (resolved) return; resolved = true;
     document.removeEventListener('keydown', onKey, true);
+    resolveDot(true);
     if (window._answerQuestion) window._answerQuestion(reqId, '[]');
     clearBottomCard(); scrollBottom();
   }
