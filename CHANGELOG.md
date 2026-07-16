@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.2.exp] — 2026-07-14 *(current)*
+## [3.1.3.exp] — 2026-07-16 *(current)*
+
+### Added
+- **Linux aarch64 (ARM64) support.** Added a native core built for ARM64 Linux (`native/linux/aarch64/libclaude_eclipse_core.so`), cross-compiled from this branch's own Rust source so it exposes the same JNI surface as the x86_64 build. `NativeCore` already resolves `aarch64`/`arm64` to this path, so ARM64 Linux hosts now load a matching native library instead of failing.
+
+---
+
+## [3.1.2.exp] — 2026-07-14
 
 ### Changed
 - **Simpler step dots in the Claude Code view.** Tool-line dots now default to green (finished) instead of tracking pending/done/interrupted states — cleaner and less visual noise.
