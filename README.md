@@ -20,7 +20,7 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 - [Claude Code CLI](https://claude.ai/code) installed and available on your PATH
 - A valid Anthropic API key
 - **Windows:** x86_64
-- **Linux:** x86_64
+- **Linux:** x86_64 and aarch64 (ARM64)
 - **macOS:** aarch64 (Apple Silicon) and x86_64 (Intel)
 
 ### Required Eclipse Terminal bundles
@@ -199,6 +199,16 @@ copy claude-eclipse-core\target\release\libclaude_eclipse_core.so ^
 docker run --rm -v "${PWD}:/src" -w /src rust:slim-bullseye cargo build --release
 copy claude-eclipse-core\target\release\libclaude_eclipse_core.so `
      com.anthropic.claudecode.eclipse\native\linux\x86_64\
+```
+
+**Linux aarch64 (via Docker, emulated ARM64 container):**
+
+Add `--platform linux/arm64` to the same command — Docker Desktop (or QEMU binfmt on Linux) runs the build inside an ARM64 container, so the output is a native aarch64 `.so`. Note it lands in the same `target/release/` folder as the x86_64 build, so copy it out before rebuilding for the other architecture:
+
+```powershell
+docker run --rm -v "${PWD}:/src" -w /src --platform linux/arm64 rust:slim-bullseye cargo build --release
+copy claude-eclipse-core\target\release\libclaude_eclipse_core.so `
+     com.anthropic.claudecode.eclipse\native\linux\aarch64\
 ```
 
 **macOS (native build — must be built on a Mac):**

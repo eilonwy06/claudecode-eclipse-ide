@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.2] — 2026-07-14 *(current)*
+## [3.1.3] — 2026-07-16 *(current)*
+
+### Added
+- **Linux aarch64 (ARM64) support** — the native core library now ships for ARM64 Linux (Raspberry Pi 4/5, AWS Graviton, Ampere, and other ARM64 machines), alongside the existing x86_64 build. All plugin features work identically.
+
+---
+
+## [3.1.2] — 2026-07-14
 
 ### Changed
 - **Clearer step dots in the Claude Code view.** A step's dot is gray while it's pending or in progress (and for plain conversational replies), turns green only once a tool has finished, and turns red when a step is interrupted or a permission request is rejected. While a permission or question card is open, that step's dot stays gray, then resolves to green (accepted) or red (rejected).
