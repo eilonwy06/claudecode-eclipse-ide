@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.3] — 2026-07-16 *(current)*
+## [3.1.4] — 2026-07-18 *(current)*
+
+### Fixed
+- **Step-dot colors are kept when you reopen a past conversation.** Reloading a conversation from the session-history list used to reset every step dot to gray. The Claude Code view now reconstructs each step's outcome from the conversation transcript, so finished tools stay green and interrupted or rejected ones stay red — matching how the conversation looked live.
+
+---
+
+## [3.1.3] — 2026-07-16
 
 ### Added
 - **Linux aarch64 (ARM64) support** — the native core library now ships for ARM64 Linux (Raspberry Pi 4/5, AWS Graviton, Ampere, and other ARM64 machines), alongside the existing x86_64 build. All plugin features work identically.
