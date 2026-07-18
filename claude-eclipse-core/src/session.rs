@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -21,22 +22,98 @@ fn workspace_hash(workspace_root: &str) -> String {
         .collect()
 }
 
-/// Remove a leading `<ide_selection ...>...</ide_selection>` block and/or a
-/// `<ide_context ... />` tag that the GUI injects ahead of the user's message,
-/// so session titles show the real text. No regex crate needed — simple scan.
+/// Strip the editor-context preamble AND Claude Code command/meta wrappers so
+/// session titles aren't raw `<ide_selection>` / `<command-name>` /
+/// `<local-command-*>` tags. Removes ALL occurrences, not just a leading one,
+/// and unwraps `<command-name>X</command-name>` to `X`. No regex crate needed —
+/// simple scans.
 fn strip_ide_preamble(s: &str) -> String {
-    let mut t = s.trim_start();
-    if let Some(rest) = t.strip_prefix("<ide_selection") {
-        if let Some(end) = rest.find("</ide_selection>") {
-            t = rest[end + "</ide_selection>".len()..].trim_start();
+    let mut t = remove_tag_block(s, "ide_selection");
+    t = remove_self_closing_tag(&t, "ide_context");
+    t = remove_tag_block(&t, "local-command-caveat");
+    t = remove_tag_block(&t, "command-message");
+    t = remove_tag_block(&t, "command-args");
+    t = remove_tag_block(&t, "local-command-stdout");
+    t = unwrap_tag_block(&t, "command-name");
+    t.trim_start().to_string()
+}
+
+/// Finds the next `<tag ...>` opening (word-boundary after the tag name, like
+/// `\b` in a regex) at or after byte `from`. Returns (start, end-of-open-tag)
+/// byte offsets, the end being one past the closing `>`.
+fn find_open_tag(s: &str, tag: &str, from: usize) -> Option<(usize, usize)> {
+    let pat = format!("<{}", tag);
+    let mut i = from;
+    while let Some(rel) = s[i..].find(&pat) {
+        let start = i + rel;
+        let after = start + pat.len();
+        let boundary = s[after..]
+            .chars()
+            .next()
+            .map_or(false, |c| c == '>' || c == '/' || c.is_whitespace());
+        if boundary {
+            if let Some(gt) = s[after..].find('>') {
+                return Some((start, after + gt + 1));
+            }
+            return None; // unterminated open tag — nothing to strip
+        }
+        i = after;
+    }
+    None
+}
+
+/// Removes every `<tag ...>inner</tag>` block, inner included. A block missing
+/// its closing tag is left untouched.
+fn remove_tag_block(s: &str, tag: &str) -> String {
+    let close = format!("</{}>", tag);
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while let Some((start, open_end)) = find_open_tag(s, tag, i) {
+        match s[open_end..].find(&close) {
+            Some(rel) => {
+                out.push_str(&s[i..start]);
+                i = open_end + rel + close.len();
+            }
+            None => break,
         }
     }
-    if t.starts_with("<ide_context") {
-        if let Some(end) = t.find("/>") {
-            t = t[end + 2..].trim_start();
+    out.push_str(&s[i..]);
+    out
+}
+
+/// Removes every self-closing `<tag ... />` occurrence.
+fn remove_self_closing_tag(s: &str, tag: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while let Some((start, open_end)) = find_open_tag(s, tag, i) {
+        if s[..open_end].ends_with("/>") {
+            out.push_str(&s[i..start]);
+        } else {
+            out.push_str(&s[i..open_end]);
+        }
+        i = open_end;
+    }
+    out.push_str(&s[i..]);
+    out
+}
+
+/// Replaces every `<tag>inner</tag>` with just `inner`.
+fn unwrap_tag_block(s: &str, tag: &str) -> String {
+    let close = format!("</{}>", tag);
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while let Some((start, open_end)) = find_open_tag(s, tag, i) {
+        match s[open_end..].find(&close) {
+            Some(rel) => {
+                out.push_str(&s[i..start]);
+                out.push_str(&s[open_end..open_end + rel]);
+                i = open_end + rel + close.len();
+            }
+            None => break,
         }
     }
-    t.to_string()
+    out.push_str(&s[i..]);
+    out
 }
 
 /// Returns the path to `~/.claude/projects/{hash}/`.
@@ -225,7 +302,16 @@ pub fn list_sessions(workspace_root: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// load_session_history — read a specific session's JSONL and return messages
+// load_session_history — read a specific session's JSONL and return the
+// conversation as an ordered list of render items so the GUI can reconstruct
+// EXACTLY how the live session looked:
+//   {t:user, content}      - user message (raw; GUI parses the ide_selection chip)
+//   {t:thinking}           - a thinking block (shown as "Thinking", no duration)
+//   {t:tool, name, input}  - a tool call (Read/Edit/Search/Asking... + inline diff)
+//   {t:answered, text}     - the user's answer to an askUserQuestion card
+//   {t:text, text}         - assistant prose
+// Each assistant item carries the model that turn ran on so the GUI can resume
+// the conversation with its last-used model and show it in the status bar.
 // ---------------------------------------------------------------------------
 
 pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
@@ -233,6 +319,9 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
         Some(d) => d,
         None => return "[]".into(),
     };
+    if session_id.is_empty() {
+        return "[]".into();
+    }
 
     let path = dir.join(format!("{}.jsonl", session_id));
     let file = match fs::File::open(&path) {
@@ -241,7 +330,14 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
     };
     let reader = BufReader::new(file);
 
-    let mut messages: Vec<serde_json::Value> = Vec::new();
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    // tool_use ids of askUserQuestion calls, so their answers can be surfaced.
+    let mut ask_ids: HashSet<String> = HashSet::new();
+    // Map each tool_use id → the index of its item in `items`, so a later
+    // tool_result can stamp that tool's outcome (finished vs. interrupted).
+    let mut tool_idx: HashMap<String, usize> = HashMap::new();
+    // tool_use id → whether its tool_result reported an error (interrupt/reject).
+    let mut result_error: HashMap<String, bool> = HashMap::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -253,61 +349,153 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
             Err(_) => continue,
         };
 
-        let event_type = match event["type"].as_str() {
-            Some(t) => t,
-            None => continue,
-        };
-
-        match event_type {
-            "user" => {
-                let content = event["message"]["content"].as_str().unwrap_or("").to_string();
-                let ts = event["timestamp"].as_str().unwrap_or("").to_string();
-                messages.push(serde_json::json!({
-                    "role": "user",
-                    "content": content,
-                    "timestamp": ts,
-                }));
-            }
-            "assistant" => {
-                // Only include non-partial (final) assistant messages.
-                let is_partial = event.get("partial").and_then(|v| v.as_bool()).unwrap_or(false);
-                if is_partial {
-                    continue;
-                }
-
-                // Extract text blocks only — skip tool_use, thinking, etc.
-                let mut text = String::new();
-                if let Some(content) = event["message"]["content"].as_array() {
-                    for block in content {
-                        if block["type"].as_str() == Some("text") {
-                            if let Some(t) = block["text"].as_str() {
-                                if !text.is_empty() {
-                                    text.push('\n');
+        match event["type"].as_str() {
+            Some("user") => {
+                let content = &event["message"]["content"];
+                if let Some(c) = content.as_str() {
+                    items.push(serde_json::json!({ "t": "user", "content": c }));
+                } else if let Some(blocks) = content.as_array() {
+                    for b in blocks {
+                        if b["type"].as_str() != Some("tool_result") {
+                            continue;
+                        }
+                        let tuid = b["tool_use_id"].as_str().unwrap_or("");
+                        // Record the tool's outcome so its dot can be reconstructed:
+                        // is_error ⇒ interrupted/rejected, otherwise finished. (A tool
+                        // with no result at all stays unresolved → interrupted below.)
+                        if !tuid.is_empty() {
+                            let is_err = b["is_error"].as_bool().unwrap_or(false);
+                            result_error.insert(tuid.to_string(), is_err);
+                        }
+                        if !ask_ids.contains(tuid) {
+                            continue;
+                        }
+                        let mut rc = String::new();
+                        if let Some(s) = b["content"].as_str() {
+                            rc.push_str(s);
+                        } else if let Some(parts) = b["content"].as_array() {
+                            for rb in parts {
+                                if rb["type"].as_str() == Some("text") {
+                                    rc.push_str(rb["text"].as_str().unwrap_or(""));
                                 }
-                                text.push_str(t);
                             }
+                        }
+                        let rc = strip_answer_prefix(&rc);
+                        if !rc.is_empty() {
+                            items.push(serde_json::json!({ "t": "answered", "text": rc }));
                         }
                     }
                 }
-
-                if !text.is_empty() {
-                    let ts = event["timestamp"].as_str().unwrap_or("").to_string();
-                    // Surface the model so the GUI can resume the conversation with
-                    // the model it last used (and show it in the status bar).
-                    let model = event["message"]["model"].as_str().unwrap_or("");
-                    messages.push(serde_json::json!({
-                        "role": "assistant",
-                        "content": text,
-                        "timestamp": ts,
-                        "model": model,
-                    }));
+            }
+            Some("assistant") => {
+                // Only include non-partial (final) assistant messages.
+                if event.get("partial").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    continue;
+                }
+                let content = match event["message"]["content"].as_array() {
+                    Some(c) => c,
+                    None => continue,
+                };
+                // The model this turn ran on — attached to each item.
+                let model = event["message"]["model"].as_str().unwrap_or("");
+                for b in content {
+                    match b["type"].as_str() {
+                        Some("thinking") => {
+                            let tt = b["thinking"].as_str().unwrap_or("");
+                            items.push(serde_json::json!({
+                                "t": "thinking", "model": model, "text": tt,
+                            }));
+                        }
+                        Some("text") => {
+                            if let Some(t) = b["text"].as_str() {
+                                if !t.is_empty() {
+                                    items.push(serde_json::json!({
+                                        "t": "text", "text": t, "model": model,
+                                    }));
+                                }
+                            }
+                        }
+                        Some("tool_use") => {
+                            let name = b["name"].as_str().unwrap_or("tool");
+                            let input = if b["input"].is_null() {
+                                serde_json::json!({})
+                            } else {
+                                b["input"].clone()
+                            };
+                            items.push(serde_json::json!({
+                                "t": "tool", "name": name, "input": input, "model": model,
+                            }));
+                            if let Some(id) = b["id"].as_str() {
+                                // Remember where this tool sits so its result can stamp
+                                // a status onto it after the whole file is read.
+                                tool_idx.insert(id.to_string(), items.len() - 1);
+                                if name.to_ascii_lowercase().contains("askuserquestion") {
+                                    ask_ids.insert(id.to_string());
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             _ => {}
         }
     }
 
-    serde_json::to_string(&messages).unwrap_or_else(|_| "[]".into())
+    // Stamp each tool with a reconstructed dot status so reloading a past
+    // conversation keeps the green/red it had live:
+    //   • result present, not an error → "done"        (finished, green)
+    //   • result present with is_error → "interrupted"  (rejected/stopped, red)
+    //   • no result at all             → "interrupted"  (turn was cut off, red)
+    for (id, &idx) in &tool_idx {
+        let status = match result_error.get(id) {
+            Some(false) => "done",
+            Some(true) => "interrupted",
+            None => "interrupted",
+        };
+        if let Some(obj) = items.get_mut(idx).and_then(|v| v.as_object_mut()) {
+            obj.insert("status".into(), serde_json::Value::from(status));
+        }
+    }
+
+    serde_json::to_string(&items).unwrap_or_else(|_| "[]".into())
+}
+
+/// Drops a leading "The user answered: " (any case, any leading whitespace)
+/// from an askUserQuestion tool_result, leaving just the chosen answer.
+fn strip_answer_prefix(s: &str) -> String {
+    const PREFIX: &str = "the user answered:";
+    let t = s.trim_start();
+    let matched = t
+        .get(..PREFIX.len())
+        .map_or(false, |p| p.eq_ignore_ascii_case(PREFIX));
+    if matched {
+        t[PREFIX.len()..].trim_start().to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// delete_session — remove one local session file
+// ---------------------------------------------------------------------------
+
+/// Deletes `~/.claude/projects/<hash>/<sessionId>.jsonl`. The id is rejected if
+/// it could escape the projects directory (path separators or "..").
+pub fn delete_session(workspace_root: &str, session_id: &str) -> bool {
+    if session_id.is_empty()
+        || session_id.contains('/')
+        || session_id.contains('\\')
+        || session_id.contains("..")
+    {
+        return false;
+    }
+    let dir = match projects_dir(workspace_root) {
+        Some(d) => d,
+        None => return false,
+    };
+    let path = dir.join(format!("{}.jsonl", session_id));
+    path.is_file() && fs::remove_file(&path).is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +668,19 @@ fn kill_pid(pid: u32) {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::Mutex;
+
+    /// The tests below all repoint the home env var (USERPROFILE / HOME) at a
+    /// per-test fake home; serialize them so parallel test threads don't clobber
+    /// each other's environment.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn set_home(home: &std::path::Path) {
+        #[cfg(windows)]
+        std::env::set_var("USERPROFILE", home);
+        #[cfg(not(windows))]
+        std::env::set_var("HOME", home);
+    }
 
     /// Hermetic fixture (same one the PHP reader was verified against): builds a
     /// fake home + ~/.claude/projects/<hash>/ under a temp dir and points the
@@ -489,6 +690,7 @@ mod tests {
     /// user message, and ordering is last-activity descending.
     #[test]
     fn list_sessions_title_precedence_matches_php_reader() {
+        let _env = ENV_LOCK.lock().unwrap();
         let home = std::env::temp_dir().join("claude-eclipse-session-test-home");
         let root = r"C:\histtest";
         let dir = home.join(".claude").join("projects").join("C--histtest");
@@ -511,11 +713,7 @@ mod tests {
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"answer"}]},"timestamp":"2026-07-02T09:00:04.000Z"}"#, "\n",
         )).unwrap();
 
-        // dirs_home() reads USERPROFILE on Windows, HOME elsewhere.
-        #[cfg(windows)]
-        std::env::set_var("USERPROFILE", &home);
-        #[cfg(not(windows))]
-        std::env::set_var("HOME", &home);
+        set_home(&home);
 
         let json = super::list_sessions(root);
         let _ = fs::remove_dir_all(&home);
@@ -530,5 +728,126 @@ mod tests {
             vec!["title-only stub", "real question text", "USER RENAMED TITLE"],
             "titles + last-activity order must match the PHP reader"
         );
+    }
+
+    /// Verified against the reference reader on 2026-07-10: the fixture below was
+    /// fed to it and the expected JSON here is its captured output, byte-for-byte
+    /// (compared as Values since key order differs). Covers: raw user content
+    /// (ide_selection kept), partial assistant skipped, thinking/text/tool_use
+    /// items with per-turn model, askUserQuestion answer surfacing with "The user
+    /// answered:" prefix stripping, empty text blocks dropped, and non-ask
+    /// tool_results ignored.
+    #[test]
+    fn load_session_render_items_match_php_reader() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-load-home");
+        let root = r"C:\phpfixws";
+        let dir = home.join(".claude").join("projects").join("C--phpfixws");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("sess1.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"<ide_selection a=\"b\">sel junk</ide_selection>please fix the bug"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+            r#"{"type":"assistant","partial":true,"message":{"model":"claude-fable-5","content":[{"type":"text","text":"par"}]},"timestamp":"2026-07-01T10:00:01.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"model":"claude-fable-5","content":[{"type":"thinking","thinking":"hmm secret"},{"type":"text","text":"Here is my answer"},{"type":"tool_use","id":"toolu_01","name":"mcp__eclipse__askUserQuestion","input":{"q":"Which color?"}}]},"timestamp":"2026-07-01T10:00:05.000Z"}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":[{"type":"text","text":"  The user answered: Blue"}]}]},"timestamp":"2026-07-01T10:00:09.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_02","name":"Edit","input":{"file_path":"C:\\x.java","old_string":"a","new_string":"b"}},{"type":"text","text":""}]},"timestamp":"2026-07-01T10:00:12.000Z"}"#, "\n",
+            r#"{"type":"custom-title","customTitle":"My renamed session","sessionId":"sess1"}"#, "\n",
+        )).unwrap();
+        fs::write(dir.join("sess2.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name><command-message>clear</command-message><command-args>now</command-args>"},"timestamp":"2026-07-03T08:00:00.000Z"}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_99","content":"unrelated result"}]},"timestamp":"2026-07-03T08:00:02.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+
+        let loaded1 = super::load_session_history(root, "sess1");
+        let loaded2 = super::load_session_history(root, "sess2");
+        let listed = super::list_sessions(root);
+        let _ = fs::remove_dir_all(&home);
+
+        let got1: serde_json::Value = serde_json::from_str(&loaded1).unwrap();
+        // toolu_01 (askUserQuestion) has a non-error tool_result → status "done";
+        // toolu_02 (Edit) has no tool_result in the fixture → status "interrupted".
+        let want1: serde_json::Value = serde_json::from_str(r#"[
+            {"t":"user","content":"<ide_selection a=\"b\">sel junk</ide_selection>please fix the bug"},
+            {"t":"thinking","model":"claude-fable-5","text":"hmm secret"},
+            {"t":"text","text":"Here is my answer","model":"claude-fable-5"},
+            {"t":"tool","name":"mcp__eclipse__askUserQuestion","input":{"q":"Which color?"},"model":"claude-fable-5","status":"done"},
+            {"t":"answered","text":"Blue"},
+            {"t":"tool","name":"Edit","input":{"file_path":"C:\\x.java","old_string":"a","new_string":"b"},"model":"claude-opus-4-8","status":"interrupted"}
+        ]"#).unwrap();
+        assert_eq!(got1, want1, "sess1 render items must match the reference reader");
+
+        let got2: serde_json::Value = serde_json::from_str(&loaded2).unwrap();
+        let want2: serde_json::Value = serde_json::from_str(r#"[
+            {"t":"user","content":"<command-name>/clear</command-name><command-message>clear</command-message><command-args>now</command-args>"}
+        ]"#).unwrap();
+        assert_eq!(got2, want2, "sess2: raw user kept, non-ask tool_result ignored");
+
+        // List titles: sess2's fallback title is the fully-unwrapped command text.
+        let lv: serde_json::Value = serde_json::from_str(&listed).unwrap();
+        let sess2 = lv.as_array().unwrap().iter()
+            .find(|s| s["sessionId"] == "sess2").expect("sess2 listed");
+        assert_eq!(sess2["display"], "/clear", "command wrappers stripped from title");
+        assert_eq!(sess2["timestamp"], "2026-07-03T08:00:02.000Z");
+    }
+
+    /// Tool dots are reconstructed from the transcript so a reloaded conversation
+    /// keeps its green/red: a non-error tool_result ⇒ "done", an is_error result ⇒
+    /// "interrupted", and a tool with no result at all ⇒ "interrupted".
+    #[test]
+    fn load_session_reconstructs_tool_status() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-status-home");
+        let root = r"C:\statusws";
+        let dir = home.join(".claude").join("projects").join("C--statusws");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("s.jsonl"), concat!(
+            // A finished Read (has a normal result), an interrupted Bash (is_error
+            // result — the "user doesn't want to proceed" case), and a trailing Edit
+            // with no result at all (turn cut off).
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"a.txt"}},{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"gh pr list"}},{"type":"tool_use","id":"t3","name":"Edit","input":{"file_path":"b.txt"}}]},"timestamp":"2026-07-15T10:00:00.000Z"}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file contents"},{"type":"tool_result","tool_use_id":"t2","is_error":true,"content":"The user doesn't want to proceed with this tool use."}]},"timestamp":"2026-07-15T10:00:03.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let loaded = super::load_session_history(root, "s");
+        let _ = fs::remove_dir_all(&home);
+
+        let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
+        let tools: Vec<(&str, &str)> = got.as_array().unwrap().iter()
+            .filter(|it| it["t"] == "tool")
+            .map(|it| (it["name"].as_str().unwrap(), it["status"].as_str().unwrap_or("MISSING")))
+            .collect();
+        assert_eq!(
+            tools,
+            vec![("Read", "done"), ("Bash", "interrupted"), ("Edit", "interrupted")],
+            "tool dot status reconstructed from tool_result presence/is_error"
+        );
+    }
+
+    #[test]
+    fn delete_session_guards_and_removes() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-del-home");
+        let root = r"C:\deltest";
+        let dir = home.join(".claude").join("projects").join("C--deltest");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("victim.jsonl"), "{}\n").unwrap();
+
+        set_home(&home);
+
+        assert!(!super::delete_session(root, ""), "empty id rejected");
+        assert!(!super::delete_session(root, "../victim"), "traversal rejected");
+        assert!(!super::delete_session(root, "a\\b"), "separator rejected");
+        assert!(!super::delete_session(root, "missing"), "absent file is false");
+        assert!(super::delete_session(root, "victim"), "existing file deleted");
+        assert!(!dir.join("victim.jsonl").exists());
+
+        let _ = fs::remove_dir_all(&home);
     }
 }

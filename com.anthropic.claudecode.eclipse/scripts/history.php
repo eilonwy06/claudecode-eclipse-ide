@@ -116,7 +116,9 @@ function list_sessions(string $root): array {
  * reconstruct EXACTLY how the live session looked:
  *   {t:user, content}      - user message (raw; GUI parses the ide_selection chip)
  *   {t:thinking}           - a thinking block (shown as "Thinking", no duration)
- *   {t:tool, name, input}  - a tool call (Read/Edit/Search/Asking... + inline diff)
+ *   {t:tool, name, input, status} - a tool call (Read/Edit/Search/Asking... + inline
+ *                            diff); status "done"/"interrupted" reconstructs the dot
+ *                            color the tool had live (green/red)
  *   {t:answered, text}     - the user's answer to an askUserQuestion card
  *   {t:text, text}         - assistant prose
  */
@@ -128,6 +130,8 @@ function load_session(string $root, string $sid): array {
     if (!$fh) return [];
     $items = [];
     $askIds = [];   // tool_use_id => true, for askUserQuestion calls (to surface answers)
+    $toolIdx = [];  // tool_use_id => index of its item in $items (to stamp its outcome)
+    $resultErr = []; // tool_use_id => whether its tool_result reported an error
     while (($line = fgets($fh)) !== false) {
         $line = trim($line);
         if ($line === '') continue;
@@ -140,7 +144,15 @@ function load_session(string $root, string $sid): array {
                 $items[] = ['t' => 'user', 'content' => $c];
             } elseif (is_array($c)) {
                 foreach ($c as $b) {
-                    if (($b['type'] ?? '') === 'tool_result' && isset($askIds[$b['tool_use_id'] ?? ''])) {
+                    if (($b['type'] ?? '') !== 'tool_result') continue;
+                    // Record the tool's outcome so its dot can be reconstructed:
+                    // is_error ⇒ interrupted/rejected, otherwise finished. (A tool
+                    // with no result at all stays unresolved → interrupted below.)
+                    $tuid = $b['tool_use_id'] ?? '';
+                    if (is_string($tuid) && $tuid !== '') {
+                        $resultErr[$tuid] = !empty($b['is_error']);
+                    }
+                    if (isset($askIds[$tuid])) {
                         $rc = $b['content'] ?? '';
                         if (is_array($rc)) {
                             $txt = '';
@@ -174,14 +186,27 @@ function load_session(string $root, string $sid): array {
                     $name = is_string($b['name'] ?? null) ? $b['name'] : 'tool';
                     $input = $b['input'] ?? new stdClass();
                     $items[] = ['t' => 'tool', 'name' => $name, 'input' => $input, 'model' => $model];
-                    if (stripos($name, 'askUserQuestion') !== false && isset($b['id'])) {
-                        $askIds[$b['id']] = true;
+                    if (isset($b['id']) && is_string($b['id'])) {
+                        // Remember where this tool sits so its result can stamp a
+                        // status onto it after the whole file is read.
+                        $toolIdx[$b['id']] = count($items) - 1;
+                        if (stripos($name, 'askUserQuestion') !== false) {
+                            $askIds[$b['id']] = true;
+                        }
                     }
                 }
             }
         }
     }
     fclose($fh);
+    // Stamp each tool with a reconstructed dot status so reloading a past
+    // conversation keeps the green/red it had live:
+    //   • result present, not an error → "done"         (finished, green)
+    //   • result present with is_error → "interrupted"  (rejected/stopped, red)
+    //   • no result at all             → "interrupted"  (turn was cut off, red)
+    foreach ($toolIdx as $id => $idx) {
+        $items[$idx]['status'] = (isset($resultErr[$id]) && !$resultErr[$id]) ? 'done' : 'interrupted';
+    }
     return $items;
 }
 

@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.3.exp] — 2026-07-16 *(current)*
+## [3.1.4.exp] — 2026-07-18 *(current)*
+
+### Fixed
+- **Step-dot colors are kept when you reopen a past conversation.** Reloading a conversation from the session-history list used to reset every step dot to gray. The Claude Code view now reconstructs each step's outcome from the conversation transcript, so finished tools stay green and interrupted or rejected ones stay red — matching how the conversation looked live.
+
+---
+
+## [3.1.3.exp] — 2026-07-16
 
 ### Added
 - **Linux aarch64 (ARM64) support.** Added a native core built for ARM64 Linux (`native/linux/aarch64/libclaude_eclipse_core.so`), cross-compiled from this branch's own Rust source so it exposes the same JNI surface as the x86_64 build. `NativeCore` already resolves `aarch64`/`arm64` to this path, so ARM64 Linux hosts now load a matching native library instead of failing.
