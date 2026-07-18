@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -333,6 +333,11 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
     let mut items: Vec<serde_json::Value> = Vec::new();
     // tool_use ids of askUserQuestion calls, so their answers can be surfaced.
     let mut ask_ids: HashSet<String> = HashSet::new();
+    // Map each tool_use id → the index of its item in `items`, so a later
+    // tool_result can stamp that tool's outcome (finished vs. interrupted).
+    let mut tool_idx: HashMap<String, usize> = HashMap::new();
+    // tool_use id → whether its tool_result reported an error (interrupt/reject).
+    let mut result_error: HashMap<String, bool> = HashMap::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -355,6 +360,13 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                             continue;
                         }
                         let tuid = b["tool_use_id"].as_str().unwrap_or("");
+                        // Record the tool's outcome so its dot can be reconstructed:
+                        // is_error ⇒ interrupted/rejected, otherwise finished. (A tool
+                        // with no result at all stays unresolved → interrupted below.)
+                        if !tuid.is_empty() {
+                            let is_err = b["is_error"].as_bool().unwrap_or(false);
+                            result_error.insert(tuid.to_string(), is_err);
+                        }
                         if !ask_ids.contains(tuid) {
                             continue;
                         }
@@ -413,8 +425,11 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                             items.push(serde_json::json!({
                                 "t": "tool", "name": name, "input": input, "model": model,
                             }));
-                            if name.to_ascii_lowercase().contains("askuserquestion") {
-                                if let Some(id) = b["id"].as_str() {
+                            if let Some(id) = b["id"].as_str() {
+                                // Remember where this tool sits so its result can stamp
+                                // a status onto it after the whole file is read.
+                                tool_idx.insert(id.to_string(), items.len() - 1);
+                                if name.to_ascii_lowercase().contains("askuserquestion") {
                                     ask_ids.insert(id.to_string());
                                 }
                             }
@@ -424,6 +439,22 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                 }
             }
             _ => {}
+        }
+    }
+
+    // Stamp each tool with a reconstructed dot status so reloading a past
+    // conversation keeps the green/red it had live:
+    //   • result present, not an error → "done"        (finished, green)
+    //   • result present with is_error → "interrupted"  (rejected/stopped, red)
+    //   • no result at all             → "interrupted"  (turn was cut off, red)
+    for (id, &idx) in &tool_idx {
+        let status = match result_error.get(id) {
+            Some(false) => "done",
+            Some(true) => "interrupted",
+            None => "interrupted",
+        };
+        if let Some(obj) = items.get_mut(idx).and_then(|v| v.as_object_mut()) {
+            obj.insert("status".into(), serde_json::Value::from(status));
         }
     }
 
@@ -736,13 +767,15 @@ mod tests {
         let _ = fs::remove_dir_all(&home);
 
         let got1: serde_json::Value = serde_json::from_str(&loaded1).unwrap();
+        // toolu_01 (askUserQuestion) has a non-error tool_result → status "done";
+        // toolu_02 (Edit) has no tool_result in the fixture → status "interrupted".
         let want1: serde_json::Value = serde_json::from_str(r#"[
             {"t":"user","content":"<ide_selection a=\"b\">sel junk</ide_selection>please fix the bug"},
             {"t":"thinking","model":"claude-fable-5","text":"hmm secret"},
             {"t":"text","text":"Here is my answer","model":"claude-fable-5"},
-            {"t":"tool","name":"mcp__eclipse__askUserQuestion","input":{"q":"Which color?"},"model":"claude-fable-5"},
+            {"t":"tool","name":"mcp__eclipse__askUserQuestion","input":{"q":"Which color?"},"model":"claude-fable-5","status":"done"},
             {"t":"answered","text":"Blue"},
-            {"t":"tool","name":"Edit","input":{"file_path":"C:\\x.java","old_string":"a","new_string":"b"},"model":"claude-opus-4-8"}
+            {"t":"tool","name":"Edit","input":{"file_path":"C:\\x.java","old_string":"a","new_string":"b"},"model":"claude-opus-4-8","status":"interrupted"}
         ]"#).unwrap();
         assert_eq!(got1, want1, "sess1 render items must match the reference reader");
 
@@ -758,6 +791,42 @@ mod tests {
             .find(|s| s["sessionId"] == "sess2").expect("sess2 listed");
         assert_eq!(sess2["display"], "/clear", "command wrappers stripped from title");
         assert_eq!(sess2["timestamp"], "2026-07-03T08:00:02.000Z");
+    }
+
+    /// Tool dots are reconstructed from the transcript so a reloaded conversation
+    /// keeps its green/red: a non-error tool_result ⇒ "done", an is_error result ⇒
+    /// "interrupted", and a tool with no result at all ⇒ "interrupted".
+    #[test]
+    fn load_session_reconstructs_tool_status() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-status-home");
+        let root = r"C:\statusws";
+        let dir = home.join(".claude").join("projects").join("C--statusws");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("s.jsonl"), concat!(
+            // A finished Read (has a normal result), an interrupted Bash (is_error
+            // result — the "user doesn't want to proceed" case), and a trailing Edit
+            // with no result at all (turn cut off).
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"a.txt"}},{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"gh pr list"}},{"type":"tool_use","id":"t3","name":"Edit","input":{"file_path":"b.txt"}}]},"timestamp":"2026-07-15T10:00:00.000Z"}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file contents"},{"type":"tool_result","tool_use_id":"t2","is_error":true,"content":"The user doesn't want to proceed with this tool use."}]},"timestamp":"2026-07-15T10:00:03.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let loaded = super::load_session_history(root, "s");
+        let _ = fs::remove_dir_all(&home);
+
+        let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
+        let tools: Vec<(&str, &str)> = got.as_array().unwrap().iter()
+            .filter(|it| it["t"] == "tool")
+            .map(|it| (it["name"].as_str().unwrap(), it["status"].as_str().unwrap_or("MISSING")))
+            .collect();
+        assert_eq!(
+            tools,
+            vec![("Read", "done"), ("Bash", "interrupted"), ("Edit", "interrupted")],
+            "tool dot status reconstructed from tool_result presence/is_error"
+        );
     }
 
     #[test]

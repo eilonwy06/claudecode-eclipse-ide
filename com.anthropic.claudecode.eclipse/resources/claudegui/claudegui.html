@@ -1118,13 +1118,16 @@ function toolLabel(name) {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Working';
 }
 /* Build a tool line (+ inline diff inside the same .a-item so the connector spans it).
-   Shared by live streaming (addToolLine) and history reconstruction. */
-function makeToolLine(name, input) {
+   Shared by live streaming (addToolLine, no status → gray) and history reconstruction
+   (status "done"/"interrupted" from the transcript → green/red, so a reloaded convo
+   keeps the colors it had live). */
+function makeToolLine(name, input, status) {
   input = input || {};
   const path = input.file_path || input.path || input.notebook_path || '';
   const detail = path || input.command || input.pattern || input.query || input.url || input.prompt || '';
   const line = document.createElement('div'); line.className = 'a-item tool-line';
-  line.innerHTML = '<span class="dot"></span><span class="tname"></span> <span class="tpath"></span>';
+  const dotClass = status === 'done' ? 'dot done' : status === 'interrupted' ? 'dot red' : 'dot';
+  line.innerHTML = '<span class="' + dotClass + '"></span><span class="tname"></span> <span class="tpath"></span>';
   line.querySelector('.tname').textContent = toolLabel(name);   // generic label, not the raw name
   line.querySelector('.tpath').textContent = detail;
   const diff = buildToolDiff(name, input);
@@ -2486,7 +2489,7 @@ function loadHistory(id, title) {
     } else if (ty === 'thinking') {
       appendThinkStatic(assistantTurn(), it.text || '');
     } else if (ty === 'tool') {
-      assistantTurn().appendChild(makeToolLine(it.name || 'tool', it.input || {}));
+      assistantTurn().appendChild(makeToolLine(it.name || 'tool', it.input || {}, it.status));
     } else { // text
       appendTextStatic(assistantTurn(), it.text || it.content || '');
     }
