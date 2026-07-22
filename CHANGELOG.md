@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.4] — 2026-07-18 *(current)*
+## [3.1.5] — 2026-07-22 *(current)*
+
+### Added
+- **Light theme support for the Claude Code view.** The chat view now follows Eclipse's light/dark theme instead of always rendering dark: switch Eclipse to a light theme (General &gt; Appearance) and the whole view — backgrounds, text, menus, cards, code blocks, and diffs — recolors to a matching light palette, keeping the Claude coral accent. The dark appearance is unchanged. The change applies the instant you switch themes, no reopen needed.
+
+---
+
+## [3.1.4] — 2026-07-18
 
 ### Fixed
 - **Step-dot colors are kept when you reopen a past conversation.** Reloading a conversation from the session-history list used to reset every step dot to gray. The Claude Code view now reconstructs each step's outcome from the conversation transcript, so finished tools stay green and interrupted or rejected ones stay red — matching how the conversation looked live.

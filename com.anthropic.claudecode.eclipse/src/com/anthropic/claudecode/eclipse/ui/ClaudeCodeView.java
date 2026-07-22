@@ -5,12 +5,14 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jface.preference.IPreferenceStore;
+import org.eclipse.jface.util.IPropertyChangeListener;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.StyledText;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Font;
 import org.eclipse.swt.graphics.GC;
 import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.graphics.RGB;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.layout.RowLayout;
@@ -49,6 +51,21 @@ public class ClaudeCodeView extends ViewPart {
     private Image redLight;
     private Image blueLight;
 
+    private Color logBg;
+    private Color logFg;
+    private IPropertyChangeListener themeChangeListener;
+
+    // Log-area palettes. Dark is the original hardcoded look; light kicks in when
+    // Eclipse is running a light theme (see applyLogTheme). Keep the dark values
+    // exactly as they were so the dark experience is unchanged.
+    private static final RGB LOG_BG_DARK = new RGB(30, 30, 30);
+    private static final RGB LOG_FG_DARK = new RGB(220, 220, 220);
+    private static final RGB LOG_BG_LIGHT = new RGB(252, 252, 252);
+    private static final RGB LOG_FG_LIGHT = new RGB(38, 38, 38);
+
+    // Below this perceived luminance the ambient UI is treated as dark.
+    private static final double DARK_BG_LUMINANCE_THRESHOLD = 128.0;
+
     private enum Status { GREEN, YELLOW, RED, BLUE }
 
     @Override
@@ -67,7 +84,7 @@ public class ClaudeCodeView extends ViewPart {
         createButtonRow(container);
         createLogArea(container, display);
 
-        appendLog("Claude Code for Eclipse v3.1.4\n");
+        appendLog("Claude Code for Eclipse v3.1.5\n");
         appendLog("─────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {
@@ -193,19 +210,65 @@ public class ClaudeCodeView extends ViewPart {
         logArea.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         logArea.setWordWrap(true);
 
-        Color bgColor = new Color(display, 30, 30, 30);
-        Color fgColor = new Color(display, 220, 220, 220);
         Font monoFont = new Font(display, "Consolas", 10, SWT.NORMAL);
-        logArea.setBackground(bgColor);
-        logArea.setForeground(fgColor);
         logArea.setFont(monoFont);
         logArea.setLeftMargin(8);
         logArea.setTopMargin(8);
-        logArea.addDisposeListener(e -> {
-            bgColor.dispose();
-            fgColor.dispose();
-            monoFont.dispose();
+        logArea.addDisposeListener(e -> monoFont.dispose());
+
+        applyLogTheme(display);
+
+        // Live refresh driven by the JFace ColorRegistry — the same signal that recolors the
+        // shared status bar the instant the Eclipse theme changes (the terminal view uses it too).
+        // A theme switch fires many color-property changes; on any of them we re-apply. The
+        // asyncExec runs after the current dispatch, once the widgets have been restyled, so the
+        // background luminance we read is already the new theme's.
+        themeChangeListener = event -> display.asyncExec(() -> {
+            if (logArea != null && !logArea.isDisposed()) applyLogTheme(logArea.getDisplay());
         });
+        org.eclipse.jface.resource.JFaceResources.getColorRegistry().addListener(themeChangeListener);
+    }
+
+    /**
+     * Applies the log-area colors for the current Eclipse theme. The dark palette is
+     * the original look and stays unchanged; a light palette is used only when the
+     * ambient UI is light (issue #78). Existing colors are disposed before replacing.
+     */
+    private void applyLogTheme(Display display) {
+        if (logArea == null || logArea.isDisposed()) return;
+        boolean dark = isDarkTheme(display);
+        RGB bg = dark ? LOG_BG_DARK : LOG_BG_LIGHT;
+        RGB fg = dark ? LOG_FG_DARK : LOG_FG_LIGHT;
+
+        Color newBg = new Color(display, bg);
+        Color newFg = new Color(display, fg);
+        logArea.setBackground(newBg);
+        logArea.setForeground(newFg);
+
+        if (logBg != null && !logBg.isDisposed()) logBg.dispose();
+        if (logFg != null && !logFg.isDisposed()) logFg.dispose();
+        logBg = newBg;
+        logFg = newFg;
+    }
+
+    /**
+     * Whether the ambient Eclipse UI is a dark theme, from the perceived luminance of the log
+     * area's <em>actual</em> themed background. We read the widget color (set per-theme by the
+     * E4 CSS engine), NOT {@code Display.getSystemColor}: on Windows the display's system colors
+     * stay at the OS (light) palette even under the Dark theme, which would wrongly pin the view
+     * to light. Defaults to dark if nothing is readable.
+     */
+    private boolean isDarkTheme(Display display) {
+        try {
+            if (logArea != null && !logArea.isDisposed()) {
+                Color bg = logArea.getBackground();
+                if (bg != null && !bg.isDisposed())
+                    return ColorUtils.luminance(bg.getRGB()) < DARK_BG_LUMINANCE_THRESHOLD;
+            }
+        } catch (Exception ignore) {
+            // fall through to the safe default
+        }
+        return true;
     }
 
     private void restartServer() {
@@ -393,6 +456,17 @@ public class ClaudeCodeView extends ViewPart {
 
     @Override
     public void dispose() {
+        if (themeChangeListener != null) {
+            try {
+                org.eclipse.jface.resource.JFaceResources.getColorRegistry()
+                        .removeListener(themeChangeListener);
+            } catch (Exception ignore) {
+                // Workbench already gone during shutdown — nothing to remove.
+            }
+            themeChangeListener = null;
+        }
+        if (logBg != null && !logBg.isDisposed()) logBg.dispose();
+        if (logFg != null && !logFg.isDisposed()) logFg.dispose();
         if (statusPoller != null) {
             statusPoller.shutdownNow();
         }

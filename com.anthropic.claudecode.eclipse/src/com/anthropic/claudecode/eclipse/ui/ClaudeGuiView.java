@@ -45,6 +45,7 @@ public class ClaudeGuiView extends ViewPart {
     public static final String VIEW_ID = "com.anthropic.claudecode.eclipse.ui.ClaudeGuiView";
 
     private Browser browser;
+    private Composite root;   // the view's root composite — its themed background drives light/dark detection
     private long browserHwnd = 0;
     private boolean pageLoaded = false;
 
@@ -80,6 +81,8 @@ public class ClaudeGuiView extends ViewPart {
     private ClaudeStatusBar statusBar;
     // Live-applies PREF_STATUSLINE_* changes (enable/toggles/refresh) without a restart.
     private org.eclipse.jface.util.IPropertyChangeListener statusPrefListener;
+    // Re-pushes light/dark to the webview when the Eclipse workbench theme changes.
+    private org.eclipse.jface.util.IPropertyChangeListener themeChangeListener;
     @SuppressWarnings("unused") private BrowserFunction statusSelectionFn;
     private volatile String availableModelsJson;   // curated model list from /v1/models, pushed to the webview
     private volatile String lastRustStatusJson;   // latest onStatus payload (context %, cost, tokens)
@@ -104,6 +107,7 @@ public class ClaudeGuiView extends ViewPart {
         org.eclipse.swt.layout.GridLayout gl = new org.eclipse.swt.layout.GridLayout(1, false);
         gl.marginWidth = 0; gl.marginHeight = 0; gl.verticalSpacing = 0; gl.horizontalSpacing = 0;
         parent.setLayout(gl);
+        root = parent;
         browser = new Browser(parent, SWT.NONE);
         browser.setLayoutData(new org.eclipse.swt.layout.GridData(SWT.FILL, SWT.FILL, true, true));
 
@@ -129,6 +133,7 @@ public class ClaudeGuiView extends ViewPart {
         applyStatusBarEnabled();
         startStatusTimer();
         registerStatusPrefListener();
+        registerThemeListener();
 
         active = this;
         // Persistent protocol, ONE manager per tab (created on first send) so
@@ -259,9 +264,13 @@ public class ClaudeGuiView extends ViewPart {
             // WebView2 init is async — retry here where the webview provably exists.
             disableDevTools();
             disableZoom();
+            pushTheme();             // apply the current Eclipse light/dark theme
             pushAvailableModels();   // in case the model list arrived before the page loaded
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
+                // Re-push the theme too: the root composite's CSS-themed background may not
+                // be resolved at the instant `completed` fires, so settle it a few times.
+                Display.getCurrent().timerExec(ms, this::pushTheme);
             }
         }));
 
@@ -273,6 +282,41 @@ public class ClaudeGuiView extends ViewPart {
             availableModelsJson = json;
             Display.getDefault().asyncExec(this::pushAvailableModels);
         });
+    }
+
+    // Below this perceived luminance the ambient Eclipse UI is treated as dark.
+    private static final double DARK_BG_LUMINANCE_THRESHOLD = 128.0;
+
+    /**
+     * Pushes the current Eclipse theme (light/dark) to the webview, which toggles the
+     * :root.light CSS token overrides. The theme is derived from the perceived luminance
+     * of the widget background — the actually-painted color, so it's correct for custom
+     * themes too (issue #78). Dark is the default and stays visually unchanged.
+     */
+    private void pushTheme() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        String mode = isDarkTheme() ? "dark" : "light";
+        browser.execute("window.onTheme && window.onTheme('" + mode + "')");
+    }
+
+    /**
+     * Whether the ambient Eclipse UI is a dark theme, from the perceived luminance of the root
+     * composite's <em>actual</em> themed background. We read the widget color (set per-theme by
+     * the E4 CSS engine), NOT {@code Display.getSystemColor}: on Windows the display's system
+     * colors stay at the OS (light) palette even under the Dark theme, which would wrongly pin
+     * the view to light. Defaults to dark if nothing is readable.
+     */
+    private boolean isDarkTheme() {
+        try {
+            org.eclipse.swt.graphics.Color bg = null;
+            if (root != null && !root.isDisposed())          bg = root.getBackground();
+            else if (browser != null && !browser.isDisposed()) bg = browser.getBackground();
+            if (bg != null && !bg.isDisposed())
+                return ColorUtils.luminance(bg.getRGB()) < DARK_BG_LUMINANCE_THRESHOLD;
+        } catch (Exception ignore) {
+            // fall through to the safe default
+        }
+        return true;   // default to dark, preserving the original look
     }
 
     /** Pushes the fetched model list to the webview once both are ready. */
@@ -491,6 +535,21 @@ public class ClaudeGuiView extends ViewPart {
             });
         };
         Activator.getDefault().getPreferenceStore().addPropertyChangeListener(statusPrefListener);
+    }
+
+    /**
+     * Live theme refresh driven by the JFace {@link org.eclipse.jface.resource.ColorRegistry},
+     * the SAME signal that recolors the shared status bar the instant the Eclipse theme changes
+     * (the CLI/terminal views use it too). A theme switch fires many color-property changes; on
+     * any of them we re-push the theme to the webview. The {@code asyncExec} runs after the
+     * current event dispatch, by which point the widgets have been restyled, so the background
+     * luminance we read for detection is already the new theme's.
+     */
+    private void registerThemeListener() {
+        themeChangeListener = event -> Display.getDefault().asyncExec(() -> {
+            if (browser != null && !browser.isDisposed()) pushTheme();
+        });
+        org.eclipse.jface.resource.JFaceResources.getColorRegistry().addListener(themeChangeListener);
     }
 
     /** Periodic tick so reset countdowns and shared limits stay fresh while idle. The
@@ -801,6 +860,10 @@ public class ClaudeGuiView extends ViewPart {
     @Override
     public void setFocus() {
         activateInput();
+        // Re-sync the theme on activation. Eclipse doesn't fully repaint this embedded webview
+        // until it's refocused, and the IThemeManager event doesn't reliably fire for the
+        // General > Appearance (E4 CSS) theme, so this is the reliable path to apply a switch.
+        pushTheme();
     }
 
     private void activateInput() {
@@ -987,6 +1050,13 @@ public class ClaudeGuiView extends ViewPart {
             try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(statusPrefListener); }
             catch (Throwable ignored) {}
             statusPrefListener = null;
+        }
+        if (themeChangeListener != null) {
+            try {
+                org.eclipse.jface.resource.JFaceResources.getColorRegistry()
+                        .removeListener(themeChangeListener);
+            } catch (Throwable ignored) {}
+            themeChangeListener = null;
         }
         for (ChatProcessManager m : managers.values()) {
             try { m.stop(); } catch (Exception ignored) {}
