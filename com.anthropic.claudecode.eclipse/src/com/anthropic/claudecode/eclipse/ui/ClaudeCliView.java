@@ -31,7 +31,9 @@ import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.dnd.Clipboard;
+import org.eclipse.swt.dnd.ImageTransfer;
 import org.eclipse.swt.dnd.TextTransfer;
+import org.eclipse.swt.dnd.TransferData;
 import org.eclipse.swt.custom.CTabFolder;
 import org.eclipse.swt.custom.CTabFolder2Adapter;
 import org.eclipse.swt.custom.CTabFolderEvent;
@@ -1118,30 +1120,25 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             Control canvas = control.getControl();
             if (canvas == null || canvas.isDisposed()) return;
 
-            // MOD1 = Ctrl on Windows/Linux, Cmd on macOS.
+            // MOD1 = Ctrl on Windows/Linux, Cmd on macOS. Copy/paste combos are all handled
+            // in the keyFilter Display filter below (see there); this widget listener only
+            // carries the keys that don't need to pre-empt the terminal's own handler.
             canvas.addListener(SWT.KeyDown, e -> {
                 boolean mod = (e.stateMask & SWT.MOD1) != 0;
                 boolean shift = (e.stateMask & SWT.SHIFT) != 0;
-                if (mod && !shift && e.keyCode == 'v') {            // paste
-                    control.paste(); e.doit = false;
-                } else if (shift && e.keyCode == SWT.INSERT) {      // paste
-                    control.paste(); e.doit = false;
-                } else if (mod && shift && e.keyCode == 'c') {      // copy
-                    control.copy(); e.doit = false;
-                } else if (mod && e.keyCode == SWT.INSERT) {        // copy
-                    control.copy(); e.doit = false;
-                } else if (shift && !mod && e.keyCode == SWT.TAB) { // Shift+Tab → ESC[Z
+                if (shift && !mod && e.keyCode == SWT.TAB) {        // Shift+Tab → ESC[Z
                     control.pasteString("\033[Z"); e.doit = false;  // (claude auto-mode cycle)
                 }
             });
 
-            // Ctrl+C with selection must be intercepted in a Display filter, not a widget
-            // listener. The terminal's TerminalKeyHandler is registered first (typed
-            // addKeyListener during construction) and runs before our addListener handler,
-            // so by the time we see the event the SIGINT has already been sent. A filter
-            // fires before ALL widget listeners; setting e.type = SWT.None there causes
-            // EventTable.sendEvent to exit before invoking any widget listener (it checks
-            // event.type == 0 at the top of each iteration), so the terminal never sees it.
+            // All copy/paste combos are intercepted here, in a Display filter, rather than in
+            // the widget listener above. A filter fires before ALL widget listeners (including
+            // the terminal's own TerminalKeyHandler, registered during construction); setting
+            // e.type = SWT.None causes EventTable.sendEvent to exit before invoking any widget
+            // listener (it checks event.type == 0 at the top of each iteration), so the terminal
+            // never sees the key and can't double-act. Doing it all here also makes every
+            // paste/copy combo behave identically regardless of which native terminal bindings
+            // (if any) are active in this directly-embedded VT100TerminalControl.
             keyFilter = e -> {
                 if (disposed || e.widget != canvas) return;
                 boolean mod = (e.stateMask & SWT.MOD1) != 0;
@@ -1156,15 +1153,62 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                     e.type = SWT.None; // stops EventTable iteration; terminal never sees this
                     return;
                 }
+                // Unified paste — text or image, identical for every combo.
+                if ((mod && !shift && e.keyCode == 'v')                  // Ctrl+V
+                        || (mod && shift && e.keyCode == 'v')           // Ctrl+Shift+V
+                        || (shift && !mod && e.keyCode == SWT.INSERT)) { // Shift+Insert
+                    pasteClipboard(control);
+                    e.type = SWT.None; // swallow so the terminal/CLI never double-acts
+                    return;
+                }
+                // Copy — Ctrl+Shift+C and Ctrl+Insert always copy the selection.
+                if ((mod && shift && e.keyCode == 'c')                  // Ctrl+Shift+C
+                        || (mod && !shift && e.keyCode == SWT.INSERT)) { // Ctrl+Insert
+                    control.copy();
+                    e.type = SWT.None;
+                    return;
+                }
+                // Ctrl+C — copy only when there is a selection, otherwise leave it as SIGINT.
                 if (mod && !shift && e.keyCode == 'c') {
                     String sel = control.getSelection();
                     if (sel != null && !sel.isEmpty()) {
                         control.copy();
                         e.type = SWT.None; // stops EventTable iteration; terminal never sees this
                     }
+                    return;
                 }
             };
             canvas.getDisplay().addFilter(SWT.KeyDown, keyFilter);
+        }
+
+        /**
+         * Paste the clipboard into the terminal. Images are pasted by asking the Claude CLI to
+         * read the OS clipboard via a synthetic Ctrl+V ({@link ITerminalViewControl#sendKey}
+         * sends a raw, un-bracketed 0x16 to the PTY); text is pasted directly. Shared by every
+         * paste trigger (Ctrl+V / Ctrl+Shift+V / Shift+Insert / context-menu Paste) so they all
+         * behave identically. The terminal's own paste() is text-only, so images must go through
+         * the CLI.
+         */
+        private void pasteClipboard(ITerminalViewControl control) {
+            if (clipboardHasImage(control.getControl().getDisplay())) {
+                control.sendKey('\026'); // 0x16 = Ctrl+V → CLI reads the image off the clipboard
+            } else {
+                control.paste();         // text (bracketed paste)
+            }
+        }
+
+        /** @return whether the system clipboard currently holds an image (without materializing it). */
+        private static boolean clipboardHasImage(Display display) {
+            Clipboard cb = new Clipboard(display);
+            try {
+                ImageTransfer it = ImageTransfer.getInstance();
+                for (TransferData td : cb.getAvailableTypes()) {
+                    if (it.isSupportedType(td)) return true;
+                }
+                return false;
+            } finally {
+                cb.dispose();
+            }
         }
 
         private void createPopupMenu(OpenEntityHandler openEntityHandler) {
@@ -1201,12 +1245,13 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             DisablingAction pasteAction = new DisablingAction("&Paste\t" + modKey + "+V",
                     sharedImages.getImageDescriptor(ISharedImages.IMG_TOOL_PASTE),
                     sharedImages.getImageDescriptor(ISharedImages.IMG_TOOL_PASTE_DISABLED)) {
-                @Override public void run() { control.paste(); }
+                @Override public void run() { pasteClipboard(control); }
                 @Override public void updateEnabled() {
                     Clipboard cb = new Clipboard(Display.getDefault());
                     try {
                         String text = (String) cb.getContents(TextTransfer.getInstance());
-                        setEnabled(text != null && !text.isEmpty());
+                        boolean hasText = text != null && !text.isEmpty();
+                        setEnabled(hasText || clipboardHasImage(Display.getDefault()));
                     } finally {
                         cb.dispose();
                     }
