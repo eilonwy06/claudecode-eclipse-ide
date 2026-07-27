@@ -72,11 +72,6 @@
             description="Add the current file to Claude Code context"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
-            id="com.anthropic.claudecode.eclipse.commands.resume"
-            name="Resume Claude Code"
-            description="Resume the last Claude Code session"
-            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
-      <command
             id="com.anthropic.claudecode.eclipse.commands.restart"
             name="Restart Claude Code Server"
             description="Restart the MCP server"
@@ -102,9 +97,6 @@
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.addFile"
             class="com.anthropic.claudecode.eclipse.ui.handlers.AddFileHandler"/>
-      <handler
-            commandId="com.anthropic.claudecode.eclipse.commands.resume"
-            class="com.anthropic.claudecode.eclipse.ui.handlers.ResumeClaudeHandler"/>
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.restart"
             class="com.anthropic.claudecode.eclipse.ui.handlers.RestartServerHandler"/>
@@ -163,11 +155,6 @@
                   </with>
                </visibleWhen>
             </command>
-            <command
-                  commandId="com.anthropic.claudecode.eclipse.commands.resume"
-                  label="Resume Session"
-                  mnemonic="R"
-                  style="push"/>
             <separator name="com.anthropic.claudecode.eclipse.separator1" visible="true"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
