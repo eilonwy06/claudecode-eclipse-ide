@@ -133,13 +133,19 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
   background: var(--bg); border-right: 1px solid var(--border-soft); border-top: 2px solid transparent;
   font-size: 12.5px; color: var(--fg-dim); max-width: 200px; flex-shrink: 0; }
 .tab.active { background: var(--bg-soft); border-top-color: var(--accent); color: var(--fg); }
+/* Hovering an unfocused tab previews it with the active tab's bg + text colors
+   (the accent top border stays exclusive to the truly active tab). */
+.tab:hover { background: var(--bg-soft); color: var(--fg); }
 /* drag-to-reorder: dragged tab dims; a 2px accent line marks the drop position */
 .tab.dragging { opacity: .4; }
 .tab.drop-before { box-shadow: inset 2px 0 0 0 var(--accent); }
 .tab.drop-after { box-shadow: inset -2px 0 0 0 var(--accent); }
 .tab .ti { color: var(--accent); display: inline-flex; flex-shrink: 0; }
 .tab .tt { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.tab .tab-close { color: var(--fg-dim); margin-left: 2px; cursor: pointer; border-radius: 3px; padding: 1px 3px; flex-shrink: 0; }
+/* The close (x) shows only on the ACTIVE tab or while hovering a tab; hidden (but
+   still occupying its slot, so tabs don't shift) on unfocused tabs. */
+.tab .tab-close { color: var(--fg-dim); margin-left: 2px; cursor: pointer; border-radius: 3px; padding: 1px 3px; flex-shrink: 0; visibility: hidden; }
+.tab.active .tab-close, .tab:hover .tab-close { visibility: visible; }
 .tab .tab-close:hover { background: var(--bg-hover); color: var(--fg); }
 .pane > .turn:first-child { margin-top: 0; }
 #toolbar .spacer { flex: 1; }
@@ -384,6 +390,33 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 .decision .dec-instead input:focus { border-color: var(--sel); }
 .decision .dec-instead input::placeholder { color: var(--fg-faint); }
 .decision .dec-esc { color: var(--fg-faint); font-size: 11px; padding: 8px 2px 0; }
+
+/* /advisor card — the terminal /advisor content (joebiden2) inside the decision-card
+   chrome (joebiden3): bold title, description, numbered options with a green ✓ on the
+   current advisor, then the recommended-setup note + learn-more link below the choices. */
+.decision.advisor .adv-title { color: var(--fg); font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+.decision.advisor .adv-desc { color: var(--fg-soft); font-size: 12.5px; line-height: 1.5; margin-bottom: 10px; }
+.decision.advisor .adv-check { color: var(--green); margin-left: 6px; }
+.decision.advisor .dec-opt.sel .adv-check, .decision.advisor .dec-opt:hover .adv-check { color: var(--on-accent); }
+.decision.advisor .adv-note { color: var(--fg-dim); font-size: 12px; line-height: 1.5; margin-top: 10px; }
+.decision.advisor .adv-learn { color: var(--fg-dim); font-size: 12px; margin-top: 8px; }
+.decision.advisor .adv-learn a { color: var(--link); text-decoration: none; }
+.decision.advisor .adv-learn a:hover { text-decoration: underline; }
+
+/* "Compacted chat · manual · Nk tokens freed" collapsible left after a /compact —
+   italic muted head with a chevron; the summary text expands below it. */
+.compacted { margin: 12px 0 12px 2px; }
+.compacted .comp-head { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  color: var(--fg-dim); font-style: italic; font-size: 12.5px; }
+.compacted .comp-head:hover { color: var(--fg-soft); }
+.compacted .chev { display: inline-flex; transition: transform .15s; opacity: .8; }
+.compacted.open .chev { transform: rotate(180deg); }
+.compacted .comp-body { display: none; margin-top: 8px; color: var(--fg-dim);
+  font-size: 12.5px; line-height: 1.55; }
+.compacted.open .comp-body { display: block; }
+
+/* slash commands render in mono inside the user bubble (VSCode look) */
+.user-msg .body.mono-cmd { font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px; }
 
 /* AskUserQuestion card (single/multi question, options + Other) */
 .question-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft);
@@ -1093,7 +1126,10 @@ function addUserMessage(text, ctx) {
     chip.querySelector('span').textContent = ctx;
     box.appendChild(chip);
   }
-  const body = document.createElement('div'); body.className = 'body'; body.textContent = text;
+  const body = document.createElement('div');
+  // Bare slash commands ("/compact") render mono inside the bubble (VSCode look).
+  body.className = 'body' + (/^\/\S+$/.test(text.trim()) ? ' mono-cmd' : '');
+  body.textContent = text;
   box.appendChild(body); turn.appendChild(box); pane.appendChild(turn);
   scrollBottom();
 }
@@ -1414,13 +1450,65 @@ function withTab(tabId, fn) { const t = tabById(tabId); if (!t || t.cancelled) r
 window.onStreamStart   = (tabId) => withTab(tabId, () => { setStreaming(true); ensureWorking(); });
 window.onThinking      = (tabId, t) => withTab(tabId, () => appendThinking(t));
 window.onStreamText    = (tabId, t) => withTab(tabId, () => appendAssistant(t));
-window.onStreamEnd     = (tabId) => withTab(tabId, () => { hideWorking(); endAssistant(); setStreaming(false); });
+window.onStreamEnd     = (tabId) => withTab(tabId, (t) => { t.compacting = false; hideWorking(); endAssistant(); setStreaming(false); });
 window.onToolStart     = (tabId, n) => withTab(tabId, () => addToolLine(n));
 window.onToolEnd       = () => {};
 window.onSystemMessage = () => {};   /* backend system/init noise — ignored */
 window.onError         = (tabId, m) => withTab(tabId, () => { hideWorking(); endAssistant(); setStreaming(false); addSystem('⚠ ' + m); });
 window.onStatusUpdate  = () => {};
 window.onSessionId     = (tabId, id) => { const t = tabById(tabId); if (t && id) { t.sessionId = id; persistTabPrefs(t); } };
+
+/* Compaction lifecycle from the CLI (manual /compact or auto-compact), phases:
+   compacting → (failed | boundary → summary). While compacting the working gerund
+   is pinned to "Compacting…"; a boundary drops the collapsible "Compacted chat ·
+   <trigger> · Nk tokens freed" line, whose body fills in when the summary echo
+   arrives. A failure needs nothing extra — the CLI answers the turn with the
+   error text ("Not enough messages to compact."), which renders as a normal
+   gray-dot line (joebiden reference). */
+window.onCompact = (tabId, json) => withTab(tabId, (t) => {
+  let info = {}; try { info = JSON.parse(json) || {}; } catch (e) { return; }
+  if (info.phase === 'compacting') {
+    t.compacting = true;
+    if (workingEl) {
+      // Morph whatever gerund is up into the pinned "Compacting" and stop cycling.
+      if (gerundCycleTimer) { clearTimeout(gerundCycleTimer); gerundCycleTimer = null; }
+      if (gerundTypeTimer) { clearTimeout(gerundTypeTimer); gerundTypeTimer = null; }
+      const el = workingEl.querySelector('.gerund');
+      const prev = workingGerund; workingGerund = 'Compacting';
+      if (el) morphGerund(prev, 'Compacting', el, null);
+    } else ensureWorking();   // showWorking pins itself via t.compacting
+  } else if (info.phase === 'failed') {
+    t.compacting = false;
+  } else if (info.phase === 'boundary') {
+    const freed = Math.max(0, (info.preTokens || 0) - (info.postTokens || 0));
+    t._compEl = addCompacted(t.pane, info.trigger, freed, '');
+    scrollBottom();
+  } else if (info.phase === 'summary') {
+    t.compacting = false;
+    if (t._compEl) t._compEl.querySelector('.comp-body').innerHTML = renderMarkdown(info.text || '');
+  }
+});
+
+/* The "Compacted chat · manual · 25k tokens freed ⌄" collapsible (joebiden):
+   italic muted head, chevron flips when the summary body is expanded. */
+const CHEV_DOWN = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
+function fmtTokens(n) { return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n); }
+function addCompacted(pane, trigger, freed, summaryText) {
+  if (!pane) return null;
+  const turn = document.createElement('div'); turn.className = 'turn';
+  const el = document.createElement('div'); el.className = 'compacted';
+  const head = document.createElement('div'); head.className = 'comp-head';
+  let label = 'Compacted chat · ' + (trigger || 'manual');
+  if (freed > 0) label += ' · ' + fmtTokens(freed) + ' tokens freed';
+  head.innerHTML = '<span class="comp-lbl"></span><span class="chev">' + CHEV_DOWN + '</span>';
+  head.querySelector('.comp-lbl').textContent = label;
+  head.onclick = () => el.classList.toggle('open');
+  const body = document.createElement('div'); body.className = 'comp-body';
+  if (summaryText) body.innerHTML = renderMarkdown(summaryText);
+  el.appendChild(head); el.appendChild(body);
+  turn.appendChild(el); pane.appendChild(turn);
+  return el;
+}
 
 /* Light/dark theming (issue #78). Java pushes the ambient Eclipse theme via
    onTheme('light'|'dark') on load, on refocus, and on the workbench theme change;
@@ -1895,8 +1983,10 @@ function showWorking() {
   hideWorking();
   turnStart = Date.now();
   lastTokens = 0;
+  // A compacting turn pins the gerund to "Compacting" — no random pick, no cycling.
+  const compacting = !!(rtab && rtab.compacting);
   gerundIdx = Math.floor(Math.random() * shuffledGerunds.length);
-  workingGerund = shuffledGerunds[gerundIdx];
+  workingGerund = compacting ? 'Compacting' : shuffledGerunds[gerundIdx];
   const pane = streamPane(); if (!pane) return;
   workingEl = document.createElement('div'); workingEl.className = 'turn';
   workingEl.innerHTML = '<div class="working"><span class="sb">' + ICONS.SUNBURST + '</span><span class="gerund"></span></div>';
@@ -1904,7 +1994,7 @@ function showWorking() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
   const el = workingEl.querySelector('.gerund');
   gerundHold = GERUND_HOLD_START;
-  morphGerund('', workingGerund, el, () => { scheduleGerund(); });
+  morphGerund('', workingGerund, el, compacting ? null : () => { scheduleGerund(); });
 }
 function hideWorking() {
   if (gerundCycleTimer) { clearTimeout(gerundCycleTimer); gerundCycleTimer = null; }
@@ -2516,6 +2606,11 @@ function appendTextStatic(turn, text) {
 }
 function loadHistory(id, title) {
   closeMenus();
+  // Already open in ANOTHER tab → don't open a second instance of the same
+  // conversation; just switch to that tab. (Re-opening it in its OWN tab still
+  // reloads as before.)
+  const already = tabs.find(tb => tb.sessionId === id && tb.id !== activeId);
+  if (already) { switchTab(already.id); return; }
   let items = [];
   try { items = JSON.parse(window._loadSession(id) || '[]'); } catch (e) {}
   // Replace the CURRENT tab's content with the selected session (VSCode behaviour).
@@ -2549,30 +2644,55 @@ function loadHistory(id, title) {
     }
     return '';
   }
+  // Compaction markers: the transcript stores boundary + summary BEFORE the
+  // "/compact" command echo, but live rendering showed the bubble first — hold the
+  // "Compacted chat" line and flush it after that bubble (or before whatever
+  // renders next, e.g. after an auto-compact) so a reload reads like the live run.
+  let pendingCompact = null;   // { trigger, freed, text }
+  function flushCompact() {
+    if (!pendingCompact) return;
+    addCompacted(pane, pendingCompact.trigger, pendingCompact.freed, pendingCompact.text);
+    pendingCompact = null;
+  }
   items.forEach((it, i) => {
     const ty = it.t || (it.role === 'user' ? 'user' : 'text');   // back-compat with old text-only format
     // Only real model ids — skip "<synthetic>" (CLI-injected messages) and blanks.
     if (typeof it.model === 'string' && it.model.indexOf('claude-') === 0) lastModel = it.model;
     if (ty === 'thinking') sawThinking = true;
-    if (ty === 'user') {
+    if (ty === 'compact') {
+      aTurn = null;
+      pendingCompact = { trigger: it.trigger || 'manual',
+        freed: Math.max(0, (it.preTokens || 0) - (it.postTokens || 0)), text: '' };
+    } else if (ty === 'compact_summary') {
+      if (pendingCompact) pendingCompact.text = it.text || '';
+      else { aTurn = null; addCompacted(pane, 'manual', 0, it.text || ''); }
+    } else if (ty === 'user') {
       // Reconstruct "Switched to <model>" dividers from the transcript (the model
       // is recorded per turn) so past model switches persist across reloads.
       const tm = turnModelAt(i);
       if (tm) { if (renderedModel !== null && tm !== renderedModel) pane.appendChild(makeSwitchDivider(tm)); renderedModel = tm; }
       aTurn = null;
       const p = parseUserContent(it.content || '');
+      const isCompactCmd = p.text.trim() === '/compact';
+      if (!isCompactCmd) flushCompact();
       if (p.text || p.chip) addUserMessage(p.text, p.chip);
+      if (isCompactCmd) flushCompact();
     } else if (ty === 'answered') {
+      flushCompact();
       aTurn = null;
       addAnswered(it.text || '', pane);
     } else if (ty === 'thinking') {
+      flushCompact();
       appendThinkStatic(assistantTurn(), it.text || '');
     } else if (ty === 'tool') {
+      flushCompact();
       assistantTurn().appendChild(makeToolLine(it.name || 'tool', it.input || {}, it.status));
     } else { // text
+      flushCompact();
       appendTextStatic(assistantTurn(), it.text || it.content || '');
     }
   });
+  flushCompact();
   // draw the connector rails
   pane.querySelectorAll(':scope > .turn').forEach(relinkTurn);
   // Restore this conversation's settings. Our own sidecar (saved per session id)
@@ -2754,9 +2874,11 @@ function renderRewind() {
 
 /* ===================== Slash commands ===================== */
 const SLASH_COMMANDS = [
-  { cmd: '/clear',  desc: 'Start a new session (tab)' },
-  { cmd: '/rewind', desc: 'Restore code and fork from an earlier message' },
-  { cmd: '/help',   desc: 'Show available commands' },
+  { cmd: '/advisor', desc: 'Set up an advisor model' },
+  { cmd: '/clear',   desc: 'Start a new session (tab)' },
+  { cmd: '/compact', desc: 'Clear conversation history but keep a summary in context' },
+  { cmd: '/rewind',  desc: 'Restore code and fork from an earlier message' },
+  { cmd: '/help',    desc: 'Show available commands' },
 ];
 const slashState = { open: false, sel: 0, items: [] };
 const slashEl = document.getElementById('slash-menu');
@@ -2814,12 +2936,119 @@ function openSlashFromButton() {
 function handleSlashCommand(text) {
   const cmd = text.split(/\s+/)[0].toLowerCase();
   if (cmd === '/clear') { newSession(); return true; }
+  if (cmd === '/compact') { sendCompact(); return true; }
+  if (cmd === '/advisor') { openAdvisorCard(); return true; }
   if (cmd === '/rewind') { openRewindDialog(); return true; }
   if (cmd === '/help') {
-    addSystem('Commands: /clear — new conversation · /rewind — restore code and fork from an earlier message · /help — this list. Type / to see them.');
+    addSystem('Commands: /advisor — set up an advisor model · /clear — new conversation · /compact — compact the conversation into a summary · /rewind — restore code and fork from an earlier message · /help — this list. Type / to see them.');
     return true;
   }
   return false; // unknown slash: let it pass through to Claude
+}
+
+/* /compact goes to the CLI like a normal send (same persistent process), but with
+   the working gerund pinned to "Compacting…" and no tab titling — the CLI answers
+   with system compact events (window.onCompact) or, on failure, a plain text turn
+   ("Not enough messages to compact."). */
+function sendCompact() {
+  const t = activeTab(); if (!t) return;
+  t.cancelled = false;
+  loadRender(t);
+  const queueing = !!t.streaming;
+  addUserMessage('/compact');
+  input.value = ''; input.style.height = 'auto'; t.draft = ''; closeSlash();
+  t.compacting = true;
+  if (!queueing) { setStreaming(true); showWorking(); }
+  else if (!workingEl) showWorking();
+  if (window._sendToJava) window._sendToJava('/compact', false, t.sessionId || '', permMode, effort, curModel, thinkingOn ? '1' : '0', t.id);
+  persistTabPrefs(t);
+}
+
+/* ===================== /advisor card =====================
+   The terminal /advisor content (joebiden2) rendered in the decision-card chrome
+   (joebiden3): title, description, numbered options with a green ✓ on the current
+   advisor, recommended-setup note + learn-more link below the choices. Enter
+   confirms, Esc cancels (wired for real), digits pick, arrows move. */
+const ADVISOR_OPTIONS = ['Fable 5', 'Opus 4.8', 'Sonnet 4.6', 'No advisor'];
+let advisorChoice = '';   // '' = no advisor
+try { advisorChoice = localStorage.getItem('claude-advisor') || ''; } catch (e) {}
+function openAdvisorCard() {
+  closeMenus(); closeSlash();
+  const card = document.createElement('div'); card.className = 'decision advisor';
+
+  const title = document.createElement('div'); title.className = 'adv-title';
+  title.textContent = 'Advisor (experimental)';
+  card.appendChild(title);
+  const desc = document.createElement('div'); desc.className = 'adv-desc';
+  desc.textContent = 'When Claude needs stronger judgment — a complex decision, an ambiguous failure, '
+    + 'a problem it\'s circling without progress — it escalates to the advisor model for guidance, '
+    + 'then resumes. The advisor runs server-side and uses additional tokens.';
+  card.appendChild(desc);
+
+  const curIdx = advisorChoice ? ADVISOR_OPTIONS.indexOf(advisorChoice) : ADVISOR_OPTIONS.length - 1;
+  let sel = curIdx >= 0 ? curIdx : ADVISOR_OPTIONS.length - 1;
+  let resolved = false;
+  function done() {
+    resolved = true;
+    document.removeEventListener('keydown', onKey, true);
+    clearBottomCard();
+  }
+  function cancel() { if (!resolved) done(); }
+  function confirm(i) {
+    if (resolved) return;
+    const noAdvisor = i === ADVISOR_OPTIONS.length - 1;
+    advisorChoice = noAdvisor ? '' : ADVISOR_OPTIONS[i];
+    try { localStorage.setItem('claude-advisor', advisorChoice); } catch (e) {}
+    done();
+    addSystem(noAdvisor ? 'Advisor disabled.' : 'Advisor set to ' + ADVISOR_OPTIONS[i] + '.');
+    scrollBottom();
+  }
+  function paint() {
+    card.querySelectorAll('.dec-opt').forEach((el, j) => el.classList.toggle('sel', j === sel));
+  }
+  ADVISOR_OPTIONS.forEach((label, i) => {
+    const opt = document.createElement('div'); opt.className = 'dec-opt' + (i === sel ? ' sel' : '');
+    opt.innerHTML = '<span class="num"></span><span class="dec-lbl"></span>';
+    opt.querySelector('.num').textContent = (i + 1);
+    opt.querySelector('.dec-lbl').textContent = label;
+    if (i === curIdx) {
+      const chk = document.createElement('span'); chk.className = 'adv-check'; chk.textContent = '✓';
+      opt.appendChild(chk);
+    }
+    opt.onclick = () => confirm(i);
+    opt.onmouseenter = () => { sel = i; paint(); };
+    card.appendChild(opt);
+  });
+
+  const note = document.createElement('div'); note.className = 'adv-note';
+  note.textContent = 'Recommended setup: Sonnet as the main model with Opus as the advisor. '
+    + 'For certain workloads this gives near-Opus performance with reduced token usage.';
+  card.appendChild(note);
+  const learn = document.createElement('div'); learn.className = 'adv-learn';
+  learn.innerHTML = 'Learn more: <a href="https://claude.com/blog/the-advisor-strategy" target="_blank">https://claude.com/blog/the-advisor-strategy</a>';
+  card.appendChild(learn);
+  const esc = document.createElement('div'); esc.className = 'dec-esc';
+  esc.textContent = 'Enter to confirm · Esc to cancel';
+  card.appendChild(esc);
+
+  function onKey(e) {
+    if (resolved) return;
+    // A blocking card (permission/question) may have replaced us mid-turn — bail out.
+    if (!card.isConnected) { document.removeEventListener('keydown', onKey, true); return; }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); return; }
+    if (e.key === 'Enter') { e.preventDefault(); confirm(sel); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); sel = (sel + 1) % ADVISOR_OPTIONS.length; paint(); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); sel = (sel - 1 + ADVISOR_OPTIONS.length) % ADVISOR_OPTIONS.length; paint(); return; }
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= ADVISOR_OPTIONS.length) { e.preventDefault(); confirm(n - 1); }
+  }
+  document.addEventListener('keydown', onKey, true);
+
+  showBottomCard(card);
+  // This card belongs to the tab it was opened from — never a background stream tab
+  // (showBottomCard defaults to rtab, which may be mid-stream elsewhere).
+  pendingCardOwner = activeTab();
+  renderBottomCard();
 }
 
 /* ===================== Markdown rendering ===================== */

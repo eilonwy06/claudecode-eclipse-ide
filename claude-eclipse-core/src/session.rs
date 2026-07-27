@@ -353,7 +353,14 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
             Some("user") => {
                 let content = &event["message"]["content"];
                 if let Some(c) = content.as_str() {
-                    items.push(serde_json::json!({ "t": "user", "content": c }));
+                    // A post-compaction summary is stored as a user line flagged
+                    // isCompactSummary — surface it as the expandable "Compacted
+                    // chat" body, never as a (huge) user bubble.
+                    if event["isCompactSummary"].as_bool().unwrap_or(false) {
+                        items.push(serde_json::json!({ "t": "compact_summary", "text": c }));
+                    } else {
+                        items.push(serde_json::json!({ "t": "user", "content": c }));
+                    }
                 } else if let Some(blocks) = content.as_array() {
                     for b in blocks {
                         if b["type"].as_str() != Some("tool_result") {
@@ -436,6 +443,20 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                         }
                         _ => {}
                     }
+                }
+            }
+            Some("system") => {
+                // Compaction marker (written by /compact or auto-compact). The
+                // jsonl uses camelCase compactMetadata (unlike the stream's
+                // compact_metadata) — verified against CLI 2.1.177.
+                if event["subtype"].as_str() == Some("compact_boundary") {
+                    let md = &event["compactMetadata"];
+                    items.push(serde_json::json!({
+                        "t": "compact",
+                        "trigger": md["trigger"].as_str().unwrap_or("manual"),
+                        "preTokens": md["preTokens"].as_u64().unwrap_or(0),
+                        "postTokens": md["postTokens"].as_u64().unwrap_or(0),
+                    }));
                 }
             }
             _ => {}
@@ -791,6 +812,45 @@ mod tests {
             .find(|s| s["sessionId"] == "sess2").expect("sess2 listed");
         assert_eq!(sess2["display"], "/clear", "command wrappers stripped from title");
         assert_eq!(sess2["timestamp"], "2026-07-03T08:00:02.000Z");
+    }
+
+    /// A compacted session reloads as a "Compacted chat" marker + expandable
+    /// summary: the compact_boundary system line becomes a t:"compact" item
+    /// (camelCase compactMetadata → trigger/preTokens/postTokens) and the
+    /// isCompactSummary user line becomes t:"compact_summary" — never a user
+    /// bubble. Fixture shapes captured from a real CLI 2.1.177 /compact run.
+    #[test]
+    fn load_session_surfaces_compact_boundary_and_summary() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-compact-home");
+        let root = r"C:\compactws";
+        let dir = home.join(".claude").join("projects").join("C--compactws");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("sessc.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"tell me things"},"timestamp":"2026-07-27T02:00:00.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","content":[{"type":"text","text":"things"}]},"timestamp":"2026-07-27T02:00:05.000Z"}"#, "\n",
+            r#"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","isMeta":false,"compactMetadata":{"trigger":"manual","preTokens":23670,"durationMs":10550,"postTokens":1682},"timestamp":"2026-07-27T02:37:08.042Z"}"#, "\n",
+            r#"{"type":"user","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"role":"user","content":"This session is being continued from a previous conversation. Summary: things were told."},"timestamp":"2026-07-27T02:37:08.100Z"}"#, "\n",
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>Caveat: ...</local-command-caveat>"},"timestamp":"2026-07-27T02:37:08.120Z"}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/compact</command-name>"},"timestamp":"2026-07-27T02:37:08.130Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let loaded = super::load_session_history(root, "sessc");
+        let _ = fs::remove_dir_all(&home);
+
+        let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
+        let want: serde_json::Value = serde_json::from_str(r#"[
+            {"t":"user","content":"tell me things"},
+            {"t":"text","text":"things","model":"claude-haiku-4-5-20251001"},
+            {"t":"compact","trigger":"manual","preTokens":23670,"postTokens":1682},
+            {"t":"compact_summary","text":"This session is being continued from a previous conversation. Summary: things were told."},
+            {"t":"user","content":"<local-command-caveat>Caveat: ...</local-command-caveat>"},
+            {"t":"user","content":"<command-name>/compact</command-name>"}
+        ]"#).unwrap();
+        assert_eq!(got, want, "compacted session render items");
     }
 
     /// Tool dots are reconstructed from the transcript so a reloaded conversation

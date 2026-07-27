@@ -838,6 +838,10 @@ fn reader_loop(
     // Raw model id from the init event (e.g. "claude-opus-4-8") — reported to the
     // GUI status bar, which maps it to a display name.
     let mut current_model = String::new();
+    // Set by a compact_boundary event: the compact summary is echoed right after it
+    // as a synthetic "user" event (string content, isSynthetic:true) — forward that
+    // one message to the GUI as the expandable "Compacted chat" body.
+    let mut awaiting_compact_summary = false;
 
     for line in reader.lines() {
         let line = match line {
@@ -891,12 +895,57 @@ fn reader_loop(
                 // The CLI re-emits init every turn; keep the live session id
                 // current for the reuse check, then let process_event_value fire
                 // onSessionId/onSystem exactly as the legacy path does.
-                if event["subtype"].as_str() == Some("init") {
-                    if let Some(sid) = event["session_id"].as_str() {
-                        *proc.session_id.lock().unwrap() = Some(sid.to_string());
+                match event["subtype"].as_str().unwrap_or("") {
+                    "init" => {
+                        if let Some(sid) = event["session_id"].as_str() {
+                            *proc.session_id.lock().unwrap() = Some(sid.to_string());
+                        }
+                        if let Some(m) = event["model"].as_str() {
+                            current_model = m.to_string();
+                        }
                     }
-                    if let Some(m) = event["model"].as_str() {
-                        current_model = m.to_string();
+                    // Compaction lifecycle (/compact or auto-compact), verified against
+                    // CLI 2.1.177: status "compacting" while it runs; then either
+                    // status+compact_result:"failed" (+compact_error — the CLI also
+                    // answers the turn with that text) or a compact_boundary carrying
+                    // compact_metadata {trigger, pre_tokens, post_tokens}.
+                    "status" => {
+                        if event["status"].as_str() == Some("compacting") {
+                            fire_string(&java_vm, &callbacks, "onCompact",
+                                        "{\"phase\":\"compacting\"}");
+                        } else if event["compact_result"].as_str() == Some("failed") {
+                            let payload = serde_json::json!({
+                                "phase": "failed",
+                                "error": event["compact_error"].as_str().unwrap_or(""),
+                            });
+                            fire_string(&java_vm, &callbacks, "onCompact", &payload.to_string());
+                        }
+                    }
+                    "compact_boundary" => {
+                        let md = &event["compact_metadata"];
+                        let payload = serde_json::json!({
+                            "phase": "boundary",
+                            "trigger": md["trigger"].as_str().unwrap_or("manual"),
+                            "preTokens": md["pre_tokens"].as_u64().unwrap_or(0),
+                            "postTokens": md["post_tokens"].as_u64().unwrap_or(0),
+                        });
+                        fire_string(&java_vm, &callbacks, "onCompact", &payload.to_string());
+                        awaiting_compact_summary = true;
+                    }
+                    _ => {}
+                }
+            }
+            "user" => {
+                // The one synthetic user echo right after a compact_boundary is the
+                // compact summary — everything else (command echoes, tool results)
+                // stays ignored.
+                if awaiting_compact_summary
+                    && event["isSynthetic"].as_bool().unwrap_or(false)
+                {
+                    if let Some(txt) = event["message"]["content"].as_str() {
+                        let payload = serde_json::json!({ "phase": "summary", "text": txt });
+                        fire_string(&java_vm, &callbacks, "onCompact", &payload.to_string());
+                        awaiting_compact_summary = false;
                     }
                 }
             }

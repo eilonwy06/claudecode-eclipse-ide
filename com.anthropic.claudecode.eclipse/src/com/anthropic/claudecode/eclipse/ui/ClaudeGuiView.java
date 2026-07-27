@@ -647,6 +647,7 @@ public class ClaudeGuiView extends ViewPart {
         m.setOnRateLimit(j -> display.asyncExec(() -> executeJS("window.onRateLimit && window.onRateLimit('" + tj + "','" + esc(j) + "')")));
         m.setOnSessionId(id -> display.asyncExec(() -> executeJS("window.onSessionId && window.onSessionId('" + tj + "','" + esc(id) + "')")));
         m.setOnError(msg -> display.asyncExec(() -> executeJS("window.onError && window.onError('" + tj + "','" + esc(msg) + "')")));
+        m.setOnCompact(j -> display.asyncExec(() -> executeJS("window.onCompact && window.onCompact('" + tj + "','" + esc(j) + "')")));
         // Backend "system"/init events (e.g. "Connected") are noise in the GUI — not wired.
     }
 

@@ -249,6 +249,14 @@ public final class NativeCore {
          * Non-blocking. Account-global rate limits are shared separately.
          */
         default void onStatus(String statusJson) {}
+        /**
+         * Compaction lifecycle (persistent mode; /compact or auto-compact). JSON
+         * phases in order: {@code {"phase":"compacting"}}, then either
+         * {@code {"phase":"failed","error":…}} or
+         * {@code {"phase":"boundary","trigger":"manual|auto","preTokens":N,"postTokens":N}}
+         * followed by {@code {"phase":"summary","text":…}}. Non-blocking.
+         */
+        default void onCompact(String json) {}
     }
 
     // ── Embedded console (replaces PTY + xterm.js for the CLI view) ─────────

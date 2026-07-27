@@ -36,6 +36,7 @@ public class ChatProcessManager {
     private PermissionHandler onPermissionRequest;
     private java.util.function.Function<String, String> onQuestionRequest;
     private Consumer<String> onStatus;
+    private Consumer<String> onCompact;
 
     /** (toolName, inputJson, rememberLabel) → decision string. See {@link NativeCore.ChatCallbacks#onPermissionRequest}. */
     public interface PermissionHandler {
@@ -66,6 +67,7 @@ public class ChatProcessManager {
                 try { return h.apply(questionsJson); } catch (Exception e) { return "[]"; }
             }
             @Override public void onStatus(String json) { emit(ChatProcessManager.this.onStatus, json); }
+            @Override public void onCompact(String json) { emit(ChatProcessManager.this.onCompact, json); }
         });
     }
 
@@ -92,6 +94,8 @@ public class ChatProcessManager {
     }
     /** Per-turn GUI status snapshot JSON (model, context %, cost). Persistent mode. */
     public void setOnStatus(Consumer<String> cb) { this.onStatus = cb; }
+    /** Compaction lifecycle JSON ({@code phase}: compacting/failed/boundary/summary). Persistent mode. */
+    public void setOnCompact(Consumer<String> cb) { this.onCompact = cb; }
 
     /**
      * Opts this manager into the persistent-process protocol (one long-lived
