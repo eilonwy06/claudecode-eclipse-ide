@@ -13,15 +13,17 @@ import com.google.gson.JsonParser;
 
 /**
  * Per-conversation composer settings the Claude GUI persists itself — effort,
- * model, and thinking — keyed by CLI session id. This is the piece VSCode has and
- * the CLI transcript lacks: the transcript records the model and thinking blocks
- * but NEVER the effort level (it's a request parameter, not logged), so the only
- * way to restore effort for a resumed conversation is to save it ourselves here.
+ * model, thinking, and permission mode — keyed by CLI session id. This is the
+ * piece VSCode has and the CLI transcript lacks: the transcript records the model
+ * and thinking blocks but NEVER the effort level (it's a request parameter, not
+ * logged), so the only way to restore effort for a resumed conversation is to save
+ * it ourselves here. The permission mode is likewise a launch flag, not transcript
+ * state — VSCode forgets it between sessions; we restore it.
  *
- * <p>Stored as {@code {sessionId: {effort, model, thinking}}} in the plugin's
- * state location. Bounded (oldest entries pruned) and written atomically; reads
- * tolerate a missing/corrupt file. UI-thread only (called from BrowserFunctions),
- * but methods are synchronized as defense-in-depth.
+ * <p>Stored as {@code {sessionId: {effort, model, thinking, permMode}}} in the
+ * plugin's state location. Bounded (oldest entries pruned) and written atomically;
+ * reads tolerate a missing/corrupt file. UI-thread only (called from
+ * BrowserFunctions), but methods are synchronized as defense-in-depth.
  */
 public final class SessionPrefsStore {
 
@@ -35,7 +37,8 @@ public final class SessionPrefsStore {
     }
 
     /** Records the composer settings for {@code sessionId}. No-op on any error. */
-    public static synchronized void save(String sessionId, String effort, String model, String thinking) {
+    public static synchronized void save(String sessionId, String effort, String model, String thinking,
+                                         String permMode) {
         if (sessionId == null || sessionId.isEmpty()) return;
         try {
             JsonObject root = read();
@@ -44,13 +47,16 @@ public final class SessionPrefsStore {
             e.addProperty("effort", effort == null ? "" : effort);
             e.addProperty("model", model == null ? "" : model);
             e.addProperty("thinking", thinking == null ? "" : thinking);
+            e.addProperty("permMode", permMode == null ? "" : permMode);
             root.add(sessionId, e);
             prune(root);
             write(root);
         } catch (Throwable ignored) {}
     }
 
-    /** Returns the stored {@code {effort,model,thinking}} for {@code sessionId}, or {@code "{}"}. */
+    /** Returns the stored {@code {effort,model,thinking,permMode}} for {@code sessionId},
+     *  or {@code "{}"}. Entries written before permMode existed simply omit it, and the
+     *  GUI falls back to the default mode. */
     public static synchronized String load(String sessionId) {
         if (sessionId == null || sessionId.isEmpty()) return "{}";
         try {

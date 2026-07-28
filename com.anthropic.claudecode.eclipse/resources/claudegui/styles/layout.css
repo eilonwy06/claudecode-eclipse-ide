@@ -1,0 +1,145 @@
+/* layout.css — Page shell (zoom-root), top toolbar + tab strip, conversation header, composer. */
+
+html, body { height: 100%; background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; overflow: hidden; }
+.mono { font-family: 'Cascadia Code', 'Consolas', 'Fira Code', monospace; }
+
+#app { display: flex; flex-direction: column; height: 100%; position: relative; }
+/* Zoom-scaled content wrapper. Sized to 100%/z then scaled by z (transform-origin 0 0)
+   so it exactly fills #app at any zoom with no overflow, and re-wraps text to the full
+   width. Menus/cards/overlays are siblings OUTSIDE this wrapper — they stay natural size
+   and are positioned via getBoundingClientRect (which reflects this transform reliably). */
+#zoom-root { position: absolute; top: 0; left: 0;
+  width: calc(100% / var(--z, 1)); height: calc(100% / var(--z, 1));
+  transform-origin: 0 0; transform: scale(var(--z, 1));
+  display: flex; flex-direction: column; }
+
+/* ── Top toolbar (VSCode editor-tab strip) ───────────────── */
+#toolbar { display: flex; align-items: stretch; height: 35px; flex-shrink: 0;
+  background: var(--bg); border-bottom: 1px solid var(--border-soft); }
+/* min-width:0 lets the strip shrink within the toolbar so its tabs scroll INTERNALLY
+   (instead of pushing the toolbar tools off-screen). Thin bottom scrollbar, thumb
+   visible only on hover — like VSCode. */
+#tabs { display: flex; align-items: stretch; height: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+/* thin bottom scrollbar; thumb shown only while hovering/scrolling (JS toggles
+   .sb-show — CSS :hover on webkit scrollbars is unreliable in WebView2). */
+#tabs::-webkit-scrollbar { height: 4px; }
+#tabs::-webkit-scrollbar-track { background: transparent; }
+#tabs::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+#tabs.sb-show::-webkit-scrollbar-thumb { background: var(--scrollbar-track); }
+.tab { display: flex; align-items: center; gap: 7px; padding: 0 10px; height: 100%; cursor: pointer;
+  background: var(--bg); border-right: 1px solid var(--border-soft); border-top: 2px solid transparent;
+  font-size: 12.5px; color: var(--fg-dim); max-width: 200px; flex-shrink: 0; }
+.tab.active { background: var(--bg-soft); border-top-color: var(--accent); color: var(--fg); }
+/* Hovering an unfocused tab previews it with the active tab's bg + text colors
+   (the accent top border stays exclusive to the truly active tab). */
+.tab:hover { background: var(--bg-soft); color: var(--fg); }
+/* drag-to-reorder: dragged tab dims; a 2px accent line marks the drop position */
+.tab.dragging { opacity: .4; }
+.tab.drop-before { box-shadow: inset 2px 0 0 0 var(--accent); }
+.tab.drop-after { box-shadow: inset -2px 0 0 0 var(--accent); }
+.tab .ti { color: var(--accent); display: inline-flex; flex-shrink: 0; }
+.tab .tt { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* The close (x) shows only on the ACTIVE tab or while hovering a tab; hidden (but
+   still occupying its slot, so tabs don't shift) on unfocused tabs. */
+.tab .tab-close { color: var(--fg-dim); margin-left: 2px; cursor: pointer; border-radius: 3px; padding: 1px 3px; flex-shrink: 0; visibility: hidden; }
+.tab.active .tab-close, .tab:hover .tab-close { visibility: visible; }
+.tab .tab-close:hover { background: var(--bg-hover); color: var(--fg); }
+.pane > .turn:first-child { margin-top: 0; }
+#toolbar .spacer { flex: 1; }
+#toolbar .tools { display: flex; align-items: center; gap: 2px; padding-right: 8px; }
+.tbtn { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border-radius: 5px; color: var(--fg-dim); cursor: pointer; }
+.tbtn:hover { background: var(--bg-hover); color: var(--fg); }
+.tbtn.active { background: var(--tbtn-active); color: var(--fg); }
+
+/* ── Conversation header ─────────────────────────────────── */
+#convo-header { display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+
+/* ---- CLI update banner ----
+   Shown only when the installed Claude Code is behind the published release, so
+   the model chooser (built from the ACCOUNT's models) can't silently offer models
+   the binary won't run. Reuses the usage-warning palette. */
+#update-banner { display: none; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 7px 12px; font-size: 12px; color: var(--warn-fg);
+  background: var(--warn-bg); border-bottom: 1px solid var(--warn-border); }
+#update-banner.show { display: flex; }
+#update-banner .ub-ic { display: inline-flex; flex-shrink: 0; }
+#update-banner .ub-text { flex: 1; min-width: 0; }
+#update-banner .ub-btn { flex-shrink: 0; cursor: pointer; padding: 2px 9px; border-radius: 5px;
+  border: 1px solid var(--warn-border); color: var(--warn-fg); font-weight: 600; }
+#update-banner .ub-btn:hover { background: var(--warn-border); color: var(--on-accent); }
+#update-banner .ub-btn.busy { opacity: .6; pointer-events: none; }
+#update-banner .ub-x { flex-shrink: 0; cursor: pointer; color: var(--warn-fg); opacity: .7;
+  display: inline-flex; border-radius: 3px; }
+#update-banner .ub-x:hover { opacity: 1; background: var(--bg-hover); }
+/* The pill (.title-wrap) is the outer container at a fixed 32px height. The input sits
+   INSIDE it at its own smaller natural size, so the pill encompasses the input. Only the
+   pill's height is set here — the input is never forced to the pill's height. */
+#convo-header .title-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 340px;
+  height: 32px; box-sizing: border-box; padding: 0 6px; border-radius: 8px; margin: -1px -6px; cursor: pointer; }
+#convo-header .title-wrap:hover { background: var(--bg-hover); }
+#convo-header .title { font-weight: 600; font-size: 13px; color: var(--fg); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+#convo-header .title-edit { color: var(--fg-faint); display: none; flex-shrink: 0; }
+#convo-header .title-wrap:hover .title-edit { display: inline-flex; }
+#convo-header .title-input { max-width: 340px; box-sizing: border-box;
+  background: var(--bg-code); border: 1px solid var(--accent); border-radius: 5px;
+  padding: 3px 6px; color: var(--fg); font-size: 13px; font-weight: 600; outline: none; }
+#convo-header .actions { display: flex; gap: 2px; }
+
+
+/* ── Composer ────────────────────────────────────────────── */
+#composer { flex-shrink: 0; padding: 8px 14px 12px; }
+/* Floats OVER the transcript at the composer's position (composer hides while a
+   card is up). The transcript never reflows; showBottomCard reserves matching
+   bottom padding in #messages so the last message can scroll above the card. */
+#bottom-card { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; padding: 8px 14px 12px; }
+/* usage warning banner (shown above the input near a usage limit) */
+#usage-warn { display: none; align-items: center; gap: 4px; margin-bottom: 8px; padding: 7px 11px;
+  border: 1px solid var(--warn-border); background: var(--warn-bg); border-radius: 8px; color: var(--warn-fg); font-size: 12px; }
+#usage-warn.show { display: flex; }
+#usage-warn .uw-txt { flex: 1; }
+#usage-warn a { color: var(--link); text-decoration: none; white-space: nowrap; }
+#usage-warn .uw-x { color: var(--warn-fg); cursor: pointer; padding: 2px; border-radius: 4px; opacity: .7; flex-shrink: 0; margin-left: 6px; }
+#usage-warn .uw-x:hover { opacity: 1; background: var(--hover-veil); }
+#input-wrap { border: 1px solid var(--accent); border-radius: 10px; background: var(--bg-soft);
+  padding: 8px 10px 6px; transition: border-color .15s; }
+#input-wrap.blur { border-color: var(--border); }
+.input-row { display: flex; align-items: flex-start; gap: 8px; }
+#input { flex: 1; background: transparent; border: none; outline: none; resize: none; color: var(--fg);
+  font-family: inherit; font-size: 13px; line-height: 1.5; max-height: 160px; min-height: 22px; }
+#input::placeholder { color: var(--fg-faint); }
+
+#composer-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+.cb-left, .cb-right { display: flex; align-items: center; gap: 6px; }
+.pill { display: inline-flex; align-items: center; justify-content: center; height: 26px; padding: 0 6px;
+  border-radius: 6px; color: var(--fg-dim); cursor: pointer; }
+.pill:hover { background: var(--bg-hover); color: var(--fg); }
+.file-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px;
+  font-size: 12px; color: var(--fg-dim); border-radius: 6px; cursor: pointer; max-width: 220px; }
+.file-chip:hover { background: var(--bg-hover); color: var(--fg); }
+.file-chip svg { opacity: .8; flex-shrink: 0; }
+.file-chip #ctx-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.file-chip.off { opacity: .55; }
+.file-chip.empty { opacity: .5; cursor: default; }
+.file-chip.empty:hover { background: transparent; color: var(--fg-dim); }
+.modes-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px;
+  border-radius: 6px; color: var(--fg-soft); cursor: pointer; font-size: 12px; }
+.modes-btn:hover { background: var(--bg-hover); }
+/* narrow-width collapse (fitComposerBar): words hide, icons stay, nothing leaves the div.
+   The mode label may NEVER wrap — it is either one line or hidden entirely. */
+#modes-lbl { white-space: nowrap; }
+#ctx-chip.icon-only #ctx-label { display: none; }
+#modes-btn.icon-only #modes-lbl { display: none; }
+#send.mini { width: 22px; height: 24px; border-radius: 5px; }
+#send.mini svg { width: 12px; height: 12px; }
+#composer-bar.compact .cb-left, #composer-bar.compact .cb-right { gap: 2px; }
+#composer-bar.compact .pill, #composer-bar.compact .modes-btn,
+#composer-bar.compact .file-chip { padding: 0 4px; }
+#send { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 32px;
+  border-radius: 7px; background: var(--accent); color: var(--on-accent); cursor: pointer; flex-shrink: 0; }
+#send.disabled { background: var(--send-off-bg); color: var(--send-off-fg); cursor: default; }
+#send.stop { background: var(--accent); }
+

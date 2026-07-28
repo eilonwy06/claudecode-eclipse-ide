@@ -63,18 +63,13 @@
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.sendSelection"
-            name="Send Selection to Claude"
-            description="Send the current editor selection to Claude Code"
+            name="Send Selection to Claude Terminal"
+            description="Send the current editor selection to the Claude Terminal"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.addFile"
-            name="Add File to Claude Context"
-            description="Add the current file to Claude Code context"
-            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
-      <command
-            id="com.anthropic.claudecode.eclipse.commands.resume"
-            name="Resume Claude Code"
-            description="Resume the last Claude Code session"
+            name="Add File to Claude Terminal"
+            description="Add the current file to the Claude Terminal's context"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <command
             id="com.anthropic.claudecode.eclipse.commands.restart"
@@ -102,9 +97,6 @@
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.addFile"
             class="com.anthropic.claudecode.eclipse.ui.handlers.AddFileHandler"/>
-      <handler
-            commandId="com.anthropic.claudecode.eclipse.commands.resume"
-            class="com.anthropic.claudecode.eclipse.ui.handlers.ResumeClaudeHandler"/>
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.restart"
             class="com.anthropic.claudecode.eclipse.ui.handlers.RestartServerHandler"/>
@@ -163,20 +155,15 @@
                   </with>
                </visibleWhen>
             </command>
-            <command
-                  commandId="com.anthropic.claudecode.eclipse.commands.resume"
-                  label="Resume Session"
-                  mnemonic="R"
-                  style="push"/>
             <separator name="com.anthropic.claudecode.eclipse.separator1" visible="true"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
-                  label="Send Selection to Claude"
+                  label="Send Selection to Claude Terminal"
                   mnemonic="S"
                   style="push"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.addFile"
-                  label="Add File to Claude"
+                  label="Add File to Claude Terminal"
                   mnemonic="A"
                   style="push"/>
          </menu>
@@ -189,11 +176,11 @@
                label="Claude Code">
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.sendSelection"
-                  label="Send Selection to Claude"
+                  label="Send Selection to Claude Terminal"
                   style="push"/>
             <command
                   commandId="com.anthropic.claudecode.eclipse.commands.addFile"
-                  label="Add File to Claude Context"
+                  label="Add File to Claude Terminal"
                   style="push"/>
          </menu>
       </menuContribution>

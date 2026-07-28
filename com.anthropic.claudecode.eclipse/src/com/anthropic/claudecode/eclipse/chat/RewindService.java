@@ -299,14 +299,15 @@ public final class RewindService {
         } catch (Throwable ignored) {}
     }
 
-    /** Carry the composer sidecar (effort/model/thinking) to the forked session. */
+    /** Carry the composer sidecar (effort/model/thinking/permission mode) to the
+     *  forked session. */
     private static void copySessionPrefs(String oldId, String newId) {
         try {
             JsonObject p = JsonParser.parseString(
                     com.anthropic.claudecode.eclipse.ui.SessionPrefsStore.load(oldId)).getAsJsonObject();
             if (p.size() == 0) return;
             com.anthropic.claudecode.eclipse.ui.SessionPrefsStore.save(newId,
-                    str(p, "effort"), str(p, "model"), str(p, "thinking"));
+                    str(p, "effort"), str(p, "model"), str(p, "thinking"), str(p, "permMode"));
         } catch (Throwable ignored) {}
     }
 

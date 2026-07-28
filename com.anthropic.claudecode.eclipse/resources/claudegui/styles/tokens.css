@@ -1,0 +1,99 @@
+/* tokens.css — Reset + color tokens: dark default palette and the :root.light overrides. */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #1e1e1e;
+  --bg-soft: #232323;
+  --bg-box: #262626;
+  --bg-chip: #2d2d2d;
+  --bg-code: #1a1a1a;
+  --bg-hover: #2f2f2f;
+  --fg: #d4d4d4;
+  --fg-soft: #c0c0c0;
+  --fg-dim: #8a8a8a;
+  --fg-faint: #6e6e6e;
+  --border: #333333;
+  --border-soft: #2a2a2a;
+  --accent: #d97757;          /* Claude coral */
+  --accent-dim: rgba(217,119,87,.5);
+  --sel: #2d84af;             /* VSCode-style selection blue (cards/answers) */
+  --sel-hover: #3a93bf;
+  --green: #4eb87a;           /* action dots */
+  --green-bg: rgba(78,184,122,.16);
+  --red-bg: rgba(220,90,90,.14);
+  --red: #dc5a5a;             /* del rail / red dots / delete actions */
+  --link: #6fb3ff;
+  --hunk: #9a86d6;
+  /* menus / overlays / misc surfaces (were hardcoded before light-theme support) */
+  --menu-bg: #252526;         /* popup + ctx menu + overlay panels */
+  --menu-hover: #2f3140;      /* menu/slash item hover */
+  --scrollbar: #3a3a3a;       /* thin scrollbar thumbs */
+  --scrollbar-track: rgba(255,255,255,.22);  /* tab-strip scrollbar thumb (on hover) */
+  --ic-bg: #2b2b2b;           /* inline code chip bg */
+  --ic-fg: #d8b58c;           /* inline code chip fg (also dec-q code) */
+  --cb-head-bg: #181818;      /* code-block header strip */
+  --send-off-bg: #4a3a33;     /* disabled send button bg */
+  --send-off-fg: #8a7a72;     /* disabled send button fg */
+  --on-accent: #fff;          /* text on accent/selection fills */
+  --tbtn-active: #3a3550;     /* toolbar button toggled-on bg */
+  --warn-border: #b58b2e;     /* usage-warning banner */
+  --warn-bg: rgba(181,139,46,.12);
+  --warn-fg: #d8b66a;
+  --overlay-scrim: rgba(0,0,0,.5);      /* modal backdrops */
+  --overlay-scrim-soft: rgba(0,0,0,.35);
+  --shadow: rgba(0,0,0,.5);   /* menu/overlay drop shadows */
+  --track: #444;              /* slider track */
+  --knob: #ddd;               /* slider knob */
+  --hover-veil: rgba(255,255,255,.08);  /* subtle hover on dark surfaces */
+  /* syntax */
+  --kw: #569cd6; --type: #4ec9b0; --str: #ce9178; --com: #6a9955; --fn: #dcdcaa; --num: #b5cea8;
+}
+/* Light theme — applied via <html class="light"> when Eclipse is in a light theme
+   (issue #78). Keeps the Claude coral accent; everything else is a neutral Eclipse-
+   style light palette. Only token values change; all selectors reference these tokens. */
+:root.light {
+  --bg: #ffffff;
+  --bg-soft: #f3f3f3;
+  --bg-box: #f0f0f0;
+  --bg-chip: #ececec;
+  --bg-code: #f6f6f6;
+  --bg-hover: #e8e8e8;
+  --fg: #1e1e1e;
+  --fg-soft: #2b2b2b;
+  --fg-dim: #616161;
+  --fg-faint: #8a8a8a;
+  --border: #d4d4d4;
+  --border-soft: #e2e2e2;
+  --accent: #c8502b;          /* Claude coral, darkened for contrast on white */
+  --accent-dim: rgba(200,80,43,.5);
+  --sel: #0a6ebd;             /* selection blue tuned for light bg */
+  --sel-hover: #0b7fd4;
+  --green: #2e9e5b;
+  --green-bg: rgba(46,158,91,.14);
+  --red-bg: rgba(200,60,60,.12);
+  --red: #c83c3c;
+  --link: #0a6ebd;
+  --hunk: #6f4fbf;
+  --menu-bg: #ffffff;
+  --menu-hover: #e4ecf7;
+  --scrollbar: #c4c4c4;
+  --scrollbar-track: rgba(0,0,0,.22);
+  --ic-bg: #ececec;
+  --ic-fg: #a15c2b;
+  --cb-head-bg: #ececec;
+  --send-off-bg: #e0d3cc;
+  --send-off-fg: #a89a92;
+  --on-accent: #fff;
+  --tbtn-active: #dfe3f0;
+  --warn-border: #c79a2e;
+  --warn-bg: rgba(199,154,46,.14);
+  --warn-fg: #8a6a12;
+  --overlay-scrim: rgba(0,0,0,.32);
+  --overlay-scrim-soft: rgba(0,0,0,.2);
+  --shadow: rgba(0,0,0,.22);
+  --track: #cfcfcf;
+  --knob: #555;
+  --hover-veil: rgba(0,0,0,.06);
+  /* syntax — light editor palette (VSCode Light+) */
+  --kw: #0000ff; --type: #267f99; --str: #a31515; --com: #008000; --fn: #795e26; --num: #098658;
+}

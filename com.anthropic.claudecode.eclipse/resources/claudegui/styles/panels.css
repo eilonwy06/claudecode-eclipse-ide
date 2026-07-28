@@ -1,0 +1,138 @@
+/* panels.css — Popup surfaces: menus + right-click menu, slash menu, history panel, model
+   chooser, account window, rewind dialog. */
+
+/* ── Popup menus ─────────────────────────────────────────── */
+/* custom right-click menu (the native WebView2 menu never shows in the SWT host) */
+#ctx-menu { display: none; position: fixed; z-index: 100; min-width: 150px; background: var(--menu-bg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px var(--shadow); }
+#ctx-menu .ci { display: flex; justify-content: space-between; gap: 24px; padding: 5px 10px;
+  border-radius: 5px; font-size: 12.5px; color: var(--fg); cursor: default; }
+#ctx-menu .ci .ck { color: var(--fg-faint); }
+#ctx-menu .ci:hover { background: var(--menu-hover); }
+#ctx-menu .ci.off { color: var(--fg-faint); pointer-events: none; }
+#ctx-menu .ci.off .ck { color: var(--fg-faint); }
+.menu { position: absolute; z-index: 40; background: var(--menu-bg); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 8px 24px var(--shadow); padding: 6px; min-width: 230px; display: none; }
+.menu.open { display: block; }
+.menu .item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.menu .item:hover { background: var(--menu-hover); }
+.menu .item .ic { margin-top: 1px; color: var(--fg-dim); flex-shrink: 0; }
+.menu .item .txt { display: flex; flex-direction: column; gap: 2px; }
+.menu .item .txt .lbl { color: var(--fg); font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+.menu .item .txt .desc { color: var(--fg-dim); font-size: 11px; line-height: 1.35; }
+.menu .item .check { margin-left: auto; color: var(--accent); }
+.menu .head { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px 6px; }
+.menu .head .h { color: var(--fg-dim); font-size: 11px; text-transform: none; }
+.menu .head .hint { color: var(--fg-faint); font-size: 10.5px; }
+.menu .sep { height: 1px; background: var(--border-soft); margin: 5px 4px; }
+.menu .effort { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; }
+.menu .effort .lbl { color: var(--fg); font-size: 12.5px; display:flex; align-items:center; gap:6px;}
+.slider { width: 84px; height: 16px; position: relative; cursor: pointer; }
+.slider .track { position: absolute; top: 7px; left: 0; right: 0; height: 3px; background: var(--track); border-radius: 2px; }
+.slider .fill { position: absolute; top: 7px; left: 0; width: 50%; height: 3px; background: var(--accent); border-radius: 2px; }
+.slider .knob { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); width: 12px; height: 12px; border-radius: 50%; background: var(--knob); }
+
+
+/* slash command menu */
+#slash-menu { min-width: 280px; max-height: 260px; overflow-y: auto; }
+#slash-menu .item .cmd { font-family: 'Cascadia Code','Consolas',monospace; color: var(--fg); font-size: 12.5px; }
+#slash-menu .item .d { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
+#slash-menu .item.sel { background: var(--menu-hover); }
+
+/* history panel */
+/* fixed width so the loading state and the loaded list are the same size — otherwise
+   the panel is positioned for the narrow "Loading…" width then grows and clips. */
+#history-panel { width: 360px; max-height: 70vh; overflow: hidden; padding: 6px; }
+#history-panel.open { display: flex; flex-direction: column; }
+.hist-tabs { display: flex; gap: 4px; background: var(--bg-code); border-radius: 7px; padding: 3px; margin-bottom: 6px; }
+.hist-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 8px;
+  border-radius: 5px; color: var(--fg-dim); font-size: 12px; cursor: pointer; }
+.hist-tab.active { background: var(--bg-hover); color: var(--fg); }
+.hist-search { margin-bottom: 4px; }
+.hist-search input { width: 100%; background: var(--bg-code); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 9px; color: var(--fg); font-size: 12px; outline: none; }
+.hist-search input:focus { border-color: var(--accent); }
+#history-list { overflow-y: auto; }
+#history-list .item { align-items: center; gap: 6px; }
+#history-list .h-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+#history-list .h-title { color: var(--fg); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#history-list .h-time { color: var(--fg-faint); font-size: 10.5px; }
+#history-list .h-actions { display: flex; gap: 2px; flex-shrink: 0; }
+#history-list .h-action { color: var(--fg-faint); padding: 4px; border-radius: 4px; visibility: hidden; cursor: pointer; }
+#history-list .item:hover .h-action { visibility: visible; }
+#history-list .h-action:hover { color: var(--fg); background: var(--bg-hover); }
+#history-list .h-action.h-del:hover { color: var(--red); }
+#history-list .h-rename-input { flex: 1; background: var(--bg-code); border: 1px solid var(--accent); border-radius: 4px;
+  padding: 3px 6px; color: var(--fg); font-size: 12.5px; outline: none; }
+.h-empty { color: var(--fg-dim); font-size: 12px; padding: 14px; text-align: center; }
+
+/* model chooser items */
+#model-list .item { align-items: flex-start; }
+#model-list .m-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#model-list .m-title { color: var(--fg); font-size: 12.5px; }
+#model-list .m-desc { color: var(--fg-dim); font-size: 11px; line-height: 1.35; }
+#model-list .item.disabled { opacity: .5; cursor: default; }
+#model-list .item.disabled:hover { background: transparent; }
+#model-list .item .check { margin-left: auto; color: var(--accent); flex-shrink: 0; }
+#actions-slash .item .cmd { font-family: 'Cascadia Code','Consolas',monospace; color: var(--fg); font-size: 12.5px; }
+#actions-slash .item .d { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
+
+/* account & usage window */
+#account-overlay { position: absolute; inset: 0; z-index: 60; background: var(--overlay-scrim);
+  display: none; align-items: center; justify-content: center; }
+#account-overlay.open { display: flex; }
+#account-win { width: 380px; max-width: 92%; max-height: 86%; overflow-y: auto;
+  background: var(--menu-bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 40px var(--shadow); padding: 16px 18px; }
+#account-win .aw-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+#account-win .aw-head .t { font-size: 14px; font-weight: 600; color: var(--fg); }
+#account-win .aw-head .x { color: var(--fg-dim); cursor: pointer; padding: 3px; border-radius: 4px; }
+#account-win .aw-head .x:hover { background: var(--bg-hover); color: var(--fg); }
+#account-win .aw-sec { color: var(--fg-faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 6px; }
+#account-win .aw-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 12.5px; }
+#account-win .aw-row .k { color: var(--fg-dim); flex-shrink: 0; }
+#account-win .aw-row .v { color: var(--fg); text-align: right; word-break: break-word; }
+#account-win .aw-usage { padding: 6px 0; }
+#account-win .aw-usage .ut { display: flex; justify-content: space-between; font-size: 12px; color: var(--fg-soft); margin-bottom: 4px; }
+#account-win .aw-usage .ut .reset { color: var(--fg-faint); font-size: 11px; }
+#account-win .aw-bar { height: 6px; background: var(--bg-code); border-radius: 3px; overflow: hidden; }
+#account-win .aw-bar > span { display: block; height: 100%; background: var(--accent); }
+#account-win .aw-note { color: var(--fg-faint); font-size: 11px; line-height: 1.45; margin-top: 6px; }
+#account-win a { color: var(--link); text-decoration: none; font-size: 12px; }
+
+/* rewind dialog ("Rewind to…" → "Fork and rewind", the VSCode modal flow) */
+#rewind-overlay { position: absolute; inset: 0; z-index: 60; background: var(--overlay-scrim-soft);
+  display: none; align-items: flex-start; justify-content: center; }
+#rewind-overlay.open { display: flex; }
+#rewind-win { width: 430px; max-width: 92%; margin-top: 11vh; max-height: 72vh;
+  display: flex; flex-direction: column; background: var(--menu-bg); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 12px 40px var(--shadow); padding: 13px 15px; }
+#rewind-win .rw-head { display: flex; align-items: center; justify-content: space-between; }
+#rewind-win .rw-title { font-size: 14px; font-weight: 600; color: var(--fg); }
+#rewind-win .rw-x { color: var(--fg-dim); cursor: pointer; padding: 3px; border-radius: 4px; }
+#rewind-win .rw-x:hover { background: var(--bg-hover); color: var(--fg); }
+#rewind-win .rw-sub { color: var(--fg-dim); font-size: 12px; line-height: 1.45; margin: 6px 0 10px; }
+#rewind-list { overflow-y: auto; min-height: 0; border-top: 1px solid var(--border-soft); }
+#rewind-list::-webkit-scrollbar { width: 9px; }
+#rewind-list::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; }
+#rewind-list .rw-item { display: flex; align-items: center; gap: 12px; padding: 9px 8px;
+  border-bottom: 1px solid var(--border-soft); cursor: pointer; }
+#rewind-list .rw-item.sel, #rewind-list .rw-item:hover { background: var(--bg-hover); }
+#rewind-list .rw-text { flex: 1; min-width: 0; color: var(--fg); font-size: 12.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#rewind-list .rw-time { color: var(--fg-faint); font-size: 11px; flex-shrink: 0; }
+#rewind-win .rw-foot { display: flex; align-items: center; gap: 5px; color: var(--fg-dim);
+  font-size: 11px; padding-top: 9px; flex-shrink: 0; }
+#rewind-win .key { background: var(--bg-chip); border: 1px solid var(--border); border-radius: 4px;
+  padding: 0 5px; font-size: 10.5px; color: var(--fg-soft); }
+/* confirm phase */
+#rewind-win .rw-body { color: var(--fg-soft); font-size: 12.5px; line-height: 1.5; margin-top: 8px; }
+#rewind-win .rw-del { color: var(--red); }
+#rewind-win .rw-add { color: var(--green); }
+#rewind-win .rw-file { color: var(--fg-dim); font-size: 12px; margin: 6px 0 0 6px; word-break: break-all; }
+#rewind-win .rw-note { color: var(--fg-faint); font-size: 11.5px; margin: 10px 0 6px; }
+#rewind-win .rw-opt { display: flex; align-items: center; gap: 9px; padding: 8px 11px;
+  border-radius: 6px; cursor: pointer; color: var(--fg-soft); font-size: 12.5px; margin-top: 2px; }
+#rewind-win .rw-opt .num { color: var(--fg-faint); font-size: 11.5px; min-width: 12px; }
+#rewind-win .rw-opt.sel { background: var(--sel); color: var(--on-accent); }
+#rewind-win .rw-opt.sel .num { color: rgba(255,255,255,.75); }
+

@@ -181,7 +181,7 @@ public final class NativeCore {
                                               String claudeCmd, String workspaceRoot,
                                               int mcpPort, String mcpAuthToken,
                                               String resumeId, String permMode, String effort,
-                                              String model, String thinking);
+                                              String model, String thinking, String imagesJson);
 
     /**
      * Cancels the current turn. Legacy mode kills the claude process; persistent
@@ -203,6 +203,14 @@ public final class NativeCore {
      * {@link #sessionRename(String, String, String, String)}.
      */
     public static native boolean chatRenameSession(long handle, String sessionId, String title);
+
+    /**
+     * Switches the permission mode of this manager's live process via the CLI's
+     * {@code set_permission_mode} control request, so a mid-conversation change
+     * applies without respawning. Returns false when there's no live process — the
+     * next spawn passes the mode as {@code --permission-mode} anyway.
+     */
+    public static native boolean chatSetPermissionMode(long handle, String mode);
 
     /**
      * Switches this manager to persistent mode: one long-lived
@@ -249,6 +257,14 @@ public final class NativeCore {
          * Non-blocking. Account-global rate limits are shared separately.
          */
         default void onStatus(String statusJson) {}
+        /**
+         * Compaction lifecycle (persistent mode; /compact or auto-compact). JSON
+         * phases in order: {@code {"phase":"compacting"}}, then either
+         * {@code {"phase":"failed","error":…}} or
+         * {@code {"phase":"boundary","trigger":"manual|auto","preTokens":N,"postTokens":N}}
+         * followed by {@code {"phase":"summary","text":…}}. Non-blocking.
+         */
+        default void onCompact(String json) {}
     }
 
     // ── Embedded console (replaces PTY + xterm.js for the CLI view) ─────────
@@ -327,6 +343,7 @@ public final class NativeCore {
 
     /** Generates a fresh random handshake token for one relay session. */
     public static native String bridgeGenerateToken();
+
     public static native boolean bridgeConnect(int port, String token);
     public static native void bridgeDisconnect();
     public static native boolean bridgeIsConnected();
@@ -349,8 +366,10 @@ public final class NativeCore {
     public static native String sessionList(String workspaceRoot);
 
     /**
-     * Loads one past conversation as a JSON array of
-     * {@code {role, content, timestamp}} messages (final text only).
+     * Loads one past conversation as an ordered JSON array of render items —
+     * {@code {t:user|thinking|tool|answered|text, ...}}, assistant items carrying
+     * the model that turn ran on — so the GUI can reconstruct the session exactly
+     * as it looked live.
      */
     public static native String sessionLoad(String workspaceRoot, String sessionId);
 

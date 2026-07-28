@@ -13,9 +13,10 @@ import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.ui.ClaudeCliView;
 
 /**
- * Sends the active editor's selection to Claude by typing an
+ * Sends the active editor's selection to the Claude Terminal by typing an
  * {@code @<path>#L<start>-<end>} mention into the embedded CLI terminal.
- * Shares the view/path helpers with {@link AddFileHandler}.
+ * Requires an OPEN terminal (dialog otherwise — never opens one as a side
+ * effect). Shares the view/path helpers with {@link AddFileHandler}.
  */
 public class SendSelectionHandler extends AbstractHandler {
 
@@ -33,7 +34,7 @@ public class SendSelectionHandler extends AbstractHandler {
             String filePath = AddFileHandler.filePathOf(editor.getEditorInput());
             if (filePath == null) return null;
 
-            ClaudeCliView view = AddFileHandler.showView(event);
+            ClaudeCliView view = AddFileHandler.findOpenTerminal(event);
             if (view == null) return null;
 
             // ITextSelection lines are 0-based; Claude's #L references are 1-based.
@@ -44,6 +45,8 @@ public class SendSelectionHandler extends AbstractHandler {
 
             if (view.sendTextToActiveSession(mention)) {
                 Activator.log("Selection sent to Claude: " + mention.trim());
+            } else {
+                AddFileHandler.showNoTerminalDialog(event);   // view open but no live session/tab
             }
         } catch (Exception e) {
             Activator.logError("Failed to send selection", e);

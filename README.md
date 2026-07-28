@@ -1,6 +1,6 @@
-# Claude Code for Eclipse IDE
+# Claude Code for Eclipse IDE (Unofficial)
 
-> **Unofficial community port** — This is an independent Eclipse IDE adaptation of the [Claude Code VS Code extension](https://marketplace.visualstudio.com/items?itemName=Anthropic.claude-code), built by [eilonwy06](https://github.com/eilonwy06). It is not affiliated with, endorsed by, or maintained by Anthropic.
+> ## ****Unofficial community port** — This is an independent Eclipse IDE adaptation of the [Claude Code VS Code extension](https://marketplace.visualstudio.com/items?itemName=Anthropic.claude-code). It is not affiliated with, endorsed by, or maintained by Anthropic.**
 
 An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — Anthropic's AI-powered CLI — directly into your Eclipse development environment.
 
@@ -20,7 +20,7 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 - [Claude Code CLI](https://claude.ai/code) installed and available on your PATH
 - A valid Anthropic API key
 - **Windows:** x86_64
-- **Linux:** x86_64
+- **Linux:** x86_64 and aarch64 (ARM64)
 - **macOS:** aarch64 (Apple Silicon) and x86_64 (Intel)
 
 ### Required Eclipse Terminal bundles
@@ -86,7 +86,9 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 1. Open the **Claude Code** view for a graphical chat experience, or the **Claude Terminal** view for the interactive CLI
 2. Claude can read your open files, selection, and workspace context automatically via MCP tools
 
-> **Note (all platforms):** The Claude Terminal view embeds the Eclipse Terminal control and launches `claude` over a local PTY (ConPTY on Windows, native PTY on Linux/macOS), with full ANSI/24-bit color, scrollback, and resize. Copy/paste is available via the right-click menu or the keyboard: `Ctrl/⌘+V` (or `Shift+Insert`) to paste, `Ctrl/⌘+Shift+C` to copy, and `Ctrl/⌘+C` copies when text is selected (otherwise it passes through to interrupt Claude).
+> **Note (all platforms):** The Claude Terminal view embeds the Eclipse Terminal control and launches `claude` over a local PTY (ConPTY on Windows, native PTY on Linux/macOS), with full ANSI/24-bit color, scrollback, and resize. Copy/paste is available via the right-click menu or the keyboard, and every paste trigger handles both text **and** images: `Ctrl/⌘+V`, `Ctrl/⌘+Shift+V`, or `Shift+Insert` to paste; `Ctrl/⌘+Shift+C` or `Ctrl/⌘+Insert` to copy; and `Ctrl/⌘+C` copies when text is selected (otherwise it passes through to interrupt Claude).
+>
+> **Image paste on Linux** relies on a clipboard helper that the Claude CLI shells out to — install `xclip` (X11) or `wl-clipboard` (Wayland), e.g. `sudo apt install xclip`. Without it the CLI reports "No image found in clipboard"; text paste is unaffected.
 
 > **Open files, links, and Java references:** Claude often references file paths, URLs and Java type/member names in its answers. **Ctrl-click** (⌘-click on macOS) any such token in the **Claude Terminal** view to jump straight to it — a file opens in an editor, an `http`/`https` URL opens in your browser, and a Java reference (e.g. `java.util.List`, `com.foo.Bar:21`, `Bar#baz(int)`) opens in the Java editor (only if JDT is installed). Paths and file names containing spaces are fully supported — absolute or workspace-relative, even when the path wraps across terminal lines or a file name appears mid-sentence — clicking any segment opens the right file. You can also select text and choose **Open** from the right-click menu.
 
@@ -199,6 +201,16 @@ copy claude-eclipse-core\target\release\libclaude_eclipse_core.so ^
 docker run --rm -v "${PWD}:/src" -w /src rust:slim-bullseye cargo build --release
 copy claude-eclipse-core\target\release\libclaude_eclipse_core.so `
      com.anthropic.claudecode.eclipse\native\linux\x86_64\
+```
+
+**Linux aarch64 (via Docker, emulated ARM64 container):**
+
+Add `--platform linux/arm64` to the same command — Docker Desktop (or QEMU binfmt on Linux) runs the build inside an ARM64 container, so the output is a native aarch64 `.so`. Note it lands in the same `target/release/` folder as the x86_64 build, so copy it out before rebuilding for the other architecture:
+
+```powershell
+docker run --rm -v "${PWD}:/src" -w /src --platform linux/arm64 rust:slim-bullseye cargo build --release
+copy claude-eclipse-core\target\release\libclaude_eclipse_core.so `
+     com.anthropic.claudecode.eclipse\native\linux\aarch64\
 ```
 
 **macOS (native build — must be built on a Mac):**
