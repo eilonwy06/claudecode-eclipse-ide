@@ -112,6 +112,11 @@ public class ChatProcessManager {
         sendMessage(message, "", "", "", "", "");
     }
 
+    public void sendMessage(String message, String resumeId, String permMode, String effort,
+                            String model, String thinking) {
+        sendMessage(message, resumeId, permMode, effort, model, thinking, "");
+    }
+
     /**
      * Send a message.
      * @param resumeId session id to resume (empty = fresh session)
@@ -119,9 +124,10 @@ public class ChatProcessManager {
      * @param effort   claude effort level: low|medium|high|xhigh|max (empty = claude default)
      * @param model    claude model alias (sonnet|opus|haiku|sonnet[1m]|<custom>); empty = default
      * @param thinking "0" disables extended thinking; anything else leaves it to effort
+     * @param imagesJson JSON array of {@code {media_type,data}} (base64) pasted images, or "" for none
      */
     public void sendMessage(String message, String resumeId, String permMode, String effort,
-                            String model, String thinking) {
+                            String model, String thinking, String imagesJson) {
         IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
         String claudeCmd = prefs.getString(Constants.PREF_CLAUDE_CMD);
         if (claudeCmd == null || claudeCmd.isBlank()) claudeCmd = Constants.DEFAULT_CLAUDE_CMD;
@@ -140,7 +146,7 @@ public class ChatProcessManager {
         NativeCore.chatSendMessage(handle, message, claudeCmd, workspaceRoot, mcpPort, mcpAuthToken,
                 resumeId == null ? "" : resumeId, permMode == null ? "" : permMode,
                 effort == null ? "" : effort, model == null ? "" : model,
-                thinking == null ? "" : thinking);
+                thinking == null ? "" : thinking, imagesJson == null ? "" : imagesJson);
     }
 
     public void cancel() {
@@ -154,6 +160,15 @@ public class ChatProcessManager {
      */
     public boolean renameSession(String sessionId, String title) {
         return NativeCore.chatRenameSession(handle, sessionId, title);
+    }
+
+    /**
+     * Applies a permission-mode change to this manager's live process (the GUI's
+     * per-tab mode dropdown). No-op when the conversation hasn't started yet — the
+     * mode is passed as a launch flag on the next spawn.
+     */
+    public boolean setPermissionMode(String mode) {
+        return NativeCore.chatSetPermissionMode(handle, mode);
     }
 
     public void resetSession() {

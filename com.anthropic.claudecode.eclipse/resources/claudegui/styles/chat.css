@@ -1,0 +1,211 @@
+/* chat.css — Transcript: messages area, user bubbles, assistant dot rail, tool lines,
+   code/diff blocks, welcome state, working gerund, compacted line, thinking,
+   markdown body. */
+
+/* ── Messages ────────────────────────────────────────────── */
+#messages { flex: 1; overflow-y: auto; padding: 4px 14px 16px; }
+#messages::-webkit-scrollbar { width: 9px; }
+#messages::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; border: 2px solid var(--bg); }
+#messages::-webkit-scrollbar-track { background: transparent; }
+
+.turn { position: relative; margin: 10px 0; }
+/* First bubble in a conversation gets breathing room below the title header. */
+.pane > .turn:first-child { margin-top: 18px; }
+
+/* "Switched to <model>" divider — wavy line either side of muted centered text. */
+.switch-divider { display: flex; align-items: center; gap: 10px; color: var(--fg-faint);
+  font-size: 12px; margin: 4px 0; }
+.switch-divider .sw-line { flex: 1; height: 8px; opacity: .6;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='8'%3E%3Cpath d='M0 4 Q4 0 8 4 T16 4' fill='none' stroke='%236e6e6e' stroke-width='1'/%3E%3C/svg%3E") repeat-x center; }
+.switch-divider .sw-text { white-space: nowrap; }
+
+/* user bubble */
+.user-msg { position: relative; border: 1px solid var(--border); background: var(--bg-soft);
+  border-radius: 8px; padding: 10px 12px; }
+.user-msg .ctx-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
+  background: var(--bg-chip); border: 1px solid var(--border); border-radius: 5px;
+  padding: 2px 8px; margin-bottom: 8px; font-size: 11.5px; color: var(--fg-dim);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.user-msg .ctx-chip svg { flex-shrink: 0; opacity: .8; }
+.user-msg .body { color: var(--fg); line-height: 1.5; }
+
+/* ── Pasted-image attachments (VSCode-style chip + hover preview, joebiden4) ──
+   Shared by the composer's #pending-images strip and the sent user bubble's
+   .msg-images strip. A chip is: tiny thumbnail + "image.png" + "W×H"; hovering
+   floats a full-size preview above it; composer chips also get a remove × on
+   hover (bubble chips don't — already sent). */
+#pending-images { display: none; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+#pending-images.show { display: flex; }
+.user-msg .msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.img-chip { position: relative; display: inline-flex; align-items: center; gap: 7px;
+  background: var(--bg-chip); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 8px 4px 5px; font-size: 12px; color: var(--fg); max-width: 240px; cursor: default; }
+.img-chip .ic-thumb { width: 18px; height: 18px; border-radius: 3px; flex-shrink: 0;
+  background-size: cover; background-position: center; background-repeat: no-repeat; }
+.img-chip .ic-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.img-chip .ic-dim { color: var(--fg-dim); flex-shrink: 0; }
+.img-chip .ic-x { display: none; margin-left: 1px; color: var(--fg-dim); cursor: pointer;
+  border-radius: 3px; padding: 0 1px; flex-shrink: 0; }
+.img-chip:hover .ic-x { display: inline-flex; }
+.img-chip .ic-x:hover { background: var(--bg-hover); color: var(--fg); }
+/* The chip body opens the lightbox on CLICK (hover only shows the native
+   filename tooltip) — VSCode behavior, joebiden5. */
+.img-chip .ic-open { display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  min-width: 0; flex: 1; }
+
+/* ---- image lightbox (click a chip) ----
+   Centered image over a dimmed backdrop; the transcript stays faintly readable
+   through it. Closes on ×, backdrop click, or Esc. */
+#lightbox { display: none; position: fixed; inset: 0; z-index: 200;
+  background: rgba(0, 0, 0, .55); }
+#lightbox.open { display: flex; align-items: center; justify-content: center; }
+#lightbox .lb-frame { position: relative; max-width: 92%; max-height: 88%; }
+#lightbox img { display: block; max-width: 100%; max-height: 88vh; border-radius: 4px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .55); }
+/* round × badge overhanging the image's top-right corner */
+#lightbox .lb-x { position: absolute; top: -11px; right: -11px; width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center; border-radius: 50%;
+  background: var(--menu-bg); border: 1px solid var(--border); color: var(--fg);
+  cursor: pointer; box-shadow: 0 2px 8px var(--shadow); }
+#lightbox .lb-x:hover { background: var(--bg-hover); }
+
+/* System lines are plain text, but /model's reply is two lines (current model,
+   then usage) exactly as the CLI prints it — honour the newline. */
+.a-item .sys { white-space: pre-line; }
+
+/* assistant block — dotted left rail per item */
+.a-item { position: relative; padding-left: 22px; margin: 9px 0; line-height: 1.55; color: var(--fg-soft); }
+/* Dots default to GRAY (pending / in-progress / conversational text, matching
+   VSCode). They turn GREEN only once the step has FINISHED (.done), or RED when a
+   step is interrupted / a decision is rejected. */
+.a-item .dot { position: absolute; left: 4px; top: 6px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--fg-faint); }
+.a-item .dot.done { background: var(--green); }
+.a-item .dot.gray { background: var(--fg-faint); }
+.a-item .dot.red { background: var(--red); border: none; animation: none; }
+.a-item .dot.spin { background: transparent; border: 2px solid var(--accent); border-top-color: transparent;
+  width: 11px; height: 11px; left: 2px; top: 4px; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* italic "Tool interrupted" / "Interrupted" note shown when the user stops a turn;
+   aligned to the dot rail (4px), not the text indent */
+.interrupted { font-style: italic; color: var(--fg-faint); font-size: 12.5px; margin: 9px 0; padding-left: 4px; }
+.a-item.muted { color: var(--fg-dim); }
+.a-item strong { color: var(--fg); font-weight: 600; }
+
+/* tool line */
+.tool-line { font-size: 12.5px; }
+.tool-line .tname { font-weight: 600; color: var(--fg); }
+.tool-line .tpath { color: var(--fg-dim); word-break: break-all; }
+.tool-sub { font-size: 11.5px; color: var(--fg-faint); margin-top: 2px; margin-bottom: 6px; }
+
+/* inline code chip */
+code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; background: var(--ic-bg);
+  border: 1px solid var(--border-soft); border-radius: 4px; padding: 1px 5px; color: var(--ic-fg); }
+
+/* ── Code / diff block ───────────────────────────────────── */
+.code-block { margin: 8px 0 8px 22px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-code); overflow: hidden; position: relative; }
+/* nested inside a tool line's .a-item (which already has 22px left padding) */
+.tool-line .code-block { margin-left: 0; }
+.code-block .cb-head { display: flex; align-items: center; justify-content: flex-end;
+  padding: 6px 8px; }
+.code-block .cb-head .copy { color: var(--fg-dim); cursor: pointer; padding: 3px; border-radius: 4px; }
+.code-block .cb-head .copy:hover { background: var(--bg-hover); color: var(--fg); }
+.code-block pre { padding: 2px 0 10px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+.code-block pre::-webkit-scrollbar { height: 8px; }
+.code-block pre::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 4px; }
+/* width:max-content + min-width:100% so the row (and its add/del background) spans the
+   FULL horizontal scroll width, not just the visible width — otherwise the red/green
+   highlight cuts off once a long line is scrolled right. */
+.code-block .ln { display: block; box-sizing: border-box; width: max-content; min-width: 100%;
+  padding: 0 12px; white-space: pre; color: var(--fg-soft); }
+.code-block .ln.add { background: var(--green-bg); box-shadow: inset 2px 0 0 var(--green); }
+.code-block .ln.del { background: var(--red-bg); box-shadow: inset 2px 0 0 var(--red); }
+.code-block .ln.hunk { color: var(--hunk); }
+.code-block .ln.meta { color: var(--fg-faint); }
+.code-block .cb-foot { display: flex; justify-content: flex-end; padding: 6px 8px; border-top: 1px solid var(--border-soft); }
+.code-block .expand { font-size: 11.5px; color: var(--fg-dim); background: var(--bg-chip);
+  border: 1px solid var(--border); border-radius: 5px; padding: 3px 9px; cursor: pointer; }
+.code-block .expand:hover { color: var(--fg); }
+/* edit block w/ gutter */
+.code-block.edit pre { display: block; }
+.code-block.edit .gut { display: inline-block; width: 18px; color: var(--fg-faint); user-select: none; }
+/* syntax */
+.kw{color:var(--kw)} .ty{color:var(--type)} .st{color:var(--str)} .cm{color:var(--com)} .fnc{color:var(--fn)} .nm{color:var(--num)}
+
+
+/* welcome / empty state */
+.welcome { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 62vh; text-align: center; color: var(--fg-dim); gap: 8px; padding: 30px; }
+.welcome .wc-logo { color: var(--accent); transform: scale(2.2); margin-bottom: 14px; }
+.welcome .wc-h { font-size: 17px; color: var(--fg); font-weight: 600; }
+.welcome .wc-p { font-size: 12.5px; }
+
+/* assistant message body */
+.a-item .a-body { display: inline; }
+/* connecting line between consecutive dots on the left rail (JS adds .linked to
+   every item that is followed by another item — avoids relying on :has()) */
+.a-item.linked::before { content: ''; position: absolute; left: 7px; top: 9px; bottom: -16px;
+  width: 1px; background: var(--border); }
+/* working indicator (sunburst + gerund) shown while Claude is processing */
+.working { display: flex; align-items: center; gap: 9px; padding: 8px 0 8px 2px; color: var(--fg); font-weight: 600; }
+.working .sb { color: var(--accent); display: inline-flex; animation: spin 2.6s linear infinite; }
+.working .gerund { display: inline; white-space: pre; }
+/* Block-element glyph (U+258D) renders from Segoe UI / Consolas on Windows; the
+   font-family fallback keeps it a solid bar and never a tofu box. */
+.working .gerund .cursor { font-family: Consolas, 'Segoe UI', monospace; color: var(--accent);
+  animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+
+/* "Compacted chat · manual · Nk tokens freed" collapsible left after a /compact —
+   italic muted head with a chevron; the summary text expands below it. */
+.compacted { margin: 12px 0 12px 2px; }
+.compacted .comp-head { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  color: var(--fg-dim); font-style: italic; font-size: 12.5px; }
+.compacted .comp-head:hover { color: var(--fg-soft); }
+.compacted .chev { display: inline-flex; transition: transform .15s; opacity: .8; }
+.compacted.open .chev { transform: rotate(180deg); }
+.compacted .comp-body { display: none; margin-top: 8px; color: var(--fg-dim);
+  font-size: 12.5px; line-height: 1.55; }
+.compacted.open .comp-body { display: block; }
+
+/* slash commands render in mono inside the user bubble (VSCode look) */
+.user-msg .body.mono-cmd { font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px; }
+
+
+/* collapsible "Thought for Ns" block — the chevron only appears when there's
+   actual thinking text to reveal (has-body). */
+.a-item.think .think-head { cursor: default; display: inline-flex; align-items: center; gap: 6px; color: var(--fg-dim); }
+.a-item.think.has-body .think-head { cursor: pointer; }
+.a-item.think.has-body .think-head:hover { color: var(--fg-soft); }
+.a-item.think .chev { display: none; transition: transform .15s; opacity: .8; }
+.a-item.think.has-body .chev { display: inline-flex; }
+.a-item.think.open .chev { transform: rotate(90deg); }
+.a-item.think.live .think-label { animation: thinkpulse 1.4s ease-in-out infinite; }
+@keyframes thinkpulse { 50% { opacity: .5; } }
+.a-item.think .think-body { display: none; margin-top: 6px; margin-left: 18px; color: var(--fg-dim);
+  font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; }
+.a-item.think.open .think-body { display: block; }
+.a-body p { margin: 4px 0; } .a-body p:first-child { margin-top: 0; }
+.a-body ul, .a-body ol { margin: 4px 0 4px 20px; } .a-body li { margin: 2px 0; }
+.a-body h1,.a-body h2,.a-body h3,.a-body h4,.a-body h5,.a-body h6 { margin: 8px 0 4px; color: var(--fg); }
+.a-body h1 { font-size: 16px; } .a-body h2 { font-size: 14px; } .a-body h3 { font-size: 13px; }
+.a-body h4 { font-size: 12.5px; } .a-body h5 { font-size: 12px; } .a-body h6 { font-size: 12px; color: var(--fg-dim); }
+.a-body a { color: var(--link); text-decoration: none; }
+.a-body a:hover { text-decoration: underline; }
+.a-body del { color: var(--fg-dim); }
+.a-body blockquote { margin: 6px 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--fg-dim); }
+.a-body hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
+.a-body li.task { list-style: none; margin-left: -18px; }
+.a-body li.task input { margin-right: 6px; vertical-align: -1px; }
+.a-body table { border-collapse: collapse; margin: 8px 0; font-size: 12px; display: block; overflow-x: auto; }
+.a-body th, .a-body td { border: 1px solid var(--border); padding: 4px 9px; text-align: left; }
+.a-body th { background: var(--bg-chip); color: var(--fg); font-weight: 600; }
+.a-body td { color: var(--fg-soft); }
+.a-body pre { margin: 8px 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: var(--bg-code); }
+.a-body pre .cb-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: var(--cb-head-bg); font-size: 11px; color: var(--fg-dim); }
+.a-body pre .cb-head button { background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 11px; }
+.a-body pre code { display: block; padding: 10px 12px; overflow-x: auto; white-space: pre; color: var(--fg-soft);
+  font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px; line-height: 1.5; }
+

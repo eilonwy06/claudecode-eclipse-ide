@@ -4,7 +4,31 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.5] — 2026-07-22 *(current)*
+## [3.1.6] — 2026-07-28 *(current)*
+
+### Added
+- **Image pasting in the Claude Code view** — paste a screenshot or image straight into the message box and it's sent along with your message. Click an attached image to view it full size.
+- **`/advisor` and `/compact` slash commands in the Claude Code view.**
+- **Update Claude Code from inside the Claude Code view.** When a newer Claude Code release is published, a banner appears at the top of the view telling you which version you have and which is available. **Update** runs Claude Code's own updater, so it works however you installed it, and reports when it's done — restart Eclipse (or open a new tab) to pick up the new version.
+- **Permission mode is now per conversation.** "Ask before edits", "Edit automatically", "Plan mode" and "Auto mode" are remembered per tab, so one conversation can apply edits automatically while another keeps asking. New tabs start at "Ask before edits" rather than inheriting, the choice is restored when you reopen a past conversation, and changing it mid-conversation takes effect immediately instead of on the next message.
+
+### Changed
+- **Claude Terminal copy and paste now behave the same from every trigger** — Ctrl+V, Ctrl+Shift+V, Shift+Insert and right-click → Paste all take one path, and images paste from all of them, including the context menu. Copy is unified across Ctrl+C (with a selection), Ctrl+Shift+C and Ctrl+Insert; Ctrl+C with nothing selected still interrupts Claude. On Linux, image paste needs `xclip` (X11) or `wl-clipboard` (Wayland) ([@xgsa](https://github.com/xgsa), PR #87)
+- **"New Session" now comes before "Resume Session" in the Claude Terminal** — matching the usual order of New and Open actions ([@xgsa](https://github.com/xgsa), PR #88)
+
+### Removed
+- **The broken "Resume Session" menu item** — it pointed at the wrong view and failed with "Could not create the view". Resuming is already available from the Claude Terminal's "Session history" toolbar button and the Claude Code view's history panel ([@xgsa](https://github.com/xgsa), PR #88)
+
+### Fixed
+- **Ctrl+V pasted text twice in the Claude Terminal on Linux** ([@xgsa](https://github.com/xgsa), PR #87)
+- **Opening a conversation that's already open now switches to its tab** instead of loading a second copy of the same conversation in a new one.
+- **`/model` did nothing when picked from the command menu.** Choosing it opened the model chooser and immediately closed it again, so the command appeared to be dead.
+- **Text you were part-way through typing is no longer discarded** when you pick a command from the menu — the message you were composing is kept.
+- **A command's reply could appear in the wrong tab.** Running a command while another conversation was still generating could print the response into that other conversation instead of the one you were in.
+
+---
+
+## [3.1.5] — 2026-07-22
 
 ### Added
 - **Light theme support for the Claude Code view.** The chat view now follows Eclipse's light/dark theme instead of always rendering dark: switch Eclipse to a light theme (General &gt; Appearance) and the whole view — backgrounds, text, menus, cards, code blocks, and diffs — recolors to a matching light palette, keeping the Claude coral accent. The dark appearance is unchanged. The change applies the instant you switch themes, no reopen needed.

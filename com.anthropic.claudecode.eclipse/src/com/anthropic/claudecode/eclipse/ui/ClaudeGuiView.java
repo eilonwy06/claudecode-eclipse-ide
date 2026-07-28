@@ -73,9 +73,13 @@ public class ClaudeGuiView extends ViewPart {
     @SuppressWarnings("unused") private BrowserFunction accountInfoFn;
     @SuppressWarnings("unused") private BrowserFunction saveSessionPrefsFn;
     @SuppressWarnings("unused") private BrowserFunction loadSessionPrefsFn;
+    @SuppressWarnings("unused") private BrowserFunction setPermissionModeFn;
+    @SuppressWarnings("unused") private BrowserFunction updateCliFn;
     @SuppressWarnings("unused") private BrowserFunction rewindListFn;
     @SuppressWarnings("unused") private BrowserFunction rewindPreviewFn;
     @SuppressWarnings("unused") private BrowserFunction rewindApplyFn;
+    @SuppressWarnings("unused") private BrowserFunction advisorGetFn;
+    @SuppressWarnings("unused") private BrowserFunction advisorSetFn;
 
     // Status bar (the shared SWT ClaudeStatusBar widget, reused from the CLI view).
     private ClaudeStatusBar statusBar;
@@ -85,6 +89,8 @@ public class ClaudeGuiView extends ViewPart {
     private org.eclipse.jface.util.IPropertyChangeListener themeChangeListener;
     @SuppressWarnings("unused") private BrowserFunction statusSelectionFn;
     private volatile String availableModelsJson;   // curated model list from /v1/models, pushed to the webview
+    private volatile String cliVersionJson;        // {installed,latest,updateAvailable} for the update banner
+    private volatile String cliModelsJson;         // newest model per family the INSTALLED binary can run
     private volatile String lastRustStatusJson;   // latest onStatus payload (context %, cost, tokens)
     private volatile String displayModel = "";     // shown model — live GUI selection OR last actual (whichever changed last)
     private volatile String lastEffort = "";       // current GUI selection
@@ -154,11 +160,14 @@ public class ClaudeGuiView extends ViewPart {
                 if (model.isEmpty()) model = prefClaudeModel();
                 String thinking = (a.length > 6 && a[6] instanceof String th) ? th : "";
                 String tabId    = (a.length > 7 && a[7] instanceof String ti) ? ti : "default";
+                // Pasted images: JSON array of {media_type,data} (base64), built by the
+                // webview from clipboard-image paste. "" when none.
+                String imagesJson = (a.length > 8 && a[8] instanceof String ij) ? ij : "";
                 // Capture effort/thinking for the status bar (the stream reports
                 // model + context + cost, but not these launch-time choices).
                 this.lastEffort = effort;
                 this.lastThinking = !"0".equals(thinking);
-                managerFor(tabId).sendMessage(withCtx ? buildContextPreamble() + s : s, resumeId, permMode, effort, model, thinking);
+                managerFor(tabId).sendMessage(withCtx ? buildContextPreamble() + s : s, resumeId, permMode, effort, model, thinking, imagesJson);
             }
             return null;
         });
@@ -207,20 +216,52 @@ public class ClaudeGuiView extends ViewPart {
         currentContextFn = new SimpleFunction(browser, "_currentContext", a -> currentContextJson());
         modelConfigFn  = new SimpleFunction(browser, "_modelConfig", a -> modelConfigJson());
         accountInfoFn  = new SimpleFunction(browser, "_accountInfo", a -> accountInfoJson());
-        // Per-conversation composer prefs (effort/model/thinking) — we persist these
-        // ourselves so a resumed conversation restores them (esp. effort, which the
-        // CLI transcript never records).
+        // Per-conversation composer prefs (effort/model/thinking/permission mode) — we
+        // persist these ourselves so a resumed conversation restores them (esp. effort
+        // and the permission mode, which the CLI transcript never records).
         saveSessionPrefsFn = new SimpleFunction(browser, "_saveSessionPrefs", a -> {
             if (a.length > 0 && a[0] instanceof String id) {
                 String ef = (a.length > 1 && a[1] instanceof String s) ? s : "";
                 String md = (a.length > 2 && a[2] instanceof String s) ? s : "";
                 String th = (a.length > 3 && a[3] instanceof String s) ? s : "";
-                SessionPrefsStore.save(id, ef, md, th);
+                String pm = (a.length > 4 && a[4] instanceof String s) ? s : "";
+                SessionPrefsStore.save(id, ef, md, th, pm);
+            }
+            return null;
+        });
+        // Live permission-mode switch for an ALREADY-RUNNING conversation. The
+        // spawn-time --permission-mode flag only covers the first launch, so a
+        // mid-conversation change is pushed to that tab's process as a
+        // set_permission_mode control request.
+        setPermissionModeFn = new SimpleFunction(browser, "_setPermissionMode", a -> {
+            if (a.length > 1 && a[0] instanceof String ti && a[1] instanceof String mode) {
+                ChatProcessManager m = managers.get(ti);   // only a live process needs telling
+                // An older DLL has no chatSetPermissionMode symbol (UnsatisfiedLinkError);
+                // degrade to "applies at the next spawn" rather than failing the click.
+                if (m != null) try { m.setPermissionMode(mode); } catch (Throwable ignored) {}
             }
             return null;
         });
         loadSessionPrefsFn = new SimpleFunction(browser, "_loadSessionPrefs", a ->
             (a.length > 0 && a[0] instanceof String id) ? SessionPrefsStore.load(id) : "{}");
+        // Runs `claude update` — the CLI's own updater, so it works whichever way
+        // the binary was installed (npm / native / Homebrew). USER-TRIGGERED ONLY,
+        // from the update banner's button; the version check never calls it.
+        updateCliFn = new SimpleFunction(browser, "_updateCli", a -> {
+            CliUpdateService.updateAsync(configuredClaudeCmd(), res ->
+                Display.getDefault().asyncExec(() -> {
+                    if (browser == null || browser.isDisposed()) return;
+                    browser.execute("window.onCliUpdateDone && window.onCliUpdateDone('" + esc(res.toJson()) + "')");
+                    if (res.ok) {
+                        // Refresh what we know about the CLI. The banner itself stays
+                        // put — it now shows the result and is dismissed by the user,
+                        // not by this re-check reporting "up to date".
+                        checkCliVersionAsync();
+                        scanCliModelsAsync();     // the new binary may support newer models
+                    }
+                }));
+            return null;
+        });
         // Checkpoint rewind (VSCode "Rewind to…"): list a session's user messages,
         // preview the file restore, then restore + fork into a new session.
         rewindListFn = new SimpleFunction(browser, "_rewindList", a ->
@@ -232,6 +273,15 @@ public class ClaudeGuiView extends ViewPart {
         rewindApplyFn = new SimpleFunction(browser, "_rewindApply", a ->
             (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
                 ? com.anthropic.claudecode.eclipse.chat.RewindService.apply(workspaceRoot(), sid, mid) : "{}");
+        // Advisor model (/advisor): the CLI persists it GLOBALLY as "advisorModel"
+        // in ~/.claude/settings.json ("fable"|"opus"|"sonnet"; absent = disabled).
+        // The GUI card reads/writes that same setting so it's real, shared with the
+        // terminal, and picked up by every newly spawned claude process.
+        advisorGetFn = new SimpleFunction(browser, "_advisorGet", a -> advisorModelJson());
+        advisorSetFn = new SimpleFunction(browser, "_advisorSet", a -> {
+            setAdvisorModel((a.length > 0 && a[0] instanceof String v) ? v : "");
+            return null;
+        });
         // Live model/effort/thinking selection → status bar updates immediately
         // (no waiting for the next response). Runs on the SWT UI thread.
         statusSelectionFn = new SimpleFunction(browser, "_statusSelection", a -> {
@@ -266,6 +316,8 @@ public class ClaudeGuiView extends ViewPart {
             disableZoom();
             pushTheme();             // apply the current Eclipse light/dark theme
             pushAvailableModels();   // in case the model list arrived before the page loaded
+            pushCliVersion();        // ditto for the CLI update banner
+            pushCliModels();         // ditto for the installed binary's model support
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
                 // Re-push the theme too: the root composite's CSS-themed background may not
@@ -282,6 +334,50 @@ public class ClaudeGuiView extends ViewPart {
             availableModelsJson = json;
             Display.getDefault().asyncExec(this::pushAvailableModels);
         });
+        // The model list above says what the ACCOUNT may use; this says what the
+        // INSTALLED CLI is. A CLI older than a model release can't run it (aliases
+        // silently resolve to an older model), so surface the update instead.
+        checkCliVersionAsync();
+        // …and this says what the installed binary can ACTUALLY run, read from the
+        // model ids compiled into it. More reliable than the version number, which
+        // a failed self-update can leave misreporting.
+        scanCliModelsAsync();
+    }
+
+    /** Reads the newest model per family out of the CLI binary, then pushes it. */
+    private void scanCliModelsAsync() {
+        CliModelSupport.scanAsync(configuredClaudeCmd(), json -> {
+            cliModelsJson = json;
+            Display.getDefault().asyncExec(this::pushCliModels);
+        });
+    }
+
+    private void pushCliModels() {
+        if (cliModelsJson == null || browser == null || browser.isDisposed() || !pageLoaded) return;
+        browser.execute("window.onCliModels && window.onCliModels('" + esc(cliModelsJson) + "')");
+    }
+
+    /** Resolves installed-vs-latest CLI versions and pushes the result to the webview. */
+    private void checkCliVersionAsync() {
+        CliVersionService.checkAsync(configuredClaudeCmd(), info -> {
+            cliVersionJson = info.toJson();
+            Display.getDefault().asyncExec(this::pushCliVersion);
+        });
+    }
+
+    private void pushCliVersion() {
+        if (cliVersionJson == null || browser == null || browser.isDisposed() || !pageLoaded) return;
+        browser.execute("window.onCliVersion && window.onCliVersion('" + esc(cliVersionJson) + "')");
+    }
+
+    /** The configured {@code claude} command, or the default when unset. */
+    private static String configuredClaudeCmd() {
+        try {
+            String cmd = Activator.getDefault().getPreferenceStore()
+                    .getString(com.anthropic.claudecode.eclipse.Constants.PREF_CLAUDE_CMD);
+            if (cmd != null && !cmd.isBlank()) return cmd;
+        } catch (Throwable ignored) {}
+        return com.anthropic.claudecode.eclipse.Constants.DEFAULT_CLAUDE_CMD;
     }
 
     // Below this perceived luminance the ambient Eclipse UI is treated as dark.
@@ -611,6 +707,49 @@ public class ClaudeGuiView extends ViewPart {
     private static String str(com.google.gson.JsonObject o, String k) {
         return (o.has(k) && o.get(k).isJsonPrimitive()) ? o.get(k).getAsString() : "";
     }
+
+    private static java.nio.file.Path claudeSettingsPath() {
+        return java.nio.file.Paths.get(System.getProperty("user.home"), ".claude", "settings.json");
+    }
+
+    /** Current advisor as {@code {"advisorModel":"sonnet"}} (or {@code {}} when unset). */
+    private String advisorModelJson() {
+        try {
+            java.nio.file.Path p = claudeSettingsPath();
+            if (!java.nio.file.Files.exists(p)) return "{}";
+            com.google.gson.JsonObject root =
+                com.google.gson.JsonParser.parseString(java.nio.file.Files.readString(p)).getAsJsonObject();
+            com.google.gson.JsonObject out = new com.google.gson.JsonObject();
+            String v = str(root, "advisorModel");
+            if (!v.isEmpty()) out.addProperty("advisorModel", v);
+            return out.toString();
+        } catch (Throwable t) {
+            return "{}";
+        }
+    }
+
+    /** Merge-writes {@code advisorModel} into ~/.claude/settings.json (empty = remove,
+     *  i.e. "No advisor" — the CLI treats an absent key as disabled). All other
+     *  settings are preserved as parsed. */
+    private void setAdvisorModel(String value) {
+        try {
+            java.nio.file.Path p = claudeSettingsPath();
+            com.google.gson.JsonObject root = new com.google.gson.JsonObject();
+            if (java.nio.file.Files.exists(p)) {
+                try {
+                    root = com.google.gson.JsonParser.parseString(java.nio.file.Files.readString(p)).getAsJsonObject();
+                } catch (Exception malformed) {
+                    return;   // never clobber a file we couldn't parse
+                }
+            }
+            if (value == null || value.isEmpty()) root.remove("advisorModel");
+            else root.addProperty("advisorModel", value);
+            String json = new com.google.gson.GsonBuilder().setPrettyPrinting().disableHtmlEscaping()
+                    .create().toJson(root);
+            java.nio.file.Files.createDirectories(p.getParent());
+            java.nio.file.Files.writeString(p, json);
+        } catch (Throwable ignored) {}
+    }
     private static String capitalizeWords(String s) {
         StringBuilder b = new StringBuilder();
         for (String w : s.trim().split("\\s+")) {
@@ -674,10 +813,14 @@ public class ClaudeGuiView extends ViewPart {
 
     private void loadPage() {
         try {
-            URL bundleUrl = Activator.getDefault().getBundle().getEntry("resources/claudegui/claudegui.html");
+            // Resolve the whole claudegui/ DIRECTORY, not just the html: the page now
+            // references sibling styles/*.css and scripts/*.js, and toFileURL on a
+            // single entry of a jar'd bundle would extract only that one file.
+            // Extracting the directory materialises all of them next to each other.
+            URL bundleUrl = Activator.getDefault().getBundle().getEntry("resources/claudegui/");
             if (bundleUrl != null) {
-                URL fileUrl = FileLocator.toFileURL(bundleUrl);
-                browser.setUrl(fileUrl.toString());
+                URL dirUrl = FileLocator.toFileURL(bundleUrl);
+                browser.setUrl(dirUrl.toString() + "claudegui.html");
             } else {
                 browser.setText("<html><body style='background:#1e1e1e;color:#d4d4d4;padding:20px;font-family:sans-serif;'>"
                         + "<h3>Claude GUI not found</h3><p>resources/claudegui/claudegui.html is missing from the bundle.</p></body></html>");

@@ -18,9 +18,11 @@ import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.ui.ClaudeCliView;
 
 /**
- * Adds the active editor's file to Claude's context by typing an {@code @<path>}
- * mention into the embedded CLI terminal — the mechanism the CLI parses for
- * file references ({@code @<path> }, resolved against its working directory).
+ * Adds the active editor's file to the Claude Terminal's context by typing an
+ * {@code @<path>} mention into the embedded CLI terminal — the mechanism the CLI
+ * parses for file references ({@code @<path> }, resolved against its working
+ * directory). Requires an OPEN terminal: the command never opens one itself
+ * (that would silently spawn a session), it tells the user instead.
  */
 public class AddFileHandler extends AbstractHandler {
 
@@ -33,12 +35,14 @@ public class AddFileHandler extends AbstractHandler {
             String filePath = filePathOf(editor.getEditorInput());
             if (filePath == null) return null;
 
-            ClaudeCliView view = showView(event);
+            ClaudeCliView view = findOpenTerminal(event);
             if (view == null) return null;
 
             String mention = "@" + mentionPath(filePath, view) + " ";
             if (view.sendTextToActiveSession(mention)) {
                 Activator.log("File added to Claude context: " + mention.trim());
+            } else {
+                showNoTerminalDialog(event);   // view open but no live session/tab
             }
         } catch (Exception e) {
             Activator.logError("Failed to add file to context", e);
@@ -56,23 +60,28 @@ public class AddFileHandler extends AbstractHandler {
         return null;
     }
 
-    /** Ensures the server is running and the CLI view is open with a session. */
-    static ClaudeCliView showView(ExecutionEvent event) {
+    /**
+     * The already-open Claude Terminal view, or {@code null} after informing the
+     * user. Deliberately {@code findView}, not {@code showView}: these commands
+     * target a terminal the user has open — they must not open the view and spawn
+     * a fresh session as a side effect.
+     */
+    static ClaudeCliView findOpenTerminal(ExecutionEvent event) {
         IWorkbenchWindow window = HandlerUtil.getActiveWorkbenchWindow(event);
         if (window == null) return null;
         IWorkbenchPage page = window.getActivePage();
         if (page == null) return null;
-        try {
-            if (!Activator.getDefault().isServerRunning()) {
-                Activator.getDefault().initialize();
-            }
-            ClaudeCliView view = (ClaudeCliView) page.showView(ClaudeCliView.VIEW_ID);
-            if (view != null) view.ensureAtLeastOneTab();
-            return view;
-        } catch (Exception e) {
-            Activator.logError("Failed to open Claude Terminal view", e);
-            return null;
-        }
+        if (page.findView(ClaudeCliView.VIEW_ID) instanceof ClaudeCliView view) return view;
+        showNoTerminalDialog(event);
+        return null;
+    }
+
+    /** "No Claude Terminal open" info dialog (view closed, or open without a session). */
+    static void showNoTerminalDialog(ExecutionEvent event) {
+        IWorkbenchWindow window = HandlerUtil.getActiveWorkbenchWindow(event);
+        org.eclipse.jface.dialogs.MessageDialog.openInformation(
+                window != null ? window.getShell() : null,
+                "Claude Code", "No Claude Terminal open.");
     }
 
     /**

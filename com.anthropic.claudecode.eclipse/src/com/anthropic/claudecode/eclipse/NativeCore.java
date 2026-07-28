@@ -181,7 +181,7 @@ public final class NativeCore {
                                               String claudeCmd, String workspaceRoot,
                                               int mcpPort, String mcpAuthToken,
                                               String resumeId, String permMode, String effort,
-                                              String model, String thinking);
+                                              String model, String thinking, String imagesJson);
 
     /**
      * Cancels the current turn. Legacy mode kills the claude process; persistent
@@ -203,6 +203,14 @@ public final class NativeCore {
      * {@link #sessionRename(String, String, String, String)}.
      */
     public static native boolean chatRenameSession(long handle, String sessionId, String title);
+
+    /**
+     * Switches the permission mode of this manager's live process via the CLI's
+     * {@code set_permission_mode} control request, so a mid-conversation change
+     * applies without respawning. Returns false when there's no live process — the
+     * next spawn passes the mode as {@code --permission-mode} anyway.
+     */
+    public static native boolean chatSetPermissionMode(long handle, String mode);
 
     /**
      * Switches this manager to persistent mode: one long-lived
