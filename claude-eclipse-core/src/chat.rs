@@ -142,6 +142,7 @@ impl ChatManager {
         effort: String,
         model: String,
         thinking: String,
+        images_json: String,
     ) {
         // Mid-turn sends: legacy drops them; persistent mode QUEUES them onto the
         // live process's stdin (VSCode behavior) — the CLI answers in succession.
@@ -164,7 +165,7 @@ impl ChatManager {
                 if same_conversation && !p.is_dead() {
                     let msg_json = serde_json::json!({
                         "type": "user",
-                        "message": { "role": "user", "content": message }
+                        "message": { "role": "user", "content": build_user_content(&message, &images_json) }
                     });
                     if p.write_line(&msg_json.to_string()).is_err() {
                         // Reader's EOF path surfaces the failure.
@@ -183,7 +184,7 @@ impl ChatManager {
         if self.state.lock().unwrap().persistent {
             self.send_persistent(
                 message, claude_cmd, workspace_root, mcp_port, mcp_auth_token,
-                resume_id, perm_mode, effort, model, thinking, java_vm, callbacks_obj,
+                resume_id, perm_mode, effort, model, thinking, images_json, java_vm, callbacks_obj,
             );
             return;
         }
@@ -213,6 +214,7 @@ impl ChatManager {
                     &effort,
                     &model,
                     &thinking,
+                    &images_json,
                     &cancel,
                     &java_vm,
                     &callbacks_obj,
@@ -280,6 +282,32 @@ impl ChatManager {
         p.write_line(&msg.to_string()).is_ok()
     }
 
+    /// Switches the permission mode of this manager's live process via the CLI's
+    /// `set_permission_mode` control request. The spawn-time `--permission-mode`
+    /// flag only covers the first launch, so a mid-conversation change (the GUI's
+    /// per-tab mode dropdown) has to be pushed here to take effect without a
+    /// respawn. Returns false when there's no live process — the caller doesn't
+    /// need to do anything in that case, since the next spawn passes the mode as
+    /// the launch flag anyway.
+    pub fn set_permission_mode(&self, mode: &str) -> bool {
+        if mode.is_empty() {
+            return false;
+        }
+        let proc = self.state.lock().unwrap().proc.clone();
+        let Some(p) = proc else { return false };
+        if p.is_dead() {
+            return false;
+        }
+        static MODE_SEQ: AtomicU64 = AtomicU64::new(1);
+        let req_id = format!("eclipse-mode-{}", MODE_SEQ.fetch_add(1, Ordering::Relaxed));
+        let msg = serde_json::json!({
+            "type": "control_request",
+            "request_id": req_id,
+            "request": { "subtype": "set_permission_mode", "mode": mode }
+        });
+        p.write_line(&msg.to_string()).is_ok()
+    }
+
     pub fn reset_session(&self) {
         let persistent = self.state.lock().unwrap().persistent;
         if persistent {
@@ -324,6 +352,7 @@ impl ChatManager {
         effort: String,
         model: String,
         thinking: String,
+        images_json: String,
         java_vm: Arc<jni::JavaVM>,
         callbacks: Arc<jni::objects::GlobalRef>,
     ) {
@@ -399,7 +428,7 @@ impl ChatManager {
 
                 let msg_json = serde_json::json!({
                     "type": "user",
-                    "message": { "role": "user", "content": message }
+                    "message": { "role": "user", "content": build_user_content(&message, &images_json) }
                 });
                 if let Err(e) = proc.write_line(&msg_json.to_string()) {
                     proc.alive.store(false, Ordering::Relaxed);
@@ -440,6 +469,40 @@ impl Drop for ChatManager {
 // One conversation turn (runs on a dedicated thread)
 // ---------------------------------------------------------------------------
 
+/// Builds the `message.content` for a user turn. With no images it's a plain
+/// string (unchanged wire format); with images it's the Anthropic content-block
+/// array — a text block (omitted when empty) followed by base64 image blocks.
+/// `images_json` is a JSON array of `{"media_type","data"}` (data = raw base64);
+/// malformed / empty input degrades to the plain-string form.
+fn build_user_content(message: &str, images_json: &str) -> serde_json::Value {
+    let imgs: Vec<serde_json::Value> = if images_json.trim().is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(images_json).unwrap_or_default()
+    };
+    if imgs.is_empty() {
+        return serde_json::Value::String(message.to_string());
+    }
+    let mut content: Vec<serde_json::Value> = Vec::new();
+    if !message.is_empty() {
+        content.push(serde_json::json!({ "type": "text", "text": message }));
+    }
+    for img in &imgs {
+        let data = img.get("data").and_then(|v| v.as_str()).unwrap_or("");
+        if data.is_empty() { continue; }
+        let media_type = img.get("media_type").and_then(|v| v.as_str()).unwrap_or("image/png");
+        content.push(serde_json::json!({
+            "type": "image",
+            "source": { "type": "base64", "media_type": media_type, "data": data }
+        }));
+    }
+    // All images turned out invalid → fall back to the plain string.
+    if content.is_empty() || (content.len() == 1 && content[0]["type"] == "text") {
+        return serde_json::Value::String(message.to_string());
+    }
+    serde_json::Value::Array(content)
+}
+
 fn run_turn(
     message: &str,
     claude_cmd: &str,
@@ -451,6 +514,7 @@ fn run_turn(
     effort: &str,
     model: &str,
     thinking: &str,
+    _images_json: &str,   // legacy spawn-per-message path passes the message as a -p arg; images are GUI-only (persistent path)
     cancel: &Arc<AtomicBool>,
     java_vm: &Arc<jni::JavaVM>,
     callbacks: &Arc<jni::objects::GlobalRef>,
@@ -571,6 +635,10 @@ fn run_turn(
     if thinking == "0" {
         cmd.env("MAX_THINKING_TOKENS", "0");
     }
+
+    // This path is `-p` too, so its sessions are tagged `sdk-cli` as well. Same
+    // reasoning (and same unresolved caveat) as spawn_persistent.
+    cmd.env("CLAUDE_CODE_ENTRYPOINT", "cli");
 
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
         // Connect Claude to this instance's MCP server. The CLI auto-connects when
@@ -766,6 +834,17 @@ fn spawn_persistent(
     // writes no file-history-snapshot entries and the GUI's Rewind cannot
     // restore code (it can still fork the conversation).
     cmd.env("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "1");
+
+    // Tag these conversations as ordinary CLI sessions rather than SDK ones:
+    // `-p --input-format stream-json` is the SDK invocation, so the CLI otherwise
+    // records `entrypoint: sdk-cli` where a Terminal session records `cli`.
+    //
+    // NOTE: this was an attempt to make Claude Code view conversations visible to
+    // the CLI's own history (`claude --resume`, and `/resume` inside a Terminal
+    // session) — it did NOT fix that; the sessions are still not listed there.
+    // Kept because it makes the two views' sessions consistently tagged, but the
+    // visibility bug has another cause and is still open.
+    cmd.env("CLAUDE_CODE_ENTRYPOINT", "cli");
 
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
         cmd.env("CLAUDE_CODE_SSE_PORT", mcp_port.to_string())
@@ -1492,4 +1571,55 @@ fn fire_string(
         "(Ljava/lang/String;)V",
         &[JValue::Object(&jobj)],
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_user_content;
+    use serde_json::json;
+
+    #[test]
+    fn no_images_is_plain_string() {
+        // Unchanged wire format when there are no images.
+        assert_eq!(build_user_content("hello", ""), json!("hello"));
+        assert_eq!(build_user_content("hello", "  "), json!("hello"));
+        assert_eq!(build_user_content("hello", "[]"), json!("hello"));
+    }
+
+    #[test]
+    fn text_plus_image_becomes_content_blocks() {
+        let imgs = r#"[{"media_type":"image/png","data":"QUJD"}]"#;
+        assert_eq!(
+            build_user_content("look", imgs),
+            json!([
+                { "type": "text", "text": "look" },
+                { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "QUJD" } }
+            ])
+        );
+    }
+
+    #[test]
+    fn empty_message_omits_text_block() {
+        let imgs = r#"[{"media_type":"image/jpeg","data":"eHl6"}]"#;
+        assert_eq!(
+            build_user_content("", imgs),
+            json!([
+                { "type": "image", "source": { "type": "base64", "media_type": "image/jpeg", "data": "eHl6" } }
+            ])
+        );
+    }
+
+    #[test]
+    fn media_type_defaults_to_png() {
+        let imgs = r#"[{"data":"QQ=="}]"#;
+        let v = build_user_content("", imgs);
+        assert_eq!(v[0]["source"]["media_type"], "image/png");
+    }
+
+    #[test]
+    fn malformed_or_all_invalid_falls_back_to_string() {
+        assert_eq!(build_user_content("hi", "not json"), json!("hi"));
+        // images present but every one lacks data → plain string, not an empty array
+        assert_eq!(build_user_content("hi", r#"[{"media_type":"image/png"}]"#), json!("hi"));
+    }
 }

@@ -294,6 +294,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatSend
     effort: JString,
     model: JString,
     thinking: JString,
+    images_json: JString,
 ) {
     if handle == 0 {
         return;
@@ -328,7 +329,12 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatSend
     } else {
         env.get_string(&thinking).ok().map(|s| s.into()).unwrap_or_default()
     };
-    manager.send_message(message, claude_cmd, workspace_root, mcp_port as u16, mcp_auth_token, resume_id, perm_mode, effort, model, thinking);
+    let images_json: String = if images_json.is_null() {
+        String::new()
+    } else {
+        env.get_string(&images_json).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    manager.send_message(message, claude_cmd, workspace_root, mcp_port as u16, mcp_auth_token, resume_id, perm_mode, effort, model, thinking, images_json);
 }
 
 #[no_mangle]
@@ -818,6 +824,29 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatRena
         env.get_string(&title).ok().map(|s| s.into()).unwrap_or_default()
     };
     manager.rename_session(&id, &title) as jboolean
+}
+
+/// Switches a live conversation's permission mode over the existing control
+/// channel, so the GUI's per-tab mode dropdown applies mid-conversation instead
+/// of only at the next spawn. Returns false when there's no live process (the
+/// next spawn passes the mode as `--permission-mode` regardless).
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatSetPermissionMode(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    mode: JString,
+) -> jboolean {
+    if handle == 0 {
+        return 0;
+    }
+    let manager = unsafe { &*(handle as *const ChatManager) };
+    let mode: String = if mode.is_null() {
+        String::new()
+    } else {
+        env.get_string(&mode).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    manager.set_permission_mode(&mode) as jboolean
 }
 
 // ===========================================================================
