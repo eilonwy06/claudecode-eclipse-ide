@@ -32,6 +32,17 @@
 .slider .fill { position: absolute; top: 7px; left: 0; width: 50%; height: 3px; background: var(--accent); border-radius: 2px; }
 .slider .knob { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); width: 12px; height: 12px; border-radius: 50%; background: var(--knob); }
 
+/* Effort/thinking compatibility gate (Claude 5 rejects xhigh/max with thinking
+   off). `.capped` greys out the unreachable tail of the track; `.locked` marks a
+   menu row whose state is currently mandatory. Both are explanatory only — the
+   actual block lives in setEffort()/toggleThinking(). */
+.slider.capped .track { background: linear-gradient(to right, var(--track) var(--eff-cap, 100%), transparent var(--eff-cap, 100%)); }
+.slider.capped::after { content: ''; position: absolute; top: 7px; height: 3px; left: var(--eff-cap, 100%); right: 0;
+  background: repeating-linear-gradient(45deg, var(--track) 0 2px, transparent 2px 4px); border-radius: 2px; opacity: .5; }
+.menu .item.locked { cursor: default; }
+.menu .item.locked .txt .lbl, .menu .item.locked .ic { opacity: .55; }
+.menu .item.locked:hover { background: transparent; }
+
 
 /* slash command menu */
 #slash-menu { min-width: 280px; max-height: 260px; overflow-y: auto; }

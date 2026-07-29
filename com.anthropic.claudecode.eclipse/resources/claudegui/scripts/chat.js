@@ -232,10 +232,12 @@ function buildToolDiff(name, input) {
   return { block, summary: parts.join(', ') || 'Updated' };
 }
 
-/* Thinking marker. `claude -p` redacts the reasoning text from stream-json (only
-   an encrypted signature streams — never the actual thoughts), so there is nothing
-   to expand. We show just "Thinking…" → "Thought for Ns", timed from turn start,
-   with no (dead) chevron. */
+/* Thinking marker. The reasoning text only streams when the CLI is asked for it
+   (--thinking-display summarized); with the default "omitted" the block carries
+   an encrypted signature and an EMPTY string. So the chevron is conditional: it
+   appears once text actually arrives (has-body) and stays hidden otherwise,
+   rather than rendering an affordance that expands nothing. Either way we show
+   "Thinking…" → "Thought for Ns", timed from turn start. */
 function ensureThink() {
   if (!ensureTurn()) return null;
   if (!curThink) {

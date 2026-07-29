@@ -109,6 +109,9 @@ function selectModel(id, opts) {
   if (t && id !== prev && !(opts && opts.noDivider) && !t.pane.querySelector('.welcome')) {
     addModelSwitchDivider(id);
   }
+  // A gated model may make the current effort/thinking pair illegal — correct it
+  // here rather than blocking the switch (the user asked for this model).
+  enforceThinkingGate();
   persistTabPrefs(t); notifyStatusSelection();
 }
 /* "〰 Switched to <model> 〰" divider element. */
@@ -286,11 +289,134 @@ function notifyStatusSelection() {
 
 /* ---- thinking toggle (off => MAX_THINKING_TOKENS=0) ---- */
 let thinkingOn = true;
+
+/* THINKING/EFFORT COMPATIBILITY GATE.
+   Claude 5 models reject high effort with thinking disabled — the API answers
+   400 "output_config.effort 'xhigh' is not supported when thinking is disabled
+   on this model" (verified on opus-5 through our own spawn path; opus-4-8 and
+   older accept the same combination happily). Rather than let the user compose
+   an illegal state and eat an error card after they've already sent, we block
+   it in the controls: the offending choice is simply not selectable.
+
+   Three things can change — model, effort, thinking — so the illegal state is
+   reachable from three directions. Effort and thinking lock each other out;
+   the MODEL switch instead auto-corrects (see enforceThinkingGate), because
+   locking that too would strand the user with no way out. */
+const EFFORT_REQUIRES_THINKING = ['xhigh', 'max'];
+
+/** @returns {boolean} whether the given model id is a Claude 5 family model —
+ *  the only family that enforces the effort/thinking pairing. Aliases resolve
+ *  through the catalog's fullId (what the CLI will REALLY run), so picking
+ *  "opus" on a binary that tops out at 4.8 correctly reports false. */
+function isThinkingGatedModel(id) {
+  const entry = MODELS.find(m => m.id === id);
+  const concrete = (entry && entry.fullId) ? entry.fullId : id;
+  // normalizeModelId gives "opus-5" / "opus-4-8" / "haiku-4-5". Only the MAJOR
+  // version counts: match the version right after the family name, so opus-5 and
+  // sonnet-5 gate while opus-4-5 and haiku-4-5 (major 4) do not.
+  const m = /^[a-z]+-(\d+)/.exec(normalizeModelId(concrete));
+  return !!m && parseInt(m[1], 10) >= 5;
+}
+
+/** @returns {boolean} whether thinking is currently MANDATORY (model is gated
+ *  and effort is at a stop that requires it). While true the thinking toggle is
+ *  locked on and the xhigh/max stops stay available. */
+function thinkingRequired() {
+  return isThinkingGatedModel(curModel)
+      && EFFORT_REQUIRES_THINKING.indexOf(effort) >= 0;
+}
+
+/** Display name for gate messages. Prefers the concrete id the CLI will really
+ *  run ("Opus 5") over a bare alias label ("Opus"), since the whole point of the
+ *  message is which model generation imposes the rule. */
+function gateModelName(id) {
+  const entry = MODELS.find(m => m.id === id);
+  return (entry && entry.fullId) ? prettyModelId(entry.fullId) : modelLabelFor(id);
+}
+
+/** @returns {boolean} whether the xhigh/max effort stops are currently
+ *  selectable. Reciprocal of thinkingRequired(): with thinking off on a gated
+ *  model they'd produce a 400, so the slider stops short of them. */
+function highEffortAllowed() {
+  return thinkingOn || !isThinkingGatedModel(curModel);
+}
+
+/** Highest selectable effort index for the current model/thinking combination. */
+function maxEffortIdx() {
+  if (highEffortAllowed()) return EFFORTS.length - 1;
+  let i = EFFORTS.length - 1;
+  while (i > 0 && EFFORT_REQUIRES_THINKING.indexOf(EFFORTS[i]) >= 0) i--;
+  return i;
+}
+
+/* Re-applies the gate after ANY of model/effort/thinking changes. Refreshes the
+   locked/dimmed affordances, and — when a model switch has created an illegal
+   state — turns thinking back on rather than blocking the switch. */
+function enforceThinkingGate(opts) {
+  if (thinkingRequired() && !thinkingOn) {
+    // Only reachable by switching TO a gated model while sitting at xhigh/max
+    // with thinking off. Auto-correct: the deliberate action wins.
+    thinkingOn = true;
+    const t = activeTab(); if (t) t.thinking = true;
+    if (!(opts && opts.silent) && typeof addSystem === 'function') {
+      addSystem('Thinking enabled — required at ' + EFFORT_LABELS[effortIdx]
+        + ' effort on ' + gateModelName(curModel) + '.');
+    }
+  }
+  updateThinkingCheck();
+  updateEffortGate();
+}
+
 function updateThinkingCheck() {
   const chk = document.getElementById('think-check');
   if (chk) chk.style.visibility = thinkingOn ? '' : 'hidden';
+  const row = chk ? chk.closest('.item') : null;
+  if (!row) return;
+  const locked = thinkingRequired();
+  row.classList.toggle('locked', locked);
+  row.title = locked
+    ? 'Required at ' + EFFORT_LABELS[effortIdx] + ' effort on ' + gateModelName(curModel)
+    : '';
+  // Explain the lock inline so it doesn't just look broken.
+  let note = row.querySelector('.gate-note');
+  if (locked && !note) {
+    note = document.createElement('span');
+    note.className = 'desc gate-note';
+    row.querySelector('.txt').appendChild(note);
+  }
+  if (note) {
+    note.textContent = locked ? 'Required at this effort level on Claude 5 models' : '';
+    note.style.display = locked ? '' : 'none';
+  }
 }
-function toggleThinking(e) { if (e) e.stopPropagation(); thinkingOn = !thinkingOn; updateThinkingCheck(); const t = activeTab(); if (t) t.thinking = thinkingOn; persistTabPrefs(t); notifyStatusSelection(); }
+
+/* Dims the unreachable end of the effort sliders and explains why. The slider is
+   a bare span (no native disabled state), so the block lives in effortFromX —
+   this only makes the limit visible. */
+function updateEffortGate() {
+  const capped = !highEffortAllowed();
+  const maxPct = (maxEffortIdx() / (EFFORTS.length - 1)) * 100;
+  document.querySelectorAll('.eff-slider').forEach(sl => {
+    sl.classList.toggle('capped', capped);
+    sl.style.setProperty('--eff-cap', maxPct + '%');
+    sl.title = capped
+      ? 'Turn Thinking on to use X-High or Max on ' + gateModelName(curModel)
+      : 'Effort';
+  });
+}
+
+function toggleThinking(e) {
+  if (e) e.stopPropagation();
+  // Locked on: at xhigh/max on a Claude 5 model, thinking cannot be disabled.
+  if (thinkingOn && thinkingRequired()) return;
+  thinkingOn = !thinkingOn;
+  const t = activeTab(); if (t) t.thinking = thinkingOn;
+  // Turning thinking OFF closes the xhigh/max stops — pull the slider back so
+  // the state stays legal instead of silently going illegal.
+  if (!thinkingOn && effortIdx > maxEffortIdx()) setEffort(maxEffortIdx());
+  enforceThinkingGate();
+  persistTabPrefs(t); notifyStatusSelection();
+}
 
 /* ---- Account & usage window ---- */
 function openAccount() {

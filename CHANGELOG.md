@@ -4,7 +4,18 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.6.exp] — 2026-07-28 *(current)*
+## [3.1.7.exp] — 2026-07-29 *(current)*
+
+### Fixed
+- **Thinking is readable again in the Claude Code view.** The "Thought for Ns" step expands to Claude's reasoning again on recent models.
+- **Conversations from the Claude Code view appear in session history again.** Applies to new conversations only — ones started before this release stay hidden.
+
+### Changed
+- **Effort and Thinking can no longer be set to a combination Claude rejects.** Claude 5 models refuse X-High and Max effort with Thinking off. Thinking now stays on at those levels, the slider stops at High while Thinking is off, and switching to a Claude 5 model turns Thinking back on. Earlier models are unaffected.
+
+---
+
+## [3.1.6.exp] — 2026-07-28
 
 ### Added
 - **Image pasting in the Claude Code view** — paste a screenshot or image straight into the message box and it's sent along with your message. Click an attached image to view it full size.

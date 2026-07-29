@@ -287,15 +287,22 @@ function loadHistory(id, title) {
 
   let think = sawThinking;
   if (saved.thinking === '1') think = true; else if (saved.thinking === '0') think = false;
-  t.thinking = think; thinkingOn = think; updateThinkingCheck();
+  t.thinking = think; thinkingOn = think;
 
   const model = saved.model || lastModel;
   if (model) { t.model = model; curModel = model; updateModelLabel(); }
 
+  // force: the stored pair is restored as-is (thinking and model are already set
+  // above), then reconciled once below — see applyTabSettings for the ordering.
   if (saved.effort !== undefined && saved.effort !== '') {
     const ei = parseInt(saved.effort, 10);
-    if (!isNaN(ei)) setEffort(ei);   // updates the sliders + t.effortIdx
+    if (!isNaN(ei)) setEffort(ei, { force: true });   // updates the sliders + t.effortIdx
   }
+  // A session saved before this gate existed (or on a since-updated CLI) can hold
+  // an illegal thinking/effort pair — correct it quietly on restore.
+  if (typeof enforceThinkingGate === 'function') enforceThinkingGate({ silent: true });
+  else updateThinkingCheck();
+  t.thinking = thinkingOn;
   // Permission mode is a launch flag the transcript never records, so the sidecar
   // is the only source. Entries saved before permMode existed fall back to default.
   const pm = saved.permMode || DEFAULT_PERM_MODE;
