@@ -531,12 +531,21 @@ fn run_turn(
         // (message_start / content_block_delta / message_delta usage).
         "--include-partial-messages".into(),
     ];
-    // Effort level from the GUI meter (low | medium | high | xhigh | max). This
-    // drives how much Claude reasons — it also governs whether thinking happens, so
-    // we do NOT force MAX_THINKING_TOKENS (which --effort overrides anyway).
+    // Effort level from the GUI meter (low | medium | high | xhigh | max).
     if !effort.is_empty() {
         cmd_args.push("--effort".into());
         cmd_args.push(effort.to_string());
+    }
+    // Ask for readable reasoning summaries. Since model generation 4.7 the CLI
+    // defaults thinking.display to "omitted", which streams a thinking block whose
+    // text is an empty string (only an encrypted signature) — that's why the GUI's
+    // expandable "Thought for Ns" block went dead. Gated on thinking=="2", which
+    // Java sets only when it has SEEN this flag in the installed binary: it is
+    // undocumented (absent from --help) and an unknown option makes the CLI exit
+    // immediately, which would break chat outright on an older CLI.
+    if thinking == "2" {
+        cmd_args.push("--thinking-display".into());
+        cmd_args.push("summarized".into());
     }
     // Model from the GUI chooser (sonnet | sonnet[1m] | opus | haiku | <custom from
     // prefs args>). Empty = "Default", let claude pick. Appended last so it overrides
@@ -631,14 +640,18 @@ fn run_turn(
     }
 
     // Thinking toggle: "0" (off) disables extended thinking via MAX_THINKING_TOKENS=0,
-    // which suppresses thinking even at high --effort (verified). On = leave it to effort.
+    // which suppresses thinking even at high --effort (verified). On ("1"/"2") = leave
+    // it to effort, which DOES trigger thinking on its own (re-verified 2026-07-29 on
+    // Opus 5: --effort high with MAX_THINKING_TOKENS unset yields a populated thinking
+    // block). Don't set a positive budget here — it would override the effort ladder's
+    // own allocation.
     if thinking == "0" {
         cmd.env("MAX_THINKING_TOKENS", "0");
     }
 
-    // This path is `-p` too, so its sessions are tagged `sdk-cli` as well. Same
-    // reasoning (and same unresolved caveat) as spawn_persistent.
-    cmd.env("CLAUDE_CODE_ENTRYPOINT", "cli");
+    // This path is `-p` too, so its sessions would be tagged `sdk-cli` and hidden
+    // from `--resume`/`/resume` as well. Same reasoning as spawn_persistent.
+    cmd.env("CLAUDE_CODE_ENTRYPOINT", "claude-eclipse-ide");
 
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
         // Connect Claude to this instance's MCP server. The CLI auto-connects when
@@ -777,6 +790,13 @@ fn spawn_persistent(
         cmd_args.push("--effort".into());
         cmd_args.push(effort.to_string());
     }
+    // See run_turn: "2" = thinking on AND the installed binary advertises
+    // --thinking-display, so summaries are safe to request. Without it the CLI
+    // defaults to "omitted" and the thinking text arrives empty.
+    if thinking == "2" {
+        cmd_args.push("--thinking-display".into());
+        cmd_args.push("summarized".into());
+    }
     if !model.is_empty() {
         cmd_args.push("--model".into());
         cmd_args.push(model.to_string());
@@ -835,16 +855,24 @@ fn spawn_persistent(
     // restore code (it can still fork the conversation).
     cmd.env("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "1");
 
-    // Tag these conversations as ordinary CLI sessions rather than SDK ones:
-    // `-p --input-format stream-json` is the SDK invocation, so the CLI otherwise
-    // records `entrypoint: sdk-cli` where a Terminal session records `cli`.
+    // Make these conversations visible to the CLI's own history (`claude --resume`
+    // and `/resume` inside a Terminal session).
     //
-    // NOTE: this was an attempt to make Claude Code view conversations visible to
-    // the CLI's own history (`claude --resume`, and `/resume` inside a Terminal
-    // session) — it did NOT fix that; the sessions are still not listed there.
-    // Kept because it makes the two views' sessions consistently tagged, but the
-    // visibility bug has another cause and is still open.
-    cmd.env("CLAUDE_CODE_ENTRYPOINT", "cli");
+    // The CLI's resume picker drops any session whose first recorded `entrypoint`
+    // is one of {sdk-cli, sdk-ts, sdk-py}. `-p --input-format stream-json` is the
+    // SDK invocation, so our sessions are stamped `sdk-cli` and vanish, while
+    // Terminal sessions (`cli`) stay listed — that is the whole asymmetry.
+    //
+    // Setting this to `"cli"` does NOT work, and that is why the earlier attempt
+    // failed: the CLI normalizes the variable at startup and specifically rewrites
+    // the pair (`cli` + SDK invocation) back to `sdk-cli`. Every OTHER value is
+    // passed through verbatim, and an entrypoint the CLI does not recognize simply
+    // falls through to its default branches — no validation rejects it, and the
+    // one sanitizer it passes through accepts `[A-Za-z0-9_.-]{1,63}`. So we brand
+    // ourselves rather than impersonating another IDE: `claude-vscode` would work
+    // too, but it flips the CLI's publish context to "interactive UI available",
+    // which is not true of a `-p` session. Confirmed against the CLI bundle.
+    cmd.env("CLAUDE_CODE_ENTRYPOINT", "claude-eclipse-ide");
 
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
         cmd.env("CLAUDE_CODE_SSE_PORT", mcp_port.to_string())
