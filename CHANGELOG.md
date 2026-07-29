@@ -13,8 +13,6 @@ All notable changes to Claude Code for Eclipse are documented here.
 ### Changed
 - **Effort and Thinking can no longer be set to a combination Claude rejects.** Claude 5 models refuse X-High and Max effort with Thinking off. Thinking now stays on at those levels, the slider stops at High while Thinking is off, and switching to a Claude 5 model turns Thinking back on. Earlier models are unaffected.
 
-> **Note:** Claude decides whether a message needs reasoning, so a step with no expandable thinking is normal.
-
 ---
 
 ## [3.1.6] — 2026-07-28
