@@ -159,6 +159,13 @@ public class ClaudeGuiView extends ViewPart {
                 // CLI pick the account default (e.g. Opus 4.8) instead of the user's.
                 if (model.isEmpty()) model = prefClaudeModel();
                 String thinking = (a.length > 6 && a[6] instanceof String th) ? th : "";
+                // Upgrade "on" to "2" when the installed CLI advertises
+                // --thinking-display, which makes the core request readable reasoning
+                // summaries. Without the flag the CLI defaults to "omitted" and the
+                // thinking text streams empty (the dead "Thought for Ns" chevron).
+                // Kept behind the scan because the option is undocumented: passing it
+                // to a CLI that lacks it aborts the process with "unknown option".
+                if ("1".equals(thinking) && cliSupportsThinkingDisplay()) thinking = "2";
                 String tabId    = (a.length > 7 && a[7] instanceof String ti) ? ti : "default";
                 // Pasted images: JSON array of {media_type,data} (base64), built by the
                 // webview from clipboard-image paste. "" when none.
@@ -348,8 +355,30 @@ public class ClaudeGuiView extends ViewPart {
     private void scanCliModelsAsync() {
         CliModelSupport.scanAsync(configuredClaudeCmd(), json -> {
             cliModelsJson = json;
+            cliThinkingDisplay = jsonFlagsContain(json, "--thinking-display");
             Display.getDefault().asyncExec(this::pushCliModels);
         });
+    }
+
+    /** True once the binary scan has SEEN --thinking-display in the installed CLI.
+     *  Defaults to false, so a CLI we couldn't scan keeps the old (safe) behavior
+     *  rather than risking an "unknown option" abort on every message. */
+    private volatile boolean cliThinkingDisplay;
+
+    private boolean cliSupportsThinkingDisplay() { return cliThinkingDisplay; }
+
+    /** Looks for {@code flag} in the scan JSON's "flags" array. */
+    private static boolean jsonFlagsContain(String json, String flag) {
+        if (json == null || json.isEmpty()) return false;
+        try {
+            com.google.gson.JsonObject o =
+                com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+            if (!o.has("flags")) return false;
+            for (com.google.gson.JsonElement e : o.getAsJsonArray("flags")) {
+                if (flag.equals(e.getAsString())) return true;
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 
     private void pushCliModels() {

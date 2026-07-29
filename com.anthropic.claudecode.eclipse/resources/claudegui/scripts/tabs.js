@@ -115,8 +115,13 @@ function switchTab(id) {
    + status bar. */
 function applyTabSettings(t) {
   if (t.model !== undefined) { curModel = t.model; updateModelLabel(); }
-  if (t.effortIdx !== undefined) setEffort(t.effortIdx);          // updates sliders + notifies
-  if (t.thinking !== undefined) { thinkingOn = t.thinking; updateThinkingCheck(); }
+  // Thinking BEFORE effort: the effort cap is a function of the thinking flag, so
+  // restoring in the other order would clamp against the previous tab's state.
+  if (t.thinking !== undefined) thinkingOn = t.thinking;
+  if (t.effortIdx !== undefined) setEffort(t.effortIdx, { force: true });   // sliders + notify
+  // Reconcile silently — a stored pair predating this gate may be illegal.
+  if (typeof enforceThinkingGate === 'function') enforceThinkingGate({ silent: true });
+  else updateThinkingCheck();
   // Each conversation keeps its own permission mode (VSCode-style).
   permMode = (t.permMode !== undefined ? t.permMode : DEFAULT_PERM_MODE);
   if (typeof applyModeUI === 'function') applyModeUI(permMode);

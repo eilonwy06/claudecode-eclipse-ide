@@ -41,6 +41,16 @@ public final class CliModelSupport {
     /** Families we care about; anything else in the binary is ignored. */
     private static final String[] FAMILIES = { "fable", "opus", "sonnet", "haiku" };
 
+    /**
+     * Undocumented CLI flags we probe for. These do NOT appear in {@code --help},
+     * so the binary's own strings are the only way to know whether passing one is
+     * safe: an unknown option makes the CLI exit immediately ("error: unknown
+     * option"), which would take the whole chat down rather than degrade. Scanned
+     * here so the check rides along with the model scan instead of re-reading a
+     * ~265MB file.
+     */
+    private static final String[] PROBE_FLAGS = { "--thinking-display" };
+
     /** Below this a path is a launcher shim, not the real binary. */
     private static final long MIN_BINARY_BYTES = 10L * 1024 * 1024;
 
@@ -86,6 +96,7 @@ public final class CliModelSupport {
         Map<String, int[]> best = new LinkedHashMap<>();
         Map<String, String> bestId = new LinkedHashMap<>();
         java.util.Set<String> allIds = new java.util.TreeSet<>();
+        java.util.Set<String> flags = new java.util.TreeSet<>();
         try (InputStream in = Files.newInputStream(bin)) {
             byte[] buf = new byte[CHUNK + MAX_ID];
             int carry = 0;
@@ -93,6 +104,7 @@ public final class CliModelSupport {
             while ((n = in.read(buf, carry, CHUNK)) > 0) {
                 int end = carry + n;
                 collect(buf, end, best, bestId, allIds);
+                collectFlags(buf, end, flags);
                 // Keep the tail so an id straddling the boundary still matches.
                 carry = Math.min(MAX_ID, end);
                 System.arraycopy(buf, end - carry, buf, 0, carry);
@@ -109,9 +121,12 @@ public final class CliModelSupport {
         }
         com.google.gson.JsonArray all = new com.google.gson.JsonArray();
         for (String id : allIds) all.add(id);
+        com.google.gson.JsonArray flagArr = new com.google.gson.JsonArray();
+        for (String f : flags) flagArr.add(f);
         JsonObject out = new JsonObject();
         out.add("latest", latest);
         out.add("all", all);
+        out.add("flags", flagArr);
         String json = out.toString();
         cachedKey = key;
         cachedJson = json;
@@ -165,6 +180,29 @@ public final class CliModelSupport {
             if (cur == null || cmp(ver, cur) > 0) {
                 best.put(family, ver.clone());
                 bestId.put(family, base);
+            }
+        }
+    }
+
+    /**
+     * Scans one buffer for the literal {@link #PROBE_FLAGS} strings. A flag is
+     * only reported when the following byte can't extend it into a longer option
+     * name, so {@code --thinking-display} isn't claimed by a hypothetical
+     * {@code --thinking-display-mode}.
+     */
+    private static void collectFlags(byte[] buf, int end, java.util.Set<String> found) {
+        for (String flag : PROBE_FLAGS) {
+            if (found.contains(flag)) continue;               // already seen in an earlier chunk
+            byte[] needle = flag.getBytes(StandardCharsets.US_ASCII);
+            outer:
+            for (int i = 0; i + needle.length <= end; i++) {
+                for (int k = 0; k < needle.length; k++) {
+                    if (buf[i + k] != needle[k]) continue outer;
+                }
+                int after = i + needle.length;
+                if (after < end && (isAlpha(buf[after]) || buf[after] == '-')) continue;
+                found.add(flag);
+                break;
             }
         }
     }

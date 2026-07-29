@@ -153,8 +153,16 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const EFFORT_LABELS = ['Low', 'Medium', 'High', 'X-High', 'Max'];
 let effortIdx = 2;                       // default: high
 let effort = EFFORTS[effortIdx];
-function setEffort(idx) {
+/** @param {number} idx index into EFFORTS @param {{force?: boolean}} [opts]
+ *  `force` skips the thinking gate — used when RESTORING a persisted session,
+ *  whose stored pair is already consistent and shouldn't be silently rewritten
+ *  before the tab's thinking flag has been applied. */
+function setEffort(idx, opts) {
   effortIdx = Math.max(0, Math.min(EFFORTS.length - 1, idx));
+  // Claude 5 models 400 on xhigh/max with thinking off — never let the slider
+  // land there (see EFFORT_REQUIRES_THINKING in models.js).
+  if (!(opts && opts.force) && typeof maxEffortIdx === 'function')
+    effortIdx = Math.min(effortIdx, maxEffortIdx());
   effort = EFFORTS[effortIdx];
   const pct = (effortIdx / (EFFORTS.length - 1)) * 100;
   // both effort sliders (modes menu + actions menu) are an intended redundancy — keep them synced
@@ -162,6 +170,10 @@ function setEffort(idx) {
   document.querySelectorAll('.eff-knob').forEach(el => el.style.left = pct + '%');
   document.querySelectorAll('.eff-lbl').forEach(el => el.textContent = '(' + EFFORT_LABELS[effortIdx] + ')');
   const t = (typeof activeTab === 'function') ? activeTab() : null; if (t) t.effortIdx = effortIdx;
+  // Moving to/from xhigh/max flips whether thinking is mandatory — refresh both
+  // affordances so the lock appears the moment the stop is reached.
+  if (typeof updateThinkingCheck === 'function') updateThinkingCheck();
+  if (typeof updateEffortGate === 'function') updateEffortGate();
   if (typeof persistTabPrefs === 'function') persistTabPrefs(t);
   if (typeof notifyStatusSelection === 'function') notifyStatusSelection();
 }
