@@ -18,8 +18,12 @@ function relTime(iso) {
 function stripMeta(s) {
   if (!s) return '';
   return s
-    .replace(/<ide_selection\b[^>]*>[\s\S]*?<\/ide_selection>/gi, '')
-    .replace(/<ide_context\b[^>]*\/>/gi, '')
+    // Every <ide_*> wrapper, not just the two we knew about: the CLI keeps adding
+    // them (ide_opened_file arrived with 2.1.x and leaked whole paragraphs into
+    // bubbles, the rewind list and the forked composer). Matching the family
+    // means the next one can't leak either.
+    .replace(/<(ide_[a-z_]*)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<ide_[a-z_]*\b[^>]*\/>/gi, '')
     .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/gi, '')
     .replace(/<command-message>[\s\S]*?<\/command-message>/gi, '')
     .replace(/<command-args>[\s\S]*?<\/command-args>/gi, '')
@@ -259,7 +263,26 @@ function loadHistory(id, title) {
       const p = parseUserContent(it.content || '');
       const isCompactCmd = p.text.trim() === '/compact';
       if (!isCompactCmd) flushCompact();
-      if (p.text || p.chip) addUserMessage(p.text, p.chip);
+      // Bracketed markers the CLI writes as user lines are not messages anyone
+      // sent. Each pattern must match the WHOLE text: a real message that merely
+      // QUOTES a marker ("[Request interrupted by user for tool use] still
+      // appears as a bubble") has to stay a normal bubble, or the user's words
+      // get thrown away. The trailing [^\]]* still absorbs suffix variants.
+      const marker = p.text.trim();
+      // An interruption renders live as the italic muted note (two variants,
+      // matching the two labels doCancel picks between) — a reload shows the same.
+      if (/^\[Request interrupted by user[^\]]*\]$/.test(marker)) {
+        addInterrupted(/for tool use/i.test(marker) ? 'Tool interrupted' : 'Interrupted');
+        return;
+      }
+      // Image-scaling note the CLI injects beside an upload ("[Image: original
+      // 2352x4160, displayed at …]"). Internal metadata with no image block of
+      // its own — nothing to show, so it renders nothing at all.
+      if (/^\[Image:[^\]]*\]$/.test(marker)) return;
+      // Messages sent with pasted images carry them as {media_type,data} blocks —
+      // rebuild the same chips the live bubble showed.
+      const imgs = (it.images || []).map(imageFromBlock).filter(Boolean);
+      if (p.text || p.chip || imgs.length) addUserMessage(p.text, p.chip, imgs, it.id);
       if (isCompactCmd) flushCompact();
     } else if (ty === 'answered') {
       flushCompact();

@@ -4,7 +4,24 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.7.exp] — 2026-07-29 *(current)*
+## [3.1.8.exp] — 2026-07-31 *(current)*
+
+### Added
+- **Per-message actions in the Claude Code view.** Hover a message you sent and a badge appears on the bubble. The undo badge opens **Fork conversation from here**, **Rewind code to here** and **Fork conversation and rewind code** — so you can now restore the files without forking, or fork without touching the files, instead of always doing both. Rewinding is still available from the actions menu and `/rewind`.
+- **Delete a message you sent.** The trash badge beside it asks for confirmation, then permanently removes that message from the conversation's history — it's gone from the Claude Code view, from `claude --resume`, and from any other Claude Code client reading the same project.
+
+### Changed
+- **Forking lands on the newest message.** A forked conversation opens scrolled to the bottom, right above the message waiting in the composer, instead of at the top of the conversation.
+
+### Fixed
+- **Rewind could not restore code at all.** Since Claude Code 2.1.220, every rewind reported "The code has not changed, so no code will be restored" and left the files alone — the CLI had moved the pre-edit backup it records for each file into a new kind of transcript entry that the plugin didn't read, so it always compared against the *post*-edit version. Rewinding now restores files again, in existing conversations as well as new ones.
+- **Messages sent with images were invisible to rewind.** They never appeared in the "Rewind to…" list, and forking at one opened the new tab with an empty composer instead of the message you'd sent. Every message you sent is now listed and carries its text into the fork.
+- **Reopened conversations are formatted correctly again.** Internal markers that Claude Code attaches to messages — the file you have open, interruption notices, image scaling notes — were showing up verbatim as text you'd sent, in message bubbles, the rewind list and a forked composer. They're stripped or rendered as the notes they are, so a reopened conversation looks the way it did live.
+- **Pasted images are restored when you reopen a conversation.** Messages you sent with images attached now show those image chips again, and clicking one still opens it full size.
+
+---
+
+## [3.1.7.exp] — 2026-07-29
 
 ### Fixed
 - **Thinking is readable again in the Claude Code view.** The "Thought for Ns" step expands to Claude's reasoning again on recent models.

@@ -377,6 +377,24 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatRese
     manager.reset_session();
 }
 
+/// Drops the live conversation process WITHOUT clearing the conversation, so the
+/// next send re-spawns with `--resume <id>` and rebuilds context from the
+/// transcript on disk. Used after editing that transcript — the running process
+/// holds its own copy of the conversation and would otherwise keep (and
+/// re-serialize) a message that has just been deleted.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatRestartProcess(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    let manager = unsafe { &*(handle as *const ChatManager) };
+    manager.restart_process();
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatDestroy(
     _env: JNIEnv,
@@ -711,6 +729,55 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionL
     };
     let json = session::load_session_history(&root, &id);
     env.new_string(json).unwrap_or_else(|_| env.new_string("[]").unwrap()).into_raw()
+}
+
+/// Ordered transcript uuids of a session's user messages, matching the bubbles
+/// `sessionLoad` renders — the ids the GUI's per-message actions target.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionMessageIds(
+    mut env: JNIEnv,
+    _class: JClass,
+    workspace_root: JString,
+    session_id: JString,
+) -> jstring {
+    let get = |env: &mut JNIEnv, s: &JString| -> String {
+        if s.is_null() {
+            String::new()
+        } else {
+            env.get_string(s).ok().map(|v| v.into()).unwrap_or_default()
+        }
+    };
+    let root = get(&mut env, &workspace_root);
+    let id = get(&mut env, &session_id);
+    let json = session::message_ids(&root, &id);
+    env.new_string(json).unwrap_or_else(|_| env.new_string("[]").unwrap()).into_raw()
+}
+
+/// Permanently removes one user message from a session transcript: the chained
+/// line, its unchained prompt copies, and nothing else. Returns
+/// `{"ok":true,"stripped":N}` or `{"error":"…"}`.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionDeleteMessage(
+    mut env: JNIEnv,
+    _class: JClass,
+    workspace_root: JString,
+    session_id: JString,
+    message_id: JString,
+) -> jstring {
+    let get = |env: &mut JNIEnv, s: &JString| -> String {
+        if s.is_null() {
+            String::new()
+        } else {
+            env.get_string(s).ok().map(|v| v.into()).unwrap_or_default()
+        }
+    };
+    let root = get(&mut env, &workspace_root);
+    let id = get(&mut env, &session_id);
+    let mid = get(&mut env, &message_id);
+    let json = session::delete_message(&root, &id, &mid);
+    env.new_string(json)
+        .unwrap_or_else(|_| env.new_string(r#"{"error":"internal"}"#).unwrap())
+        .into_raw()
 }
 
 /// Renames an INACTIVE session the CLI-native way (headless --resume + the

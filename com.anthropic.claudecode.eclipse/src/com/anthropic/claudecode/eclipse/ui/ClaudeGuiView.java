@@ -79,6 +79,10 @@ public class ClaudeGuiView extends ViewPart {
     @SuppressWarnings("unused") private BrowserFunction rewindListFn;
     @SuppressWarnings("unused") private BrowserFunction rewindPreviewFn;
     @SuppressWarnings("unused") private BrowserFunction rewindApplyFn;
+    @SuppressWarnings("unused") private BrowserFunction rewindForkOnlyFn;
+    @SuppressWarnings("unused") private BrowserFunction rewindCodeOnlyFn;
+    @SuppressWarnings("unused") private BrowserFunction messageIdsFn;
+    @SuppressWarnings("unused") private BrowserFunction deleteMessageFn;
     @SuppressWarnings("unused") private BrowserFunction advisorGetFn;
     @SuppressWarnings("unused") private BrowserFunction advisorSetFn;
 
@@ -281,6 +285,33 @@ public class ClaudeGuiView extends ViewPart {
         rewindApplyFn = new SimpleFunction(browser, "_rewindApply", a ->
             (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
                 ? com.anthropic.claudecode.eclipse.chat.RewindService.apply(workspaceRoot(), sid, mid) : "{}");
+        // The per-message menu (joebiden8) offers the two halves separately as well:
+        // fork without touching the files, or restore the files in place.
+        rewindForkOnlyFn = new SimpleFunction(browser, "_rewindForkOnly", a ->
+            (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.forkOnly(workspaceRoot(), sid, mid) : "{}");
+        rewindCodeOnlyFn = new SimpleFunction(browser, "_rewindCodeOnly", a ->
+            (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.restoreOnly(workspaceRoot(), sid, mid) : "{}");
+        // Message ids for a session, in render order — lets a bubble sent THIS run
+        // (which has no id until the CLI has written it) find the line it owns.
+        messageIdsFn = new SimpleFunction(browser, "_messageIds", a ->
+            (a.length > 0 && a[0] instanceof String sid) ? safeMessageIds(sid) : "[]");
+        // Permanent per-message delete. After the transcript is edited the tab's
+        // live process is dropped (not reset — the conversation survives), so the
+        // next send resumes from the edited file instead of the stale in-memory
+        // context that still holds the deleted text.
+        deleteMessageFn = new SimpleFunction(browser, "_deleteMessage", a -> {
+            if (a.length < 3 || !(a[0] instanceof String ti)
+                    || !(a[1] instanceof String sid) || !(a[2] instanceof String mid))
+                return "{\"error\":\"bad arguments\"}";
+            String res = safeDeleteMessage(sid, mid);
+            if (res.contains("\"ok\"")) {
+                ChatProcessManager m = managers.get(ti);
+                if (m != null) try { m.restartProcess(); } catch (Throwable ignored) {}
+            }
+            return res;
+        });
         // Advisor model (/advisor): the CLI persists it GLOBALLY as "advisorModel"
         // in ~/.claude/settings.json ("fable"|"opus"|"sonnet"; absent = disabled).
         // The GUI card reads/writes that same setting so it's real, shared with the
@@ -914,6 +945,20 @@ public class ClaudeGuiView extends ViewPart {
         catch (Throwable ignored) {}
         try { return NativeCore.sessionLoad(workspaceRoot(), id); }
         catch (Throwable t) { return "[]"; }
+    }
+
+    /** Message ids in render order. An older DLL has no such symbol → "[]", which
+     *  the GUI reads as "no per-message actions here" rather than failing a click. */
+    private String safeMessageIds(String id) {
+        try { return NativeCore.sessionMessageIds(workspaceRoot(), id); }
+        catch (Throwable t) { return "[]"; }
+    }
+
+    /** Permanent per-message delete, guarded the same way (an older DLL reports an
+     *  error the dialog can show instead of throwing into the browser callback). */
+    private String safeDeleteMessage(String sessionId, String messageId) {
+        try { return NativeCore.sessionDeleteMessage(workspaceRoot(), sessionId, messageId); }
+        catch (Throwable t) { return "{\"error\":\"This build's native core has no message delete.\"}"; }
     }
 
     /** Delete one local session file (PHP bridge; Java file-delete as fallback). */

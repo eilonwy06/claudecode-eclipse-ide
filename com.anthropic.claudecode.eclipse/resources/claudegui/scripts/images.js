@@ -45,6 +45,19 @@ function addPendingImage(dataUrl) {
   syncComposer();
 }
 
+/**
+ * Rebuilds a chip-ready image from a stored transcript block. Session history
+ * gives back only {media_type, data} — the data URL, name and (lazily, in
+ * makeImageChip) the dimensions are derived here.
+ * @param {{media_type?: string, data?: string}} b
+ */
+function imageFromBlock(b) {
+  const mt = (b && b.media_type) || 'image/png';
+  const data = (b && b.data) || '';
+  if (!data) return null;
+  return { media_type: mt, data, url: 'data:' + mt + ';base64,' + data, w: 0, h: 0, name: imageName(mt) };
+}
+
 /** Reads a pasted image File/Blob into a data URL, then adds it. */
 function readPastedImage(file) {
   if (!file) return;
@@ -76,6 +89,17 @@ function makeImageChip(im, onRemove) {
   const name = document.createElement('span'); name.className = 'ic-name'; name.textContent = im.name || 'image.png';
   const dim = document.createElement('span'); dim.className = 'ic-dim';
   if (im.w && im.h) dim.textContent = im.w + '×' + im.h;
+  else {
+    // A chip rebuilt from history has no measured size yet — read it off-screen
+    // and fill this chip's label in place (no re-render; the chip may live in a
+    // reloaded bubble rather than the composer strip).
+    const probe = new Image();
+    probe.onload = () => {
+      im.w = probe.naturalWidth; im.h = probe.naturalHeight;
+      dim.textContent = im.w + '×' + im.h;
+    };
+    probe.src = im.url;
+  }
   open.appendChild(thumb); open.appendChild(name); open.appendChild(dim);
   open.onclick = () => openLightbox(im);
   chip.appendChild(open);

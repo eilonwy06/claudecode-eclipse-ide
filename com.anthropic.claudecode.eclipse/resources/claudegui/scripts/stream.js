@@ -15,7 +15,10 @@ function withTab(tabId, fn) { const t = tabById(tabId); if (!t || t.cancelled) r
 window.onStreamStart   = (tabId) => withTab(tabId, () => { setStreaming(true); ensureWorking(); });
 window.onThinking      = (tabId, t) => withTab(tabId, () => appendThinking(t));
 window.onStreamText    = (tabId, t) => withTab(tabId, () => appendAssistant(t));
-window.onStreamEnd     = (tabId) => withTab(tabId, (t) => { t.compacting = false; hideWorking(); endAssistant(); setStreaming(false); });
+/* Turn over → the CLI has written this turn's user line, so the bubble sent a
+   moment ago can finally learn which transcript line it owns (its hover actions
+   stay hidden until then). */
+window.onStreamEnd     = (tabId) => withTab(tabId, (t) => { t.compacting = false; hideWorking(); endAssistant(); setStreaming(false); backfillMessageIds(t); });
 window.onToolStart     = (tabId, n) => withTab(tabId, () => addToolLine(n));
 window.onToolEnd       = () => {};
 window.onSystemMessage = () => {};   /* backend system/init noise — ignored */

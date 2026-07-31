@@ -192,6 +192,15 @@ public final class NativeCore {
     /** Cancels the current turn and clears session state (disables -c flag). */
     public static native void chatResetSession(long handle);
 
+    /**
+     * Drops the live conversation process but KEEPS the conversation, so the next
+     * send re-spawns with {@code --resume} and rebuilds context from the
+     * transcript on disk. Call after editing that transcript (see
+     * {@link #sessionDeleteMessage}): a live process holds its own copy of the
+     * conversation, so a deleted message would otherwise stay in context.
+     */
+    public static native void chatRestartProcess(long handle);
+
     /** Frees the native memory for this chat manager. */
     public static native void chatDestroy(long handle);
 
@@ -372,6 +381,26 @@ public final class NativeCore {
      * as it looked live.
      */
     public static native String sessionLoad(String workspaceRoot, String sessionId);
+
+    /**
+     * Ordered transcript uuids of a session's user messages, as a JSON array of
+     * strings, matching the bubbles {@link #sessionLoad} renders — the ids the
+     * GUI's per-message actions (rewind / fork / delete) target.
+     */
+    public static native String sessionMessageIds(String workspaceRoot, String sessionId);
+
+    /**
+     * Permanently removes one user message from a session transcript: the chained
+     * line, plus the unchained {@code queue-operation} / {@code last-prompt}
+     * copies that also hold the raw prompt. Re-links the removed line's children
+     * onto its own parent (the CLI walks that chain on {@code --resume}) and
+     * leaves {@code file-history-snapshot} lines alone (rewind forward-merges
+     * them). Writes nothing unless the text is provably gone.
+     *
+     * @return {@code {"ok":true,"stripped":N}} or {@code {"error":"…"}}
+     */
+    public static native String sessionDeleteMessage(String workspaceRoot, String sessionId,
+                                                     String messageId);
 
     /**
      * Renames an inactive session the CLI-native way: resumes it headless and sends

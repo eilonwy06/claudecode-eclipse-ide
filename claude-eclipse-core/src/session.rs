@@ -30,6 +30,10 @@ fn workspace_hash(workspace_root: &str) -> String {
 fn strip_ide_preamble(s: &str) -> String {
     let mut t = remove_tag_block(s, "ide_selection");
     t = remove_self_closing_tag(&t, "ide_context");
+    // Arrived with CLI 2.1.x as a text block prepended to the user's own message,
+    // so without this a session title (and the delete sweep's text match) starts
+    // with a paragraph about which file was open.
+    t = remove_tag_block(&t, "ide_opened_file");
     t = remove_tag_block(&t, "local-command-caveat");
     t = remove_tag_block(&t, "command-message");
     t = remove_tag_block(&t, "command-args");
@@ -249,6 +253,20 @@ pub fn list_sessions(workspace_root: &str) -> String {
                     // the fallback title is the user's actual text, not the editor context.
                     if let Some(content) = event["message"]["content"].as_str() {
                         first_user = strip_ide_preamble(content).chars().take(120).collect();
+                    } else if let Some(blocks) = event["message"]["content"].as_array() {
+                        // A first message sent with a pasted image is stored as
+                        // content blocks — title the session from its text block
+                        // instead of falling through to a later message.
+                        for b in blocks {
+                            if b["type"].as_str() != Some("text") {
+                                continue;
+                            }
+                            let s = strip_ide_preamble(b["text"].as_str().unwrap_or(""));
+                            if !s.trim().is_empty() {
+                                first_user = s.chars().take(120).collect();
+                                break;
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -359,9 +377,62 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                     if event["isCompactSummary"].as_bool().unwrap_or(false) {
                         items.push(serde_json::json!({ "t": "compact_summary", "text": c }));
                     } else {
-                        items.push(serde_json::json!({ "t": "user", "content": c }));
+                        let mut item = serde_json::json!({ "t": "user", "content": c });
+                        // The transcript uuid, so the GUI can target THIS message for
+                        // per-message actions (rewind/fork/delete). Only set when the
+                        // line actually carries one — an id-less item isn't targetable.
+                        if let Some(u) = event["uuid"].as_str() {
+                            if !u.is_empty() {
+                                item["id"] = serde_json::Value::from(u);
+                            }
+                        }
+                        items.push(item);
                     }
                 } else if let Some(blocks) = content.as_array() {
+                    // A message the user sent with pasted images is stored as
+                    // content BLOCKS (text + image), not a plain string — rebuild
+                    // it as one user item so the bubble and its image chips come
+                    // back on reload. Images carry their base64 so the chip can
+                    // draw its thumbnail; tool_result-only lines add nothing.
+                    let mut text = String::new();
+                    let mut images: Vec<serde_json::Value> = Vec::new();
+                    for b in blocks {
+                        match b["type"].as_str() {
+                            Some("text") => {
+                                let s = b["text"].as_str().unwrap_or("");
+                                if !s.is_empty() {
+                                    if !text.is_empty() {
+                                        text.push('\n');
+                                    }
+                                    text.push_str(s);
+                                }
+                            }
+                            Some("image") => {
+                                let src = &b["source"];
+                                let data = src["data"].as_str().unwrap_or("");
+                                if data.is_empty() {
+                                    continue;
+                                }
+                                let mt = src["media_type"].as_str().unwrap_or("image/png");
+                                images.push(
+                                    serde_json::json!({ "media_type": mt, "data": data }),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    if !text.is_empty() || !images.is_empty() {
+                        let mut item = serde_json::json!({ "t": "user", "content": text });
+                        if !images.is_empty() {
+                            item["images"] = serde_json::Value::Array(images);
+                        }
+                        if let Some(u) = event["uuid"].as_str() {
+                            if !u.is_empty() {
+                                item["id"] = serde_json::Value::from(u);
+                            }
+                        }
+                        items.push(item);
+                    }
                     for b in blocks {
                         if b["type"].as_str() != Some("tool_result") {
                             continue;
@@ -495,6 +566,265 @@ fn strip_answer_prefix(s: &str) -> String {
     } else {
         s.to_string()
     }
+}
+
+// ---------------------------------------------------------------------------
+// message_ids / delete_message — per-message actions inside one transcript
+//
+// The jsonl is a parentUuid-linked chain, so dropping a line means re-linking
+// its children onto that line's OWN parent; a plain filter leaves a dangling
+// reference in the chain the CLI walks on `--resume`.
+//
+// The raw prompt is also stored OUTSIDE the chain, in line types that carry no
+// uuid at all: `queue-operation.content` (what was typed, `<ide_context …>`
+// wrapper included) and `last-prompt.lastPrompt` (rewritten every time the leaf
+// advances, so one message leaves many copies). Measured on a live transcript:
+// a single message existed 9 times — 1 chained, 6 last-prompt, 2
+// queue-operation. Removing only the chained line leaves the text on disk while
+// every UI surface reports success (the readers here and in the CLI both render
+// line-by-line and never look at these types), so the copies are stripped too
+// and the result is asserted BEFORE anything is written.
+//
+// `file-history-snapshot` lines are deliberately left untouched: RewindService
+// forward-merges them in first-appearance order to recover pre-first-edit
+// backups, so dropping one silently corrupts rewinding to EARLIER messages.
+// ---------------------------------------------------------------------------
+
+/// The user messages the GUI draws as bubbles, in order, as
+/// `[{"id":<uuid>,"text":<raw content>}]`. Derived from `load_session_history`'s
+/// own output, so these can never drift from the rendered items.
+///
+/// The text ships with the id because position alone cannot identify a bubble: a
+/// message queued mid-stream is on screen BEFORE its transcript line exists, so
+/// the two sequences differ in length and pairing by index (from either end)
+/// mis-assigns. The caller matches on text instead.
+pub fn message_ids(workspace_root: &str, session_id: &str) -> String {
+    let items: Vec<serde_json::Value> =
+        serde_json::from_str(&load_session_history(workspace_root, session_id))
+            .unwrap_or_default();
+    let out: Vec<serde_json::Value> = items
+        .iter()
+        .filter(|it| it["t"].as_str() == Some("user"))
+        .filter_map(|it| {
+            let id = it["id"].as_str()?;
+            Some(serde_json::json!({ "id": id, "text": it["content"].as_str().unwrap_or("") }))
+        })
+        .collect();
+    serde_json::to_string(&out).unwrap_or_else(|_| "[]".into())
+}
+
+/// The typed prompt a line carries, or None when it isn't a real user message
+/// (tool_result turns and every non-user line included).
+fn prompt_text(event: &serde_json::Value) -> Option<String> {
+    if event["type"].as_str() != Some("user") {
+        return None;
+    }
+    let content = &event["message"]["content"];
+    if let Some(s) = content.as_str() {
+        return Some(s.to_string());
+    }
+    let mut text = String::new();
+    for b in content.as_array()? {
+        if b["type"].as_str() != Some("text") {
+            continue;
+        }
+        if let Some(s) = b["text"].as_str() {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(s);
+        }
+    }
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Whether a bookkeeping field holds the prompt being removed. The queue log
+/// keeps the text with its `<ide_context …>` wrapper still attached, so an exact
+/// match would miss it — compare stripped forms, either containing the other.
+fn same_prompt(field: &str, target: &str) -> bool {
+    let a = strip_ide_preamble(field).trim().to_string();
+    let b = strip_ide_preamble(target).trim().to_string();
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    a == b || a.contains(&b) || b.contains(&a)
+}
+
+/// Any string anywhere in the line still holding `needle`. Walks the parsed
+/// value rather than the raw text so JSON escaping can't hide a match.
+fn holds_prompt(v: &serde_json::Value, needle: &str) -> bool {
+    match v {
+        serde_json::Value::String(s) => strip_ide_preamble(s).trim().contains(needle),
+        serde_json::Value::Array(a) => a.iter().any(|x| holds_prompt(x, needle)),
+        serde_json::Value::Object(o) => o.values().any(|x| holds_prompt(x, needle)),
+        _ => false,
+    }
+}
+
+/// Permanently removes one user message from a session transcript.
+/// Returns `{"ok":true,"stripped":N}` or `{"error":"…"}` — N being the unchained
+/// bookkeeping copies cleared alongside the message itself.
+pub fn delete_message(workspace_root: &str, session_id: &str, message_id: &str) -> String {
+    match delete_message_inner(workspace_root, session_id, message_id) {
+        Ok(n) => serde_json::json!({ "ok": true, "stripped": n }).to_string(),
+        Err(e) => serde_json::json!({ "error": e }).to_string(),
+    }
+}
+
+fn delete_message_inner(
+    workspace_root: &str,
+    session_id: &str,
+    message_id: &str,
+) -> Result<usize, String> {
+    if session_id.is_empty()
+        || session_id.contains('/')
+        || session_id.contains('\\')
+        || session_id.contains("..")
+    {
+        return Err("Bad session id.".into());
+    }
+    if message_id.is_empty() {
+        return Err("Bad message id.".into());
+    }
+    let dir = projects_dir(workspace_root).ok_or("No transcripts for this workspace.")?;
+    let path = dir.join(format!("{}.jsonl", session_id));
+    let raw =
+        fs::read_to_string(&path).map_err(|e| format!("Cannot read the transcript ({e})."))?;
+    let eol = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    let lines: Vec<&str> = raw.lines().collect();
+    let parsed: Vec<Option<serde_json::Value>> = lines
+        .iter()
+        .map(|l| {
+            if l.trim().is_empty() {
+                None
+            } else {
+                serde_json::from_str(l).ok()
+            }
+        })
+        .collect();
+
+    let target = parsed
+        .iter()
+        .position(|e| {
+            e.as_ref().map_or(false, |e| {
+                e["type"].as_str() == Some("user") && e["uuid"].as_str() == Some(message_id)
+            })
+        })
+        .ok_or("That message is no longer in this conversation.")?;
+    let text = parsed[target].as_ref().and_then(prompt_text).unwrap_or_default();
+    let dead_parent = parsed[target]
+        .as_ref()
+        .map(|e| e["parentUuid"].clone())
+        .unwrap_or(serde_json::Value::Null);
+
+    // The span this message owns: from the previous typed prompt to the next one.
+    // Its bookkeeping copies live inside that window (queue-operation just ahead
+    // of the message, last-prompt repeatedly after it). The span does NOT by
+    // itself separate this message's copies from the previous message's trailing
+    // ones — those sit inside it too — that is what `same_prompt` is for; the span
+    // keeps the sweep and the assertion off messages further away. Two CONSECUTIVE
+    // prompts with identical text can therefore clear each other's bookkeeping
+    // field, which is harmless (the other message's own line is untouched).
+    let is_boundary = |i: usize| {
+        parsed[i]
+            .as_ref()
+            .map_or(false, |e| prompt_text(e).is_some())
+    };
+    let start = (0..target).rev().find(|&i| is_boundary(i)).map_or(0, |i| i + 1);
+    let end = ((target + 1)..parsed.len())
+        .find(|&i| is_boundary(i))
+        .unwrap_or(parsed.len());
+
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut span_check: Vec<serde_json::Value> = Vec::new();
+    let mut stripped = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        if i == target {
+            continue; // the message itself
+        }
+        let Some(orig) = parsed[i].as_ref() else {
+            out.push((*line).to_string());
+            continue;
+        };
+        let mut ev = orig.clone();
+        let mut changed = false;
+        let mut ty = String::new();
+        if let Some(obj) = ev.as_object_mut() {
+            ty = obj
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            // Children of the removed line adopt its parent, so the chain still
+            // closes for `--resume`.
+            for key in ["parentUuid", "logicalParentUuid", "leafUuid"] {
+                if obj.get(key).and_then(|v| v.as_str()) == Some(message_id) {
+                    obj.insert(key.to_string(), dead_parent.clone());
+                    changed = true;
+                }
+            }
+            let field = match ty.as_str() {
+                "queue-operation" => Some("content"),
+                "last-prompt" => Some("lastPrompt"),
+                _ => None,
+            };
+            if let Some(field) = field {
+                let hit = i >= start
+                    && i < end
+                    && obj
+                        .get(field)
+                        .and_then(|v| v.as_str())
+                        .map_or(false, |s| same_prompt(s, &text));
+                if hit {
+                    obj.remove(field);
+                    changed = true;
+                    stripped += 1;
+                }
+            }
+        }
+        // Assertion set: everything in this message's span that ISN'T a message
+        // in its own right. `assistant` lines are skipped because Claude quoting
+        // the text back is legitimate; `user` lines are skipped because they are
+        // other people's messages. Anything else — including a line type a
+        // future CLI adds — must come out clean.
+        if i >= start && i < end && ty != "user" && ty != "assistant" {
+            span_check.push(ev.clone());
+        }
+        out.push(if changed {
+            ev.to_string()
+        } else {
+            (*line).to_string()
+        });
+    }
+
+    let needle = strip_ide_preamble(&text).trim().to_string();
+    if !needle.is_empty() {
+        if let Some(bad) = span_check.iter().find(|e| holds_prompt(e, &needle)) {
+            return Err(format!(
+                "The message text is still present in a \"{}\" line — the transcript was left untouched.",
+                bad["type"].as_str().unwrap_or("transcript")
+            ));
+        }
+    }
+
+    // Replace via a sibling temp file so a crash mid-write can't truncate the
+    // transcript.
+    let tmp = dir.join(format!("{}.jsonl.tmp", session_id));
+    {
+        let mut f =
+            fs::File::create(&tmp).map_err(|e| format!("Cannot write the transcript ({e})."))?;
+        for l in &out {
+            f.write_all(l.as_bytes())
+                .and_then(|_| f.write_all(eol.as_bytes()))
+                .map_err(|e| format!("Cannot write the transcript ({e})."))?;
+        }
+    }
+    fs::rename(&tmp, &path).map_err(|e| format!("Cannot replace the transcript ({e})."))?;
+    Ok(stripped)
 }
 
 // ---------------------------------------------------------------------------
@@ -853,6 +1183,47 @@ mod tests {
         assert_eq!(got, want, "compacted session render items");
     }
 
+    /// A message sent with pasted images is stored as content BLOCKS, not a
+    /// string — it must come back as one user item carrying its text and the
+    /// images' base64 (so the chips redraw), the session must be titled from
+    /// that text, and tool_result-only block lines must still add no bubble.
+    /// Shapes captured from a real CLI transcript (note the CLI re-encodes a
+    /// pasted PNG to image/jpeg).
+    #[test]
+    fn load_session_restores_pasted_images() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-images-home");
+        let root = r"C:\imgws";
+        let dir = home.join(".claude").join("projects").join("C--imgws");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("sessi.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<ide_context openFile=\"C:\\a\\B.java\" />\n\nwhat is this"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"QUJD"}}]},"timestamp":"2026-07-30T01:00:00.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"a.txt"}}]},"timestamp":"2026-07-30T01:00:03.000Z"}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file contents"}]},"timestamp":"2026-07-30T01:00:04.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"a screenshot"}]},"timestamp":"2026-07-30T01:00:06.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let loaded = super::load_session_history(root, "sessi");
+        let listed = super::list_sessions(root);
+        let _ = fs::remove_dir_all(&home);
+
+        let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
+        let want: serde_json::Value = serde_json::from_str(r#"[
+            {"t":"user","content":"<ide_context openFile=\"C:\\a\\B.java\" />\n\nwhat is this",
+             "images":[{"media_type":"image/jpeg","data":"QUJD"}]},
+            {"t":"tool","name":"Read","input":{"file_path":"a.txt"},"status":"done","model":"claude-opus-4-8"},
+            {"t":"text","text":"a screenshot","model":"claude-opus-4-8"}
+        ]"#).unwrap();
+        assert_eq!(got, want, "pasted-image session render items");
+
+        // The list title comes from the text block, with the IDE preamble stripped.
+        let sessions: serde_json::Value = serde_json::from_str(&listed).unwrap();
+        assert_eq!(sessions[0]["display"], serde_json::json!("what is this"));
+    }
+
     /// Tool dots are reconstructed from the transcript so a reloaded conversation
     /// keeps its green/red: a non-error tool_result ⇒ "done", an is_error result ⇒
     /// "interrupted", and a tool with no result at all ⇒ "interrupted".
@@ -909,5 +1280,211 @@ mod tests {
         assert!(!dir.join("victim.jsonl").exists());
 
         let _ = fs::remove_dir_all(&home);
+    }
+
+    /// Fixture shaped like a real transcript (verified against a live one on
+    /// 2026-07-30): a parentUuid chain, an `attachment` child hanging off the
+    /// user line, `file-history-snapshot` lines keyed by messageId, and the two
+    /// UNCHAINED prompt carriers — `queue-operation.content` (wrapper still
+    /// attached) and `last-prompt.lastPrompt` (several copies per message).
+    /// Also plants the two legitimate echoes that must NOT block a delete: an
+    /// assistant line quoting the prompt and a tool_result line containing it.
+    fn msg_fixture(extra: &str) -> String {
+        [
+            r#"{"type":"queue-operation","operation":"enqueue","content":"<ide_context openFile=\"C:\\a.java\" />\n\nfirst question","sessionId":"sess1"}"#,
+            r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"first question"},"timestamp":"2026-07-30T10:00:00.000Z"}"#,
+            r#"{"type":"file-history-snapshot","messageId":"u1","snapshot":{"messageId":"u1","trackedFileBackups":{"a.java":{"backupFileName":"blob1"}}}}"#,
+            r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"model":"claude-opus-5","content":[{"type":"text","text":"answering the first question"}]}}"#,
+            r#"{"type":"last-prompt","leafUuid":"a1","lastPrompt":"first question","sessionId":"sess1"}"#,
+            r#"{"type":"queue-operation","operation":"enqueue","content":"second question","sessionId":"sess1"}"#,
+            r#"{"type":"user","uuid":"u2","parentUuid":"a1","message":{"role":"user","content":"second question"},"timestamp":"2026-07-30T10:01:00.000Z"}"#,
+            r#"{"type":"attachment","uuid":"at1","parentUuid":"u2","attachment":{"type":"task_reminder"}}"#,
+            r#"{"type":"file-history-snapshot","messageId":"u2","snapshot":{"messageId":"u2","trackedFileBackups":{"b.java":{"backupFileName":"blob2"}}}}"#,
+            r#"{"type":"assistant","uuid":"a2","parentUuid":"at1","message":{"model":"claude-opus-5","content":[{"type":"text","text":"you asked: second question"}]}}"#,
+            r#"{"type":"user","uuid":"tr1","parentUuid":"a2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"grep hit: second question"}]}}"#,
+            r#"{"type":"last-prompt","leafUuid":"tr1","lastPrompt":"second question","sessionId":"sess1"}"#,
+            r#"{"type":"last-prompt","leafUuid":"a2","lastPrompt":"second question","sessionId":"sess1"}"#,
+        ]
+        .join("\n")
+            + extra
+            + "\n"
+            + r#"{"type":"user","uuid":"u3","parentUuid":"tr1","message":{"role":"user","content":[{"type":"text","text":"third with image"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}]},"timestamp":"2026-07-30T10:02:00.000Z"}"#
+            + "\n"
+            + r#"{"type":"assistant","uuid":"a3","parentUuid":"u3","message":{"model":"claude-opus-5","content":[{"type":"text","text":"ok"}]}}"#
+            + "\n"
+    }
+
+    fn msg_home(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let home = std::env::temp_dir().join(format!("claude-eclipse-msg-{tag}"));
+        let dir = home.join(".claude").join("projects").join("C--msgtest");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+        (home, dir)
+    }
+
+    fn lines_of(p: &std::path::Path) -> Vec<serde_json::Value> {
+        fs::read_to_string(p)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn message_ids_track_the_rendered_user_bubbles() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let (home, dir) = msg_home("ids");
+        fs::write(dir.join("sess1.jsonl"), msg_fixture("")).unwrap();
+        set_home(&home);
+
+        let ids = super::message_ids(r"C:\msgtest", "sess1");
+        let _ = fs::remove_dir_all(&home);
+
+        // The image-bearing message (u3) counts; tool_result turns never do. Each
+        // entry carries its text so the GUI can MATCH a bubble instead of guessing
+        // by position.
+        let v: serde_json::Value = serde_json::from_str(&ids).unwrap();
+        let pairs: Vec<(&str, &str)> = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| (m["id"].as_str().unwrap(), m["text"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("u1", "first question"),
+                ("u2", "second question"),
+                ("u3", "third with image"),
+            ],
+            "ids follow render order and carry their text: {ids}"
+        );
+    }
+
+    #[test]
+    fn delete_message_relinks_the_chain_and_sweeps_unchained_copies() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let (home, dir) = msg_home("del");
+        let path = dir.join("sess1.jsonl");
+        fs::write(&path, msg_fixture("")).unwrap();
+        set_home(&home);
+
+        let res = super::delete_message(r"C:\msgtest", "sess1", "u2");
+        let after = lines_of(&path);
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "delete succeeded: {res}");
+        // 1 queue-operation + 2 last-prompt copies of THIS prompt.
+        assert_eq!(v["stripped"], serde_json::json!(3), "unchained copies cleared: {res}");
+
+        // The message itself is gone.
+        assert!(
+            !after.iter().any(|l| l["uuid"] == serde_json::json!("u2")),
+            "the user line was removed"
+        );
+        // Its child adopted its parent, so nothing dangles.
+        let uuids: std::collections::HashSet<&str> =
+            after.iter().filter_map(|l| l["uuid"].as_str()).collect();
+        for l in &after {
+            if let Some(p) = l["parentUuid"].as_str() {
+                assert!(uuids.contains(p), "dangling parentUuid {p} in {l}");
+            }
+        }
+        let at1 = after.iter().find(|l| l["uuid"] == serde_json::json!("at1")).unwrap();
+        assert_eq!(at1["parentUuid"], serde_json::json!("a1"), "child re-linked past the hole");
+
+        // Snapshots stay — RewindService forward-merges them for EARLIER messages.
+        assert_eq!(
+            after
+                .iter()
+                .filter(|l| l["type"] == serde_json::json!("file-history-snapshot"))
+                .count(),
+            2,
+            "both snapshots preserved"
+        );
+
+        // This prompt's unchained copies are cleared…
+        for l in &after {
+            if l["type"] == serde_json::json!("queue-operation") {
+                assert!(
+                    l["content"].as_str().map_or(true, |c| !c.contains("second question")),
+                    "queue copy cleared: {l}"
+                );
+            }
+            if l["type"] == serde_json::json!("last-prompt") {
+                assert!(
+                    l["lastPrompt"].as_str().map_or(true, |c| !c.contains("second question")),
+                    "last-prompt copy cleared: {l}"
+                );
+            }
+        }
+        // …while the OTHER message's copy is untouched.
+        assert!(
+            after.iter().any(|l| l["lastPrompt"] == serde_json::json!("first question")),
+            "another message's bookkeeping is left alone"
+        );
+        // Legitimate echoes survive: they are not the message.
+        assert!(
+            after.iter().any(|l| l["type"] == serde_json::json!("assistant")
+                && l["message"]["content"][0]["text"]
+                    .as_str()
+                    .map_or(false, |t| t.contains("second question"))),
+            "an assistant quote is not treated as a copy"
+        );
+        assert!(
+            after.iter().any(|l| l["uuid"] == serde_json::json!("tr1")),
+            "a tool_result echoing the text is not treated as a copy"
+        );
+    }
+
+    /// The guard that matters most: a prompt carrier this code does not know
+    /// about must abort the delete rather than report a success that leaves the
+    /// text on disk. Uses a fabricated line type standing in for whatever a
+    /// future CLI adds.
+    #[test]
+    fn delete_message_aborts_on_an_unknown_prompt_carrier() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let (home, dir) = msg_home("abort");
+        let path = dir.join("sess1.jsonl");
+        let planted = "\n".to_string()
+            + r#"{"type":"future-prompt-log","promptText":"second question","sessionId":"sess1"}"#;
+        let original = msg_fixture(&planted);
+        fs::write(&path, &original).unwrap();
+        set_home(&home);
+
+        let res = super::delete_message(r"C:\msgtest", "sess1", "u2");
+        let untouched = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert!(
+            v["error"].as_str().unwrap_or("").contains("future-prompt-log"),
+            "names the offending line type: {res}"
+        );
+        assert_eq!(untouched, original, "nothing is written when the assertion fails");
+    }
+
+    #[test]
+    fn delete_message_guards_bad_input() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let (home, dir) = msg_home("guard");
+        fs::write(dir.join("sess1.jsonl"), msg_fixture("")).unwrap();
+        set_home(&home);
+
+        let bad_session = super::delete_message(r"C:\msgtest", "../sess1", "u2");
+        let bad_msg = super::delete_message(r"C:\msgtest", "sess1", "");
+        let missing = super::delete_message(r"C:\msgtest", "sess1", "nope");
+        let _ = fs::remove_dir_all(&home);
+
+        for (label, res) in [
+            ("traversal", bad_session),
+            ("empty message id", bad_msg),
+            ("absent message", missing),
+        ] {
+            let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+            assert!(v["error"].is_string(), "{label} rejected: {res}");
+        }
     }
 }

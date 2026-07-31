@@ -5,6 +5,8 @@
 let openMenuEl = null, openAnchor = null;   // openAnchor = the trigger element the menu is glued to
 function closeMenus() { document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
   document.querySelectorAll('.tbtn.active-tmp').forEach(b=>b.classList.remove('active-tmp'));
+  // per-message badges are pinned visible while their menu is up — unpin them
+  document.querySelectorAll('.msg-actions.open').forEach(w => w.classList.remove('open'));
   openMenuEl = null; openAnchor = null; }
 
 /* Position a menu relative to its trigger button, so it stays glued to that element
@@ -15,8 +17,8 @@ function positionMenu(menu, anchor) {
   if (!menu || !anchor) return;
   const r = anchor.getBoundingClientRect();
   const mw = menu.offsetWidth, mh = menu.offsetHeight;
-  const below = (menu.id === 'history-panel');
-  const right = (menu.id === 'modes-menu' || menu.id === 'history-panel');
+  const below = (menu.id === 'history-panel' || menu.id === 'msg-menu');
+  const right = (menu.id === 'modes-menu' || menu.id === 'history-panel' || menu.id === 'msg-menu');
   let left = right ? (r.right - mw) : r.left;
   let top  = below ? (r.bottom + 6) : (r.top - mh - 6);
   left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
