@@ -433,7 +433,7 @@ function openAccount() {
   h += row('Plan', acc.plan);
   if (!acc.email) h += '<div class="aw-note">Not signed in, or account info is unavailable.</div>';
   h += '<div class="aw-sec">Usage</div>';
-  h += '<div class="aw-note">Usage limits live on your Claude account — the CLI doesn\'t expose the percentages here. <a href="https://claude.ai/settings/usage" target="_blank">Manage usage on claude.ai</a></div>';
+  h += '<div class="aw-note">Usage limits live on your Claude account — the CLI doesn\'t expose the percentages here. <a href="https://claude.ai/settings/usage">Manage usage on claude.ai</a></div>';
   win.innerHTML = h;
   document.getElementById('account-overlay').classList.add('open');
 }

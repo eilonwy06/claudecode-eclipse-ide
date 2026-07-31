@@ -46,6 +46,22 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && ['+', '-', '=', '0'].includes(e.key)) e.preventDefault();
 }, true);
 
+/* Links (markdown output, cards, the account panel) must NEVER navigate this page:
+   the webview IS the conversation, and there's no back button to return to it.
+   Hand every http(s) link to Java, which opens it in the system browser. Capture
+   phase + closest() so it fires before anything else and works when the click lands
+   on a child node; auxclick covers middle-click. `target` is ignored on purpose so
+   target="_blank" anchors route the same way. */
+function openLinkExternally(e) {
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a) return;
+  const href = a.getAttribute('href') || '';
+  e.preventDefault();   // not stopPropagation: menus still need to see the click and close
+  if (/^https?:\/\//i.test(href) && window._openExternal) _openExternal(href);
+}
+document.addEventListener('click', openLinkExternally, true);
+document.addEventListener('auxclick', (e) => { if (e.button === 1) openLinkExternally(e); }, true);
+
 document.addEventListener('click', (e) => {
   if (openMenuEl && !openMenuEl.contains(e.target) &&
       !e.target.closest('#plus-btn,#slash-btn,#modes-btn,#history-btn')) closeMenus();

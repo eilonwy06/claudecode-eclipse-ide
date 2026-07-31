@@ -84,6 +84,7 @@ public class ClaudeGuiView extends ViewPart {
     @SuppressWarnings("unused") private BrowserFunction deleteMessageFn;
     @SuppressWarnings("unused") private BrowserFunction advisorGetFn;
     @SuppressWarnings("unused") private BrowserFunction advisorSetFn;
+    @SuppressWarnings("unused") private BrowserFunction openExternalFn;
 
     // Status bar (the shared SWT ClaudeStatusBar widget, reused from the CLI view).
     private ClaudeStatusBar statusBar;
@@ -346,6 +347,30 @@ public class ClaudeGuiView extends ViewPart {
             }
             return null;
         });
+
+        // A link in a response must not replace the conversation: this webview has no
+        // back button, so navigating away loses the chat until the view is closed and
+        // the session reloaded from history (issue #96). JS hands links here instead.
+        openExternalFn = new SimpleFunction(browser, "_openExternal", a -> {
+            if (a.length > 0 && a[0] instanceof String url) openExternal(url);
+            return null;
+        });
+
+        // Backstop for what the JS handler can't cancel — a window.open/target=_blank
+        // that WebView2 turns into a top-level load, or a meta refresh. (Keyboard
+        // activation of a link fires a real click, so that path is already covered.)
+        // Veto the navigation and route it out the same way. The page itself is a
+        // file: URL, and loadPage() is the only setUrl, so this never fights our own load.
+        // Matched on http(s) rather than "anything but our own page URL": WebView2
+        // reports that file: URL back in a different normal form than FileLocator hands
+        // us, and the mismatch would blank the view. Other schemes never get this far
+        // anyway — the JS handler cancels them first.
+        browser.addLocationListener(org.eclipse.swt.browser.LocationListener.changingAdapter(e -> {
+            String url = e.location == null ? "" : e.location;
+            if (!isHttpUrl(url)) return;
+            e.doit = false;
+            openExternal(url);
+        }));
 
         browser.addProgressListener(org.eclipse.swt.browser.ProgressListener.completedAdapter(e -> {
             pageLoaded = true;
@@ -889,6 +914,32 @@ public class ClaudeGuiView extends ViewPart {
             Activator.logError("Failed to load Claude GUI HTML", e);
             browser.setText("<html><body style='background:#1e1e1e;color:#d4d4d4;padding:20px;'>"
                     + "<h3>Error loading Claude GUI</h3><p>" + e.getMessage() + "</p></body></html>");
+        }
+    }
+
+    /** True only for absolute http/https URLs — the one shape we hand to the OS. */
+    private static boolean isHttpUrl(String url) {
+        if (url == null) return false;
+        String lower = url.toLowerCase(java.util.Locale.ROOT);
+        return lower.startsWith("http://") || lower.startsWith("https://");
+    }
+
+    /**
+     * Opens a link from the webview in the system browser, leaving the conversation
+     * on screen.
+     *
+     * <p>The URL arrives from model-generated markdown, so this scheme check is the
+     * trust boundary — not the one in JS. Anything that isn't http/https ({@code file:},
+     * {@code javascript:}, a UNC path, …) is dropped rather than handed to a launcher.
+     */
+    private static void openExternal(String url) {
+        if (!isHttpUrl(url)) return;
+        try {
+            URL u = new java.net.URI(url).toURL();
+            org.eclipse.ui.PlatformUI.getWorkbench().getBrowserSupport().getExternalBrowser().openURL(u);
+        } catch (Exception e) {
+            // No external browser configured, or the URL isn't RFC-clean — let the OS pick.
+            try { org.eclipse.swt.program.Program.launch(url); } catch (Exception ignored) {}
         }
     }
 
