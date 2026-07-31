@@ -308,6 +308,31 @@ impl ChatManager {
         p.write_line(&msg.to_string()).is_ok()
     }
 
+    /// Drops the conversation process but KEEPS the conversation: `has_session`
+    /// is left alone and no "Session reset." line is emitted, so the next send —
+    /// which still carries the tab's session id as `resume_id` — re-spawns with
+    /// `--resume` and rebuilds context from the transcript on disk.
+    ///
+    /// Needed after the transcript is edited (a message deleted): a live process
+    /// keeps its own in-memory copy of the conversation, so without this the
+    /// deleted text stays in context and can be written back the moment anything
+    /// quotes it. `--resume` is driven purely by a non-empty `resume_id`, so
+    /// dropping the process is enough to force the re-read.
+    pub fn restart_process(&self) {
+        let proc = {
+            let mut s = self.state.lock().unwrap();
+            if !s.persistent {
+                return; // spawn-per-message path has nothing to drop
+            }
+            s.awaiting = false;
+            s.proc.take()
+        };
+        if let Some(p) = proc {
+            p.alive.store(false, Ordering::Relaxed);
+            p.kill();
+        }
+    }
+
     pub fn reset_session(&self) {
         let persistent = self.state.lock().unwrap().persistent;
         if persistent {
