@@ -16,12 +16,17 @@ function scrollBottom() {
 /**
  * @param {string} text @param {string|null} [ctx] context-chip label (file:lines)
  * @param {{url: string, name: string, w: number, h: number}[]} [images] pasted-image chips
+ * @param {string} [id] transcript uuid — enables this bubble's hover actions. A
+ *   live send has none yet (the CLI writes the line after us); backfillMessageIds
+ *   fills it in once the turn ends.
  */
-function addUserMessage(text, ctx, images) {
+function addUserMessage(text, ctx, images, id) {
   const pane = activeTab() ? activeTab().pane : messagesEl;
   clearWelcome(pane);
   const turn = document.createElement('div'); turn.className = 'turn';
   const box = document.createElement('div'); box.className = 'user-msg';
+  if (id) box.dataset.mid = id;
+  box.appendChild(makeMsgActions());
   if (ctx) {
     const chip = document.createElement('span'); chip.className = 'ctx-chip';
     chip.innerHTML = ICONS.CODEICON + ' <span></span>';
@@ -351,6 +356,10 @@ function doCancel() {
   // the note sits below the system line (not tucked under the reddened tool).
   addSystem('Request cancelled.');
   addInterrupted(stoppedTool ? 'Tool interrupted' : 'Interrupted');
+  // t.cancelled makes withTab swallow this tab's onStreamEnd, which is the other
+  // backfill trigger — so claim the sent bubble's transcript id here, or a stopped
+  // turn's message would have no hover actions until the conversation is reloaded.
+  backfillMessageIds(t);
 }
 /* Redden the last (in-progress) tool line's dot in the current turn. Returns true
    if a tool line was found, so the caller can pick the right interrupted label. */

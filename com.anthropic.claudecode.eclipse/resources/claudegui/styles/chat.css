@@ -29,6 +29,27 @@
 .user-msg .ctx-chip svg { flex-shrink: 0; opacity: .8; }
 .user-msg .body { color: var(--fg); line-height: 1.5; }
 
+/* ── Per-message actions (joebiden8) ─────────────────────────────────────────
+   Hovering a sent message floats round badges over its top-right corner: the
+   undo badge (rewind/fork menu) sits exactly where the reference puts it, and
+   the delete badge is added to its LEFT so that position never moves. Same
+   overhanging-circle treatment as the lightbox close badge. Only a bubble whose
+   transcript line is known (data-mid) can be acted on, so the badges stay hidden
+   until the id is in place. */
+.user-msg .msg-actions { position: absolute; top: -11px; right: -4px; display: none; gap: 6px; z-index: 3; }
+.user-msg[data-mid]:hover .msg-actions,
+.user-msg[data-mid] .msg-actions.open { display: flex; }
+.user-msg .msg-act { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--menu-bg); border: 1px solid var(--border); color: var(--fg-dim);
+  cursor: pointer; box-shadow: 0 2px 8px var(--shadow); }
+.user-msg .msg-act:hover { background: var(--bg-hover); color: var(--fg); }
+.user-msg .msg-act.danger:hover { color: var(--red); }
+
+/* the actions menu itself — plain labels, right-aligned under the badge */
+#msg-menu { min-width: 200px; }
+#msg-menu .mi { padding: 9px 11px; border-radius: 6px; cursor: pointer; color: var(--fg-soft); font-size: 12.5px; line-height: 1.35; }
+#msg-menu .mi:hover, #msg-menu .mi.sel { background: var(--menu-hover); color: var(--fg); }
+
 /* ── Pasted-image attachments (VSCode-style chip + hover preview, joebiden4) ──
    Shared by the composer's #pending-images strip and the sent user bubble's
    .msg-images strip. A chip is: tiny thumbnail + "image.png" + "W×H"; hovering

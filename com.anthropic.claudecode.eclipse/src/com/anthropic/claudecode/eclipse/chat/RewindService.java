@@ -88,10 +88,35 @@ public final class RewindService {
      * the first message (nothing to fork; the caller starts a fresh tab).
      */
     public static String apply(String workspaceRoot, String sessionId, String messageId) {
+        return applyInternal(workspaceRoot, sessionId, messageId, true, true);
+    }
+
+    /**
+     * "Fork conversation from here": splits the conversation at {@code messageId}
+     * and leaves every file on disk exactly as it is. Same return shape as
+     * {@link #apply}.
+     */
+    public static String forkOnly(String workspaceRoot, String sessionId, String messageId) {
+        return applyInternal(workspaceRoot, sessionId, messageId, false, true);
+    }
+
+    /**
+     * "Rewind code to here": restores the checkpointed files in place and leaves
+     * the conversation alone (no fork, no new tab). Returns
+     * {@code {restored:<file count>}} or {@code {error:…}}.
+     */
+    public static String restoreOnly(String workspaceRoot, String sessionId, String messageId) {
+        return applyInternal(workspaceRoot, sessionId, messageId, true, false);
+    }
+
+    private static String applyInternal(String workspaceRoot, String sessionId, String messageId,
+                                        boolean restoreFiles, boolean fork) {
         JsonObject out = new JsonObject();
         try {
             // 1. Put the code back the way it was at the selected message.
-            for (Restore r : restorePlan(workspaceRoot, sessionId, messageId)) {
+            int restored = 0;
+            for (Restore r : restoreFiles ? restorePlan(workspaceRoot, sessionId, messageId)
+                                          : java.util.List.<Restore>of()) {
                 if (r.backup == null) {
                     Files.deleteIfExists(r.absPath);
                 } else {
@@ -99,7 +124,10 @@ public final class RewindService {
                     Files.copy(r.backup, r.absPath, StandardCopyOption.REPLACE_EXISTING);
                 }
                 refreshWorkspaceFile(r.absPath);
+                restored++;
             }
+            if (restoreFiles) out.addProperty("restored", restored);
+            if (!fork) return out.toString();
 
             // 2. Fork: transcript lines BEFORE the selected message become a new
             //    session; the message itself goes back to the composer instead.
@@ -159,14 +187,37 @@ public final class RewindService {
      * Every file's backup representing its content at {@code messageId}, or null
      * if that message was never checkpointed.
      *
-     * <p>A file enters the CLI's registry at its FIRST edit: the pre-edit backup
-     * is back-filled into the snapshot of the message whose turn edited it, and
-     * carried into every later snapshot (version-rolled when it changes again).
-     * So the state at M is M's own snapshot PLUS, for files not tracked there
-     * yet, the entry from the first later snapshot that tracks them — that
-     * backup is pre-first-edit content, i.e. still what the file held at M.
-     * Without the forward merge, rewinding to the message that ASKED for an
-     * edit (rather than the one whose turn performed it) restores nothing.
+     * <p>A file enters the CLI's registry at its FIRST edit — which runs AFTER
+     * that message's {@code file-history-snapshot} line was already written, so
+     * the snapshot alone never mentions the file the turn is about to change. The
+     * CLI back-fills it with a separate {@code file-history-delta} line:
+     *
+     * <pre>{@code
+     * {"type":"file-history-delta","snapshotMessageId":"<the asking message>",
+     *  "trackingPath":"src\\Foo.java",
+     *  "backup":{"backupFileName":"<hash>@v1","version":1,...}}
+     * }</pre>
+     *
+     * <p>That backup is the PRE-edit content, and folding it into the snapshot it
+     * names is exactly what the CLI's own reducer does in memory. Reading only the
+     * snapshot lines left those entries invisible, so the forward merge fell
+     * through to the NEXT snapshot — which already points at the POST-edit
+     * version, byte-identical to what was on disk. Every comparison then came out
+     * equal and the dialog always said the code had not changed: rewind could
+     * never undo an edit.
+     *
+     * <p>Measured over every transcript on disk: folding the deltas in changes
+     * 1402 (rewind point, file) resolutions from {@code @v2} to the correct
+     * {@code @v1}, recovers 261 files that resolved to nothing at all, and in 3
+     * places stops a rewind from writing post-edit content over a file that was
+     * already correctly rewound — i.e. applying the edit instead of undoing it.
+     * Nothing is lost: no pair resolves from the snapshots alone but not with the
+     * deltas folded in.
+     *
+     * <p>The forward merge still matters for files a LATER turn first touched:
+     * their delta lands on that later message, and first-wins keeps M's own view.
+     * A file created during a turn is recorded as a null backup (restoring it
+     * deletes the file).
      */
     private static JsonObject snapshotFor(String workspaceRoot, String sessionId,
                                           String messageId) throws Exception {
@@ -174,13 +225,26 @@ public final class RewindService {
         // precedes its user message); the LAST registry per message wins
         // (mid-turn updates rewrite the same snapshot with more files).
         java.util.LinkedHashMap<String, JsonObject> snaps = new java.util.LinkedHashMap<>();
-        for (JsonObject line : readSession(workspaceRoot, sessionId)) {
+        List<JsonObject> lines = readSession(workspaceRoot, sessionId);
+        for (JsonObject line : lines) {
             if (!"file-history-snapshot".equals(str(line, "type"))) continue;
             JsonObject snap = obj(line, "snapshot");
             if (snap == null) continue;
             String mid = str(snap, "messageId");
             JsonObject tb = obj(snap, "trackedFileBackups");
-            if (!mid.isEmpty() && tb != null) snaps.put(mid, tb);
+            if (!mid.isEmpty() && tb != null) snaps.put(mid, tb.deepCopy());
+        }
+        // Second pass: the back-filled PRE-edit backups. A delta only ever ADDS a
+        // file its snapshot didn't know about and never overwrites one it did —
+        // the CLI's own reducer skips a path that is already tracked.
+        for (JsonObject line : lines) {
+            if (!"file-history-delta".equals(str(line, "type"))) continue;
+            String smid = str(line, "snapshotMessageId");
+            String path = str(line, "trackingPath");
+            JsonObject backup = obj(line, "backup");
+            if (smid.isEmpty() || path.isEmpty() || backup == null) continue;
+            JsonObject registry = snaps.get(smid);
+            if (registry != null && !registry.has(path)) registry.add(path, backup);
         }
         if (!snaps.containsKey(messageId)) return null;
         JsonObject merged = new JsonObject();
@@ -322,15 +386,40 @@ public final class RewindService {
         if ("system".equals(str(line, "promptSource"))) return null;
         JsonObject msg = obj(line, "message");
         if (msg == null || !"user".equals(str(msg, "role"))) return null;
-        JsonElement content = msg.get("content");
-        if (content == null || !content.isJsonPrimitive()) return null;             // arrays = tool_result turns
+        String text = promptText(msg.get("content"));
+        if (text == null) return null;
         String uuid = str(line, "uuid");
         if (uuid.isEmpty()) return null;
         JsonObject out = new JsonObject();
         out.addProperty("id", uuid);
-        out.addProperty("text", content.getAsString());
+        out.addProperty("text", text);
         out.addProperty("ts", str(line, "timestamp"));
         return out;
+    }
+
+    /**
+     * The typed prompt inside a user line's {@code content}, or null when there
+     * isn't one. A plain string is the common case; a message sent WITH IMAGES is
+     * stored as content blocks instead, so its {@code text} blocks are joined —
+     * without this, every image-bearing message vanished from the rewind list and
+     * forking from one lost its prompt. An array with no text block is a
+     * tool_result turn and still yields null.
+     */
+    private static String promptText(JsonElement content) {
+        if (content == null) return null;
+        if (content.isJsonPrimitive()) return content.getAsString();
+        if (!content.isJsonArray()) return null;
+        StringBuilder sb = new StringBuilder();
+        for (JsonElement b : content.getAsJsonArray()) {
+            if (!b.isJsonObject()) continue;
+            JsonObject blk = b.getAsJsonObject();
+            if (!"text".equals(str(blk, "type"))) continue;
+            String t = str(blk, "text");
+            if (t.isEmpty()) continue;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(t);
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     private static List<JsonObject> readSession(String workspaceRoot, String sessionId) throws Exception {

@@ -175,6 +175,15 @@ public class ChatProcessManager {
         NativeCore.chatResetSession(handle);
     }
 
+    /**
+     * Drops the live process without ending the conversation, so the next send
+     * resumes it from the transcript on disk. Used after a message is deleted —
+     * the running process still holds the deleted text in its own context.
+     */
+    public void restartProcess() {
+        NativeCore.chatRestartProcess(handle);
+    }
+
     public void stop() {
         cancel();
         NativeCore.chatDestroy(handle);
