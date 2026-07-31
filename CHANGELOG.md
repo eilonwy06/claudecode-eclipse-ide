@@ -4,7 +4,15 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.8.exp] — 2026-07-31 *(current)*
+## [3.1.9.exp] — 2026-07-31 *(current)*
+
+### Fixed
+- **Links in Claude's responses open in your browser.** Clicking a link in a response used to load the page inside the Claude Code view itself, replacing the conversation with no way back — the only way to recover it was to close the view and reopen the conversation from session history. Links now open in your system browser and the conversation stays put.
+- **The links on cards and in the account panel open in your browser too.** "Learn more" on the advisor card, "View usage" on the usage warning and "Manage usage on claude.ai" in the account panel used to open a bare popup window with no address bar, toolbar or tabs. They go to your normal browser now, like every other link.
+
+---
+
+## [3.1.8.exp] — 2026-07-31
 
 ### Added
 - **Per-message actions in the Claude Code view.** Hover a message you sent and a badge appears on the bubble. The undo badge opens **Fork conversation from here**, **Rewind code to here** and **Fork conversation and rewind code** — so you can now restore the files without forking, or fork without touching the files, instead of always doing both. Rewinding is still available from the actions menu and `/rewind`.

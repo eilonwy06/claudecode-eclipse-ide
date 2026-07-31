@@ -110,7 +110,9 @@ function openAdvisorCard(echoText) {
     + 'For certain workloads this gives near-Opus performance with reduced token usage.';
   card.appendChild(note);
   const learn = document.createElement('div'); learn.className = 'adv-learn';
-  learn.innerHTML = 'Learn more: <a href="https://claude.com/blog/the-advisor-strategy" target="_blank">https://claude.com/blog/the-advisor-strategy</a>';
+  // No target="_blank": in a webview that opens a bare popup window. ui.js routes
+  // every link to the system browser instead.
+  learn.innerHTML = 'Learn more: <a href="https://claude.com/blog/the-advisor-strategy">https://claude.com/blog/the-advisor-strategy</a>';
   card.appendChild(learn);
   const esc = document.createElement('div'); esc.className = 'dec-esc';
   esc.textContent = 'Enter to confirm · Esc to cancel';

@@ -27,7 +27,7 @@ window.onRateLimit = function(tabId, json) {   // tabId ignored — usage is acc
   const resetTxt = info.resetsAt ? ' · resets ' + resetIn(info.resetsAt) : '';
   const msg = (pct != null) ? ("You've used " + pct + '% of your ' + scope)
             : (reached ? "You've reached your " + scope : "You're approaching your " + scope);
-  el.innerHTML = '<span class="uw-txt"></span><a href="https://claude.ai/settings/usage" target="_blank">View usage</a><span class="uw-x">' + ICONS.X + '</span>';
+  el.innerHTML = '<span class="uw-txt"></span><a href="https://claude.ai/settings/usage">View usage</a><span class="uw-x">' + ICONS.X + '</span>';
   el.querySelector('.uw-txt').textContent = msg + resetTxt + ' · ';
   el.querySelector('.uw-x').onclick = () => { usageDismissed = true; el.classList.remove('show'); };
   el.classList.add('show');
