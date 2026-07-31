@@ -141,8 +141,50 @@ function load_session(string $root, string $sid): array {
         if ($type === 'user') {
             $c = $e['message']['content'] ?? '';
             if (is_string($c)) {
-                $items[] = ['t' => 'user', 'content' => $c];
+                $item = ['t' => 'user', 'content' => $c];
+                // The transcript uuid, so the GUI can target THIS message for
+                // per-message actions (rewind/fork/delete). Matches what the Rust
+                // loader attaches; without it a history-loaded bubble gets no
+                // data-mid and its hover badges never appear.
+                $uuid = $e['uuid'] ?? '';
+                if (is_string($uuid) && $uuid !== '') {
+                    $item['id'] = $uuid;
+                }
+                $items[] = $item;
             } elseif (is_array($c)) {
+                // A message the user sent with pasted images is stored as content
+                // BLOCKS (text + image), not a plain string — rebuild it as one
+                // user item so the bubble and its image chips come back on reload.
+                // Images carry their base64 so the chip can draw its thumbnail;
+                // tool_result-only lines add nothing. Mirrors the Rust loader.
+                $text = '';
+                $images = [];
+                foreach ($c as $b) {
+                    $bt = $b['type'] ?? '';
+                    if ($bt === 'text') {
+                        $s = $b['text'] ?? '';
+                        if (is_string($s) && $s !== '') {
+                            if ($text !== '') $text .= "\n";
+                            $text .= $s;
+                        }
+                    } elseif ($bt === 'image') {
+                        $src = $b['source'] ?? [];
+                        $data = is_array($src) ? ($src['data'] ?? '') : '';
+                        if (!is_string($data) || $data === '') continue;
+                        $mt = (is_array($src) && is_string($src['media_type'] ?? null))
+                            ? $src['media_type'] : 'image/png';
+                        $images[] = ['media_type' => $mt, 'data' => $data];
+                    }
+                }
+                if ($text !== '' || $images) {
+                    $item = ['t' => 'user', 'content' => $text];
+                    if ($images) $item['images'] = $images;
+                    $uuid = $e['uuid'] ?? '';
+                    if (is_string($uuid) && $uuid !== '') {
+                        $item['id'] = $uuid;
+                    }
+                    $items[] = $item;
+                }
                 foreach ($c as $b) {
                     if (($b['type'] ?? '') !== 'tool_result') continue;
                     // Record the tool's outcome so its dot can be reconstructed:
