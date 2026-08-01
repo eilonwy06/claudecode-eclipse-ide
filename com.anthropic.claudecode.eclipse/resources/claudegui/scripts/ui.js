@@ -168,6 +168,9 @@ send.addEventListener('click', () => { if (activeStreaming()) doCancel(); else d
 function setStreaming(v) {
   const t = rtab || activeTab();
   if (t) t.streaming = v;
+  // Turn over → the gerund goes with it. The callers all hide it themselves; doing
+  // it here too means no future turn-ending path can forget to.
+  if (!v && typeof stopWorkingFor === 'function') stopWorkingFor(t);
   syncComposer();
 }
 
