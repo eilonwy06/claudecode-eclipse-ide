@@ -96,6 +96,12 @@ function cycleGerund() {
 }
 function showWorking() {
   hideWorking();
+  // Nothing running → no gerund, ever. A card can be answered long after the turn
+  // behind it ended (a slow decision lets the CLI time the request out, or the
+  // process dies while the card sits open): those paths used to re-create the
+  // indicator after onStreamEnd, leaving it spinning with nothing left to stop it.
+  const owner = rtab || activeTab();
+  if (!owner || !owner.streaming) return;
   turnStart = Date.now();
   lastTokens = 0;
   // A compacting turn pins the gerund to "Compacting" — no random pick, no cycling.
@@ -115,7 +121,44 @@ function hideWorking() {
   if (gerundCycleTimer) { clearTimeout(gerundCycleTimer); gerundCycleTimer = null; }
   if (gerundTypeTimer) { clearTimeout(gerundTypeTimer); gerundTypeTimer = null; }
   if (workingEl) { workingEl.remove(); workingEl = null; }
+  sweepWorkingNodes(streamPane());
 }
+/* Remove every indicator in a pane, handle or no handle. `workingEl` is swapped
+   per tab by loadRender, so a badly-timed tab switch can leave one in the DOM that
+   no global points at any more — a lost handle must not become a permanent gerund. */
+function sweepWorkingNodes(pane) {
+  if (!pane) return;
+  pane.querySelectorAll('.working').forEach(w => {
+    const turn = w.parentNode;   // showWorking gives each indicator its own .turn
+    if (turn && turn.classList && turn.classList.contains('turn')) turn.remove();
+    else w.remove();
+  });
+}
+/* The turn in tab `t` is over → t carries no indicator, whichever tab's render
+   state happens to be loaded right now. Every turn-ending path funnels here. */
+function stopWorkingFor(t) {
+  if (!t) return;
+  // The gerund timers are single globals, not per-tab render state — clearing them
+  // when there is nothing to remove would freeze a BACKGROUND tab's live morph
+  // mid-word. Only take the full hideWorking path when this tab really has one.
+  if (t === rtab && t.pane && t.pane.querySelector('.working')) { hideWorking(); return; }
+  if (t._r) t._r.workingEl = null;
+  if (t === rtab) workingEl = null;
+  sweepWorkingNodes(t.pane);
+}
+/* Watchdog. The two rules above cover every path we know of; this one holds even
+   for a path we don't: a tab that is not streaming has no process behind it, so an
+   indicator in it is stale by definition. Cheap — it only touches a pane that has
+   one, which in normal operation is never. */
+function sweepStaleWorking() {
+  if (typeof tabs === 'undefined' || !tabs) return;
+  tabs.forEach(t => {
+    if (!t || t.streaming || !t.pane) return;
+    if (!t.pane.querySelector('.working')) return;   // nothing stranded here
+    stopWorkingFor(t);
+  });
+}
+setInterval(sweepStaleWorking, 2000);
 /* Invariant: the gerund is visible whenever a turn is still processing AND no
    card has replaced it. Idempotent — safe to call from any path. */
 function ensureWorking() {

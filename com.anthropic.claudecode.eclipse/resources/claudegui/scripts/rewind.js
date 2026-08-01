@@ -211,6 +211,10 @@ function renderRewind() {
     // 'confirm' = fork + rewind code · 'code' = rewind code only
     const codeOnly = st.phase === 'code';
     title.textContent = codeOnly ? 'Rewind code' : 'Fork and rewind';
+    // Only the file list scrolls. Everything that frames it — the fork line, the
+    // "n lines will be removed…" summary, the note and the Rewind/Never mind rows —
+    // stays put, so a rewind spanning dozens of files never pushes the numbers off
+    // the top or the buttons off the bottom of the card.
     if (!codeOnly) {
       const b1 = document.createElement('div'); b1.className = 'rw-body';
       b1.textContent = 'A new forked conversation will be created after rewinding.';
@@ -226,26 +230,32 @@ function renderRewind() {
       sum.querySelector('.rw-del').textContent = dels + ' line' + (dels === 1 ? '' : 's');
       sum.querySelector('.rw-add').textContent = adds + ' line' + (adds === 1 ? '' : 's');
       win.appendChild(sum);
+      const list = document.createElement('div'); list.className = 'rw-scroll';
       files.forEach(f => {
         const fe = document.createElement('div'); fe.className = 'rw-file';
         fe.textContent = '•  ' + f.path;
-        win.appendChild(fe);
+        list.appendChild(fe);
       });
-    } else if (st.preview && st.preview.error) {
-      sum.textContent = '⚠ Could not read the checkpoint (' + st.preview.error + ')'
-        + (codeOnly ? '.' : ' — only the conversation will be forked.');
-      win.appendChild(sum);
-    } else if (st.preview && st.preview.noCheckpoint) {
-      sum.textContent = 'This message has no file checkpoint (it was sent before checkpointing was enabled), so code cannot be restored'
-        + (codeOnly ? '.' : ' — only the conversation will be forked.');
-      win.appendChild(sum);
-    } else if (codeOnly) {
-      // Nothing to restore (joebiden8): the reference wording, bold and all.
-      sum.innerHTML = 'The code <strong>has not changed</strong>, so no code will be restored.';
-      win.appendChild(sum);
+      win.appendChild(list);
     } else {
-      sum.textContent = 'The files already match this point — only the conversation will be forked.';
-      win.appendChild(sum);
+      // No file list — but the message itself can be long (a native error carries
+      // whatever the checkpoint reader reported), so it goes in the scroll region
+      // instead. Same rule either way: exactly one child of the card may overflow.
+      if (st.preview && st.preview.error) {
+        sum.textContent = '⚠ Could not read the checkpoint (' + st.preview.error + ')'
+          + (codeOnly ? '.' : ' — only the conversation will be forked.');
+      } else if (st.preview && st.preview.noCheckpoint) {
+        sum.textContent = 'This message has no file checkpoint (it was sent before checkpointing was enabled), so code cannot be restored'
+          + (codeOnly ? '.' : ' — only the conversation will be forked.');
+      } else if (codeOnly) {
+        // Nothing to restore (joebiden8): the reference wording, bold and all.
+        sum.innerHTML = 'The code <strong>has not changed</strong>, so no code will be restored.';
+      } else {
+        sum.textContent = 'The files already match this point — only the conversation will be forked.';
+      }
+      const only = document.createElement('div'); only.className = 'rw-scroll';
+      only.appendChild(sum);
+      win.appendChild(only);
     }
     const note = document.createElement('div'); note.className = 'rw-note';
     note.textContent = 'ⓘ Rewinding does not affect files edited manually or via bash.';

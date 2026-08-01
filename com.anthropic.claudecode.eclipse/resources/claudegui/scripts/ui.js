@@ -123,7 +123,37 @@ input.addEventListener('input', () => {
   send.classList.toggle('disabled', input.value.trim() === '' && !hasImgs && !activeStreaming());
   updateSlashMenu();
 });
+/* macOS: an arrow key the caret can't act on inserts U+1D (ASCII GROUP SEPARATOR)
+   into the composer, which renders as a box. On the Mac the SWT Browser is WebKit
+   under Cocoa: a key WebKit reports as unhandled falls back to AppKit's insertText:
+   with the raw NSEvent character, and the arrows carry a control character rather
+   than nothing. It only shows at the boundaries (Right at the end of the text, Left
+   at the start) because anywhere else the caret really moves and the key is consumed.
+   Windows goes through WebView2 and Linux through WebKitGTK, where the arrows carry
+   no character at all, so this is inert on both -- the guard is keyed to the arrow
+   keydown that precedes the insert, not to the platform.
+
+   Gated on that preceding arrow keydown rather than filtering the range outright, so
+   a PASTE containing a control character is left alone everywhere. beforeinput is
+   cancelable, so the character never lands -- no insert-then-delete, no flicker, no
+   caret to restore. Verified against a real macOS repro: keydown(ArrowRight) ->
+   textInput -> beforeinput{inputType:"insertText",data:"\u001d"} -> input. */
+let arrowGuard = false;
+
+input.addEventListener('beforeinput', (e) => {
+  if (!arrowGuard) return;
+  arrowGuard = false;   // one insert per arrow press; never spans keys
+  if (e.inputType !== 'insertText' || !e.data) return;
+  // C0/C1 controls only. Printable text an arrow key could legitimately produce
+  // (it shouldn't produce any) is deliberately left untouched.
+  if (/^[\u0000-\u001F\u007F-\u009F]+$/.test(e.data)) e.preventDefault();
+});
+
 input.addEventListener('keydown', (e) => {
+  // Set before the slash menu gets a look in: it claims Up/Down but never the
+  // horizontal arrows, so a guard set here is always the one this keypress needs.
+  arrowGuard = (e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+             || e.key === 'ArrowUp'   || e.key === 'ArrowDown');
   if (slashState.open && handleSlashKey(e)) return;
   // Enter always sends: mid-stream it QUEUES the message (VSCode behavior —
   // claude answers queued messages in succession over the persistent process).
@@ -138,6 +168,9 @@ send.addEventListener('click', () => { if (activeStreaming()) doCancel(); else d
 function setStreaming(v) {
   const t = rtab || activeTab();
   if (t) t.streaming = v;
+  // Turn over → the gerund goes with it. The callers all hide it themselves; doing
+  // it here too means no future turn-ending path can forget to.
+  if (!v && typeof stopWorkingFor === 'function') stopWorkingFor(t);
   syncComposer();
 }
 

@@ -4,7 +4,16 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.9.exp] — 2026-07-31 *(current)*
+## [3.1.10.exp] — 2026-08-01 *(current)*
+
+### Fixed
+- **Arrow keys no longer type box characters on macOS.** Pressing ← or → at the ends of the message you're writing — or any arrow key in an empty composer — inserted an invisible control character that showed up as a box, and got sent to Claude along with your message. Windows and Linux were never affected.
+- **The rewind confirmation fits on screen again.** Rewinding across dozens of files pushed the note and the confirm buttons off the bottom of the dialog, so there was no way to reach them without scrolling a long way down. The file list now scrolls inside the dialog, with the line counts pinned above it and the buttons pinned below.
+- **The working indicator no longer keeps spinning after a turn ends.** Leaving a permission prompt or a question unanswered for long enough that the turn behind it ended left the animated indicator running at the bottom of the conversation with nothing left to stop it. It's now removed whenever the turn it belongs to is over.
+
+---
+
+## [3.1.9.exp] — 2026-07-31
 
 ### Fixed
 - **Links in Claude's responses open in your browser.** Clicking a link in a response used to load the page inside the Claude Code view itself, replacing the conversation with no way back — the only way to recover it was to close the view and reopen the conversation from session history. Links now open in your system browser and the conversation stays put.

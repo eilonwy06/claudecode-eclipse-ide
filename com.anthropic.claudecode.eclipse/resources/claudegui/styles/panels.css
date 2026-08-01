@@ -114,10 +114,10 @@
 #rewind-overlay { position: absolute; inset: 0; z-index: 60; background: var(--overlay-scrim-soft);
   display: none; align-items: flex-start; justify-content: center; }
 #rewind-overlay.open { display: flex; }
-#rewind-win { width: 430px; max-width: 92%; margin-top: 11vh; max-height: 72vh;
+#rewind-win { width: 430px; max-width: 92%; margin-top: 11vh; max-height: 72vh; overflow: hidden;
   display: flex; flex-direction: column; background: var(--menu-bg); border: 1px solid var(--border);
   border-radius: 10px; box-shadow: 0 12px 40px var(--shadow); padding: 13px 15px; }
-#rewind-win .rw-head { display: flex; align-items: center; justify-content: space-between; }
+#rewind-win .rw-head { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
 #rewind-win .rw-title { font-size: 14px; font-weight: 600; color: var(--fg); }
 #rewind-win .rw-x { color: var(--fg-dim); cursor: pointer; padding: 3px; border-radius: 4px; }
 #rewind-win .rw-x:hover { background: var(--bg-hover); color: var(--fg); }
@@ -135,7 +135,12 @@
   font-size: 11px; padding-top: 9px; flex-shrink: 0; }
 #rewind-win .key { background: var(--bg-chip); border: 1px solid var(--border); border-radius: 4px;
   padding: 0 5px; font-size: 10.5px; color: var(--fg-soft); }
-/* confirm phase */
+/* confirm phase — ONLY the file list scrolls, inside the card. The summary above it
+   and the note + Rewind/Never mind rows below are pinned, however many files there are */
+#rewind-win .rw-scroll { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding-right: 4px; }
+#rewind-win .rw-scroll::-webkit-scrollbar { width: 9px; }
+#rewind-win .rw-scroll::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; }
+#rewind-win .rw-body, #rewind-win .rw-note, #rewind-win .rw-opt { flex-shrink: 0; }
 #rewind-win .rw-body { color: var(--fg-soft); font-size: 12.5px; line-height: 1.5; margin-top: 8px; }
 #rewind-win .rw-del { color: var(--red); }
 #rewind-win .rw-add { color: var(--green); }
