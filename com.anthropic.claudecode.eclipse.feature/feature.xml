@@ -7,18 +7,50 @@
       provider-name="eilonwy06">
 
    <description url="https://github.com/eilonwy06/claudecode-eclipse-ide">
-      Unofficial community plugin that integrates Claude Code into the Eclipse IDE.
-      Not affiliated with or endorsed by Anthropic.
+      Unofficial community port — This is an independent Eclipse IDE
+adaptation of the Claude Code VS Code extension. It is not affiliated
+with, endorsed by, or maintained by Anthropic.
+
+An Eclipse IDE plugin that integrates Claude Code — Anthropic&apos;s
+AI-powered CLI — directly into your Eclipse development environment.
    </description>
 
    <copyright url="https://github.com/eilonwy06/claudecode-eclipse-ide">
       Copyright (c) 2026 Carlo Louis Felipe (eilonwy06). Not affiliated with Anthropic.
+
+NOTICE: This project is an unofficial, community-made Eclipse IDE plugin.
+It is not affiliated with, endorsed by, or maintained by Anthropic, PBC.
+&quot;Claude&quot; and &quot;Claude Code&quot; are trademarks of Anthropic, PBC.
    </copyright>
 
    <license url="https://github.com/eilonwy06/claudecode-eclipse-ide/blob/master/LICENSE">
-      MIT License. This is an unofficial, community-made plugin and is not affiliated
-      with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.
+      MIT License
+
+Copyright (c) 2026 Carlo Louis Felipe (eilonwy06)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
    </license>
+
+   <url>
+      <discovery label="Marketplace site" url="https://marketplace.eclipse.org/content/claude-code-eclipse-ide"/>
+      <discovery label="Github site" url="https://github.com/eilonwy06/claudecode-eclipse-ide"/>
+   </url>
 
    <requires>
       <import plugin="org.eclipse.terminal.control" version="1.1.0" match="compatible"/>
