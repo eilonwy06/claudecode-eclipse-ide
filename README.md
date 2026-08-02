@@ -253,3 +253,10 @@ Special thanks to [xgsa](https://github.com/xgsa) for helping fix some issues in
 ## License
 
 [MIT](LICENSE)
+
+## Copyright
+
+Copyright (c) 2026 Carlo Louis Felipe (eilonwy06). Not affiliated with Anthropic.
+
+NOTICE: This project is an unofficial, community-made Eclipse IDE plugin. It is not affiliated with, endorsed by, or maintained by Anthropic, PBC.
+"Claude" and "Claude Code" are trademarks of Anthropic, PBC.
