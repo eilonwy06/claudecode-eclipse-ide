@@ -28,19 +28,31 @@ function imageName(mediaType) {
   return 'image.' + ext;
 }
 
-/** Adds one image (from a data URL) to the active tab; measures W×H async, then re-renders. */
-function addPendingImage(dataUrl) {
+/**
+ * Adds one image (from a data URL); measures W×H async, then re-renders.
+ * @param {string} dataUrl
+ * @param {Tab} [tab]  the conversation it belongs to — defaults to the active one. A
+ *   download that finishes after the user switched tabs still lands where it was pasted,
+ *   and only redraws the strip when that tab is the one on screen (switching back
+ *   re-renders anyway).
+ */
+function addPendingImage(dataUrl, tab) {
   const m = /^data:([^;,]+)(?:;base64)?,(.*)$/.exec(dataUrl || '');
   if (!m) return;
   const media_type = m[1] || 'image/png';
   const data = m[2] || '';
   if (!data) return;
   const im = { media_type, data, url: dataUrl, w: 0, h: 0, name: imageName(media_type) };
-  pendingImages().push(im);
+  pendingImages(tab).push(im);
+  const onScreen = () => !tab || tab === activeTab();
   // Read natural dimensions off-screen, then refresh the chip's "W×H".
   const probe = new Image();
-  probe.onload = () => { im.w = probe.naturalWidth; im.h = probe.naturalHeight; renderPendingImages(); };
+  probe.onload = () => {
+    im.w = probe.naturalWidth; im.h = probe.naturalHeight;
+    if (onScreen()) renderPendingImages();
+  };
   probe.src = dataUrl;
+  if (!onScreen()) return;
   renderPendingImages();
   syncComposer();
 }
@@ -104,6 +116,9 @@ function makeImageChip(im, onRemove) {
   open.onclick = () => openLightbox(im);
   chip.appendChild(open);
   if (onRemove) {
+    // Marks the chip as the kind that reveals an × on hover, so a sent bubble's chips
+    // — which have no × — don't dim their dimensions for nothing.
+    chip.classList.add('removable');
     const x = document.createElement('span'); x.className = 'ic-x'; x.innerHTML = ICONS.X; x.title = 'Remove';
     // Removing must not also open the preview.
     x.onclick = (e) => { e.stopPropagation(); onRemove(); };
@@ -151,6 +166,9 @@ function renderPendingImages() {
   const strip = document.getElementById('pending-images');
   if (!strip) return;
   const imgs = pendingImages();
+  // The strip is one horizontally scrolled row, and it's rebuilt on every change —
+  // hold its scroll position so removing a chip doesn't fling the row back to the start.
+  const scrollLeft = strip.scrollLeft;
   strip.innerHTML = '';
   strip.classList.toggle('show', imgs.length > 0);
   imgs.forEach((im, i) => {
@@ -158,6 +176,7 @@ function renderPendingImages() {
       imgs.splice(i, 1); renderPendingImages(); syncComposer();
     }));
   });
+  strip.scrollLeft = scrollLeft;
 }
 
 /* Capture image paste on the composer. A screenshot paste arrives as a file item

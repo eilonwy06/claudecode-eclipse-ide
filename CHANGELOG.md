@@ -4,7 +4,22 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.10] — 2026-08-01 *(current)*
+## [3.1.11] — 2026-08-03 *(current)*
+
+### Added
+- **The Claude Code view honours your Eclipse key bindings.** Cut, Copy, Paste, Select All and Delete in the prompt input follow whatever is set under **Window → Preferences → General → Keys** — the Emacs scheme's Alt+W / Ctrl+W / Ctrl+Y, your own customizations, multi-keystroke sequences and all. The right-click menu shows those keys too. Previously only Ctrl+X / Ctrl+C / Ctrl+V / Ctrl+A worked, and they still do on the default scheme.
+
+### Changed
+- **General UI improvements to image attachments.**
+- **Pasting copied web content keeps its images.** The text goes in the prompt and the images come with it as attachments, downloaded in the background. Icons, spacers and tracking pixels are left out.
+
+### Fixed
+- **Typing your own answer to a question no longer confuses Claude.** Text entered under **Other**, or under **Tell Claude what to do instead** on a permission prompt, arrived unlabelled on the channel tool results use — Claude took it for tool output impersonating you and refused it as a possible prompt injection. It is now marked as coming from you.
+- **The Delete key works in the prompt input.**
+
+---
+
+## [3.1.10] — 2026-08-01
 
 ### Fixed
 - **Arrow keys no longer type box characters on macOS.** Pressing ← or → at the ends of the message you're writing — or any arrow key in an empty composer — inserted an invisible control character that showed up as a box, and got sent to Claude along with your message. Windows and Linux were never affected.

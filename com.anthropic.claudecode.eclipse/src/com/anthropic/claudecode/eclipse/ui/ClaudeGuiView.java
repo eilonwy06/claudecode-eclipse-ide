@@ -21,6 +21,14 @@ import org.eclipse.core.runtime.FileLocator;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.browser.Browser;
 import org.eclipse.swt.browser.BrowserFunction;
+import org.eclipse.swt.dnd.Clipboard;
+import org.eclipse.swt.dnd.FileTransfer;
+import org.eclipse.swt.dnd.HTMLTransfer;
+import org.eclipse.swt.dnd.ImageTransfer;
+import org.eclipse.swt.dnd.TextTransfer;
+import org.eclipse.swt.dnd.Transfer;
+import org.eclipse.swt.graphics.ImageData;
+import org.eclipse.swt.graphics.ImageLoader;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.part.ViewPart;
@@ -85,6 +93,20 @@ public class ClaudeGuiView extends ViewPart {
     @SuppressWarnings("unused") private BrowserFunction advisorGetFn;
     @SuppressWarnings("unused") private BrowserFunction advisorSetFn;
     @SuppressWarnings("unused") private BrowserFunction openExternalFn;
+    @SuppressWarnings("unused") private BrowserFunction clipGetFn;
+    @SuppressWarnings("unused") private BrowserFunction clipSetFn;
+    @SuppressWarnings("unused") private BrowserFunction clipImagesFn;
+    @SuppressWarnings("unused") private BrowserFunction drainImagesFn;
+    /** Images fetched for a pasted fragment, waiting for the webview to collect them. */
+    private final java.util.concurrent.ConcurrentLinkedQueue<Map<String, String>> fetchedImages =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    @SuppressWarnings("unused") private BrowserFunction editOpsReadyFn;
+    /** Set by the page once the __cc* editing entry points exist — see registerEditHandlers. */
+    private volatile boolean editOpsReady = false;
+
+    // org.eclipse.ui.edit.* handlers, activated on this view's site (see registerEditHandlers).
+    private final java.util.List<org.eclipse.ui.handlers.IHandlerActivation> editHandlers =
+            new java.util.ArrayList<>();
 
     // Status bar (the shared SWT ClaudeStatusBar widget, reused from the CLI view).
     private ClaudeStatusBar statusBar;
@@ -145,6 +167,7 @@ public class ClaudeGuiView extends ViewPart {
         startStatusTimer();
         registerStatusPrefListener();
         registerThemeListener();
+        registerEditHandlers();
 
         active = this;
         // Persistent protocol, ONE manager per tab (created on first send) so
@@ -356,6 +379,30 @@ public class ClaudeGuiView extends ViewPart {
             return null;
         });
 
+        // The right-click menu's clipboard, shared with the key-binding handlers below
+        // so both paths use the SWT clipboard the rest of Eclipse uses.
+        clipGetFn = new SimpleFunction(browser, "_clipGet", a -> clipboardText());
+        clipImagesFn = new SimpleFunction(browser, "_clipImages",
+                a -> clipboardImagesJson(a.length > 0 && a[0] instanceof String s ? s : ""));
+        // Images downloaded for a pasted fragment, collected since the last call.
+        drainImagesFn = new SimpleFunction(browser, "_drainImages", a -> {
+            java.util.List<Map<String, String>> batch = new java.util.ArrayList<>();
+            for (Map<String, String> item; (item = fetchedImages.poll()) != null; ) batch.add(item);
+            return new Gson().toJson(batch);
+        });
+        clipSetFn = new SimpleFunction(browser, "_clipSet", a -> {
+            if (a.length > 0 && a[0] instanceof String s) setClipboardText(s);
+            return null;
+        });
+        // The page reports that its editing entry points are defined. Until it does, the
+        // edit handlers stay unhandled, so a key is never swallowed with no JS to receive
+        // it — a script that failed to load leaves the browser's own defaults in place
+        // rather than making copy/paste do nothing at all.
+        editOpsReadyFn = new SimpleFunction(browser, "_editOpsReady", a -> {
+            editOpsReady = true;
+            return null;
+        });
+
         // Backstop for what the JS handler can't cancel — a window.open/target=_blank
         // that WebView2 turns into a top-level load, or a meta refresh. (Keyboard
         // activation of a link fires a real click, so that path is already covered.)
@@ -381,6 +428,7 @@ public class ClaudeGuiView extends ViewPart {
             pushAvailableModels();   // in case the model list arrived before the page loaded
             pushCliVersion();        // ditto for the CLI update banner
             pushCliModels();         // ditto for the installed binary's model support
+            pushEditKeyHints();      // label the right-click menu with the user's real keys
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
                 // Re-push the theme too: the root composite's CSS-themed background may not
@@ -731,6 +779,267 @@ public class ClaudeGuiView extends ViewPart {
             if (browser != null && !browser.isDisposed()) pushTheme();
         });
         org.eclipse.jface.resource.JFaceResources.getColorRegistry().addListener(themeChangeListener);
+    }
+
+    // --- editing commands (copy/cut/paste/select-all) -------------------------
+
+    /**
+     * Routes Eclipse's own edit commands into the webview, so copy/cut/paste/select-all
+     * obey whatever the user configured under General &gt; Keys — Emacs (Alt+W / Ctrl+W /
+     * Ctrl+Y), the default scheme, or a hand-customized one (issue #97). Nothing is
+     * parsed or re-declared here: we supply the missing <em>handlers</em> and Eclipse's
+     * own dispatcher does the matching, including multi-stroke chords and per-platform
+     * modifiers.
+     *
+     * <p>This works because SWT forwards key presses made inside the {@link Browser} into
+     * the SWT event stream, where Eclipse's key-binding dispatcher (a {@code Display}
+     * filter) sees them — on Windows via WebView2's {@code AcceleratorKeyPressed}, on
+     * Linux/GTK via the WebKit DOM key proc. The dispatcher consumes a keystroke only when
+     * it finds a handler that reports itself handled; consuming clears {@code event.doit},
+     * which SWT reports back to the browser as "handled" so the page never sees the key.
+     * With no handler the command isn't consumed and the key falls through to the webview,
+     * which is exactly why these keys did nothing in here before.
+     *
+     * <p>Activation is on the view's <em>site</em>, so the handlers exist only while this
+     * view is the active part and every other part keeps its own copy/paste. Text moves
+     * through the SWT {@link Clipboard} — the one the rest of Eclipse uses, and the only
+     * way to read a paste at all, since Chromium blocks {@code execCommand('paste')}.
+     */
+    private void registerEditHandlers() {
+        org.eclipse.ui.handlers.IHandlerService svc =
+                getSite().getService(org.eclipse.ui.handlers.IHandlerService.class);
+        if (svc == null) return;
+        activateEditHandler(svc, "org.eclipse.ui.edit.copy",      this::doCopy);
+        activateEditHandler(svc, "org.eclipse.ui.edit.cut",       this::doCut);
+        activateEditHandler(svc, "org.eclipse.ui.edit.paste",     this::doPaste);
+        activateEditHandler(svc, "org.eclipse.ui.edit.selectAll", this::doSelectAll);
+        // Delete is here for the opposite reason to the other four. JFace exempts a Browser
+        // from the plain-DEL binding on purpose (KeyBindingDispatcher's "bug 54654" branch:
+        // "pressing a delete key in a text widget will never use key bindings"), but that
+        // branch tests event.character == SWT.DEL and the WebView2 path fills in only
+        // keyCode, so the exemption silently stops applying and DEL reaches the dispatcher
+        // like any other binding. Supplying a handler is what makes the key do something
+        // again — and it follows the user's binding for free, like the rest.
+        activateEditHandler(svc, "org.eclipse.ui.edit.delete",    this::doDelete);
+    }
+
+    private void activateEditHandler(org.eclipse.ui.handlers.IHandlerService svc, String commandId,
+                                     Runnable op) {
+        editHandlers.add(svc.activateHandler(commandId, new org.eclipse.core.commands.AbstractHandler() {
+            @Override public boolean isHandled() {
+                return browser != null && !browser.isDisposed() && pageLoaded && editOpsReady;
+            }
+            @Override public Object execute(org.eclipse.core.commands.ExecutionEvent event) {
+                if (isHandled()) op.run();
+                return null;
+            }
+        }));
+    }
+
+    // Each of these runs the same operation the right-click menu runs, against whatever
+    // has focus. The text crosses through the _clipGet/_clipSet bridge rather than being
+    // interpolated into the injected script — nothing here has to be escaped, and a
+    // pasted U+2028 can't break the script it would otherwise be embedded in.
+    private void doCopy()      { executeJS("window.__ccCopy && __ccCopy()"); }
+    private void doCut()       { executeJS("window.__ccCut && __ccCut()"); }
+    private void doPaste()     { executeJS("window.__ccPaste && __ccPaste()"); }
+    private void doSelectAll() { executeJS("window.__ccSelectAll && __ccSelectAll()"); }
+    private void doDelete()    { executeJS("window.__ccDelete && __ccDelete()"); }
+
+    private void setClipboardText(String txt) {
+        if (txt == null || txt.isEmpty() || browser == null || browser.isDisposed()) return;
+        Clipboard cb = new Clipboard(browser.getDisplay());
+        try {
+            cb.setContents(new Object[] { txt }, new Transfer[] { TextTransfer.getInstance() });
+        } finally {
+            cb.dispose();
+        }
+    }
+
+    private String clipboardText() {
+        if (browser == null || browser.isDisposed()) return "";
+        Clipboard cb = new Clipboard(browser.getDisplay());
+        try {
+            Object o = cb.getContents(TextTransfer.getInstance());
+            return o instanceof String s ? s : "";
+        } finally {
+            cb.dispose();
+        }
+    }
+
+    /**
+     * The clipboard's images as data URLs, as a JSON array — {@code []} when it holds none.
+     *
+     * <p>Pasting an image has to be read here rather than left to the browser. The composer's
+     * own paste listener gets its bitmap from a DOM {@code paste} event's clipboardData, and
+     * that event only fires for the keystroke WebView2 itself treats as paste — Ctrl+V. Once
+     * the user's paste key is anything else (Emacs binds it to Ctrl+Y) no DOM paste event
+     * exists to carry the image, so declining the keystroke and hoping the browser handles it
+     * produces nothing at all. The SWT clipboard has the images whichever key got us here.
+     *
+     * <p>Both shapes a clipboard carries images in are covered: a bitmap (a screenshot), and
+     * a list of file paths (images copied in the file manager, which arrive as CF_HDROP with
+     * no bitmap attached — the browser used to read those off the DOM event for us).
+     */
+    private String clipboardImagesJson(String tabId) {
+        Map<String, Object> result = new HashMap<>();
+        java.util.List<String> urls = new java.util.ArrayList<>();
+        java.util.List<String> remote = new java.util.ArrayList<>();
+        result.put("images", urls);
+        result.put("text", true);
+        if (browser == null || browser.isDisposed()) return new Gson().toJson(result);
+        Clipboard cb = new Clipboard(browser.getDisplay());
+        try {
+            String html = cb.getContents(HTMLTransfer.getInstance()) instanceof String s ? s : "";
+            java.util.List<String> sources = ClipboardImages.imageSources(html);
+
+            // Rich content — images AND words — is the one case that pastes both: the text
+            // goes in the composer and the images become chips. Everything below is a copy
+            // of an image on its own, where inserting the platform's text alternative (a URL,
+            // a file name) instead of just attaching the image would be wrong.
+            if (ClipboardImages.isRichContent(html)) {
+                for (String src : sources) {
+                    if (ClipboardImages.isLocal(src)) {
+                        String url = ClipboardImages.toDataUrl(src);
+                        if (!url.isEmpty()) urls.add(url);
+                    } else {
+                        remote.add(src);            // downloaded off the UI thread, below
+                    }
+                }
+                fetchRemoteImagesAsync(tabId, remote);
+                return new Gson().toJson(result);
+            }
+            result.put("text", false);
+            if (cb.getContents(ImageTransfer.getInstance()) instanceof ImageData data) {
+                // A copied image: the platform hands us the bitmap directly, so use that
+                // rather than going back to the network for the <img> the fragment names.
+                String url = pngDataUrl(data);
+                if (!url.isEmpty()) urls.add(url);
+            } else if (cb.getContents(FileTransfer.getInstance()) instanceof String[] paths) {
+                for (String p : paths) {
+                    String url = imageFileDataUrl(p);
+                    if (!url.isEmpty()) urls.add(url);
+                }
+            } else if (!sources.isEmpty()) {
+                for (String src : sources) {
+                    if (ClipboardImages.isLocal(src)) {
+                        String url = ClipboardImages.toDataUrl(src);
+                        if (!url.isEmpty()) urls.add(url);
+                    } else {
+                        remote.add(src);
+                    }
+                }
+                fetchRemoteImagesAsync(tabId, remote);
+            }
+            if (urls.isEmpty() && remote.isEmpty()) result.put("text", true);
+        } catch (Exception e) {
+            result.put("images", new java.util.ArrayList<String>());
+            result.put("text", true);
+        } finally {
+            cb.dispose();
+        }
+        return new Gson().toJson(result);
+    }
+
+    /**
+     * Downloads the images a pasted fragment referenced, then hands each one to the webview
+     * as it lands. Off the UI thread because a paste must not block on the network, and one
+     * at a time because a fragment is capped at a handful of images anyway.
+     *
+     * <p>The target tab travels with the request rather than being read when the download
+     * finishes — a second paste into another tab while this one is still running must not
+     * pull these images into it.
+     */
+    private void fetchRemoteImagesAsync(String tabId, java.util.List<String> sources) {
+        if (sources.isEmpty()) return;
+        java.util.List<String> batch = new java.util.ArrayList<>(sources);
+        Thread t = new Thread(() -> {
+            for (String src : batch) {
+                String url = ClipboardImages.toDataUrl(src);
+                if (url.isEmpty()) continue;
+                Map<String, String> item = new HashMap<>();
+                item.put("tab", tabId == null ? "" : tabId);
+                item.put("url", url);
+                fetchedImages.add(item);
+                Display.getDefault().asyncExec(
+                        () -> executeJS("window.__ccFetchedImages && __ccFetchedImages()"));
+            }
+        }, "claude-paste-images");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private static String pngDataUrl(ImageData data) {
+        try {
+            ImageLoader loader = new ImageLoader();
+            loader.data = new ImageData[] { data };
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            loader.save(out, SWT.IMAGE_PNG);
+            return "data:image/png;base64,"
+                    + java.util.Base64.getEncoder().encodeToString(out.toByteArray());
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** Biggest image file we'll read off the clipboard — past this, reading it would stall
+     *  the UI thread for longer than a paste is worth. */
+    private static final long MAX_CLIPBOARD_IMAGE_BYTES = 32L * 1024 * 1024;
+
+    /**
+     * A copied image file as a data URL. The formats the API accepts are passed through
+     * byte-for-byte; other formats SWT can decode are re-encoded as PNG. Anything that
+     * isn't an image, or is too big to read inline, yields "" and is skipped.
+     */
+    private static String imageFileDataUrl(String path) {
+        try {
+            Path p = Paths.get(path);
+            if (!Files.isRegularFile(p) || Files.size(p) > MAX_CLIPBOARD_IMAGE_BYTES) return "";
+            String name = p.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+            String mime = name.endsWith(".png")  ? "image/png"
+                        : name.endsWith(".jpg") || name.endsWith(".jpeg") ? "image/jpeg"
+                        : name.endsWith(".gif")  ? "image/gif"
+                        : name.endsWith(".webp") ? "image/webp"
+                        : "";
+            if (!mime.isEmpty()) {
+                return "data:" + mime + ";base64,"
+                        + java.util.Base64.getEncoder().encodeToString(Files.readAllBytes(p));
+            }
+            if (!(name.endsWith(".bmp") || name.endsWith(".ico")
+                    || name.endsWith(".tif") || name.endsWith(".tiff"))) return "";
+            ImageData[] read = new ImageLoader().load(path);
+            return read.length == 0 ? "" : pngDataUrl(read[0]);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * Labels the right-click menu with the user's ACTUAL keys instead of the hardcoded
+     * Ctrl+X/C/V/A. It has to: under Emacs, cut is Ctrl+W and Ctrl+X is a chord prefix,
+     * so the old hints named a keystroke that does something else. Re-pushed on focus,
+     * so switching scheme takes effect without a restart.
+     */
+    private void pushEditKeyHints() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        org.eclipse.ui.keys.IBindingService bs =
+                getSite().getService(org.eclipse.ui.keys.IBindingService.class);
+        if (bs == null) return;
+        Map<String, String> hints = new HashMap<>();
+        putKeyHint(bs, hints, "cut",       "org.eclipse.ui.edit.cut");
+        putKeyHint(bs, hints, "copy",      "org.eclipse.ui.edit.copy");
+        putKeyHint(bs, hints, "paste",     "org.eclipse.ui.edit.paste");
+        putKeyHint(bs, hints, "selectAll", "org.eclipse.ui.edit.selectAll");
+        browser.execute("window.onEditKeyHints && onEditKeyHints('"
+                + esc(new Gson().toJson(hints)) + "')");
+    }
+
+    /** Always writes the key — an unbound command sends "" so the menu blanks that hint
+     *  rather than keeping a default that names a keystroke the user removed. */
+    private static void putKeyHint(org.eclipse.ui.keys.IBindingService bs,
+                                   Map<String, String> hints, String key, String commandId) {
+        String formatted = bs.getBestActiveBindingFormattedFor(commandId);
+        hints.put(key, formatted == null ? "" : formatted);
     }
 
     /** Periodic tick so reset countdowns and shared limits stay fresh while idle. The
@@ -1133,6 +1442,9 @@ public class ClaudeGuiView extends ViewPart {
         // until it's refocused, and the IThemeManager event doesn't reliably fire for the
         // General > Appearance (E4 CSS) theme, so this is the reliable path to apply a switch.
         pushTheme();
+        // Same idea for the key-binding scheme: cheap to re-read, and it means a scheme
+        // change shows up in the right-click menu's hints on the next activation.
+        pushEditKeyHints();
     }
 
     private void activateInput() {
@@ -1326,6 +1638,14 @@ public class ClaudeGuiView extends ViewPart {
                         .removeListener(themeChangeListener);
             } catch (Throwable ignored) {}
             themeChangeListener = null;
+        }
+        if (!editHandlers.isEmpty()) {
+            try {
+                org.eclipse.ui.handlers.IHandlerService svc =
+                        getSite().getService(org.eclipse.ui.handlers.IHandlerService.class);
+                if (svc != null) editHandlers.forEach(svc::deactivateHandler);
+            } catch (Throwable ignored) {}
+            editHandlers.clear();
         }
         for (ChatProcessManager m : managers.values()) {
             try { m.stop(); } catch (Exception ignored) {}
