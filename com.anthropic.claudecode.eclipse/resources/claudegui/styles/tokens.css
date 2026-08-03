@@ -14,6 +14,10 @@
   --fg-faint: #6e6e6e;
   --border: #333333;
   --border-soft: #2a2a2a;
+  /* Outline on a hovered attachment pill. Sampled from joebiden10: the border pixel
+     reads rgb(100,102,103) against a rgb(40,42,44) fill — a light, clearly visible
+     edge, not the near-invisible step --border would give at this size. */
+  --chip-border-hover: #646667;
   --accent: #d97757;          /* Claude coral */
   --accent-dim: rgba(217,119,87,.5);
   --sel: #2d84af;             /* VSCode-style selection blue (cards/answers) */
@@ -64,6 +68,8 @@
   --fg-faint: #8a8a8a;
   --border: #d4d4d4;
   --border-soft: #e2e2e2;
+  /* Same step as the dark value, in the other direction against a #ececec fill. */
+  --chip-border-hover: #b1b1b1;
   --accent: #c8502b;          /* Claude coral, darkened for contrast on white */
   --accent-dim: rgba(200,80,43,.5);
   --sel: #0a6ebd;             /* selection blue tuned for light bg */

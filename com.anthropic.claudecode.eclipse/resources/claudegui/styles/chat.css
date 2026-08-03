@@ -55,8 +55,16 @@
    .msg-images strip. A chip is: tiny thumbnail + "image.png" + "W×H"; hovering
    floats a full-size preview above it; composer chips also get a remove × on
    hover (bubble chips don't — already sent). */
-#pending-images { display: none; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+/* The composer strip is ONE row that scrolls sideways (joebiden10) — never several
+   rows stacked above the composer. Attaching a dozen images grows the strip along a
+   fixed-height line instead of eating the conversation above it. */
+#pending-images { display: none; flex-wrap: nowrap; gap: 6px; margin-bottom: 8px;
+  overflow-x: auto; overflow-y: hidden; padding-bottom: 5px; }
 #pending-images.show { display: flex; }
+#pending-images .img-chip { flex: 0 0 auto; }
+#pending-images::-webkit-scrollbar { height: 5px; }
+#pending-images::-webkit-scrollbar-track { background: transparent; }
+#pending-images::-webkit-scrollbar-thumb { background: var(--scrollbar-track); border-radius: 3px; }
 .user-msg .msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .img-chip { position: relative; display: inline-flex; align-items: center; gap: 7px;
   background: var(--bg-chip); border: 1px solid var(--border); border-radius: 6px;
@@ -65,10 +73,30 @@
   background-size: cover; background-position: center; background-repeat: no-repeat; }
 .img-chip .ic-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .img-chip .ic-dim { color: var(--fg-dim); flex-shrink: 0; }
-.img-chip .ic-x { display: none; margin-left: 1px; color: var(--fg-dim); cursor: pointer;
-  border-radius: 3px; padding: 0 1px; flex-shrink: 0; }
-.img-chip:hover .ic-x { display: inline-flex; }
-.img-chip .ic-x:hover { background: var(--bg-hover); color: var(--fg); }
+/* The remove × sits ON the chip's right edge rather than after it, so the chip is
+   exactly as wide hovered as not (joebiden10). Laying it out inline made every chip
+   grow under the pointer and shove the rest of the row along — with a full strip you
+   ended up chasing the image you were trying to remove. Out of flow it can't. */
+.img-chip .ic-x { position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  z-index: 1; display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 3px; color: var(--fg); cursor: pointer;
+  opacity: 0; transition: opacity .15s ease; }
+.img-chip.removable:hover .ic-x { opacity: 1; }
+.img-chip .ic-x:hover { background: var(--bg-hover); }
+/* What clears room for the × is a gradient that dissolves the tail of the dimensions
+   into the chip's own background — in joebiden10 "1861×755" becomes "1861×7" with the
+   leading digits as bright as ever, so it is a fade ACROSS the label, not the label
+   dimming. Painted as an overlay because opacity animates and a mask doesn't. */
+.img-chip.removable::after { content: ''; position: absolute; right: 1px; top: 1px; bottom: 1px;
+  width: 36px; border-radius: 0 5px 5px 0; pointer-events: none;
+  background: linear-gradient(to right, transparent, var(--bg-chip) 60%);
+  opacity: 0; transition: opacity .15s ease; }
+.img-chip.removable:hover::after { opacity: 1; }
+/* The outline is a hover state too, and at rest there is none at all: in joebiden10 the
+   chip fill meets the strip background with no border pixel between them. The width is
+   still reserved (transparent), so gaining the outline never nudges the row. */
+#pending-images .img-chip { border-color: transparent; transition: border-color .15s ease; }
+#pending-images .img-chip.removable:hover { border-color: var(--chip-border-hover); }
 /* The chip body opens the lightbox on CLICK (hover only shows the native
    filename tooltip) — VSCode behavior, joebiden5. */
 .img-chip .ic-open { display: inline-flex; align-items: center; gap: 7px; cursor: pointer;

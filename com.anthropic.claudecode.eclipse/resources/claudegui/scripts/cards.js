@@ -82,7 +82,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   inp.placeholder = 'Tell Claude what to do instead';
   inp.onkeydown = (e) => {
     e.stopPropagation();
-    if (e.key === 'Enter') { e.preventDefault(); const v = inp.value.trim(); if (v) decide('deny', v); }
+    if (e.key === 'Enter') { e.preventDefault(); const v = inp.value.trim(); if (v) decide('deny', '[User typed]: ' + v); }
     else if (e.key === 'Escape') { e.preventDefault(); decide('deny', ''); }
   };
   instead.appendChild(inp); card.appendChild(instead);
@@ -135,7 +135,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
 
   function answeredText(i) {
     const st = state[i], q = questions[i];
-    if (st.choice === 'other') return st.other.trim();
+    if (st.choice === 'other') return '[User typed]: ' + st.other.trim();
     if (st.choice != null && q.options[st.choice]) return q.options[st.choice].label;
     return '';
   }
