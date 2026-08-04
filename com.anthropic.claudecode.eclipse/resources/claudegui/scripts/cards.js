@@ -1,5 +1,19 @@
 /* cards.js — CLI-enforced permission decision card + AskUserQuestion card. */
 
+/* The CLI's own wording for "rejected, and here is what the user wants instead",
+   copied verbatim from the claude binary (verified byte-for-byte against
+   bin/claude.exe — note it ends with a NEWLINE, not a space; the user's text goes
+   on the following line). Using the CLI's phrasing is what makes
+   the model treat the tail as the user speaking instead of as anomalous tool
+   output, and the explicit rejection clause stops it narrating an edit that never
+   happened (#98). The CLI's other variant ends "STOP what you are doing and wait
+   for the user to tell you how to proceed." — that one is for a deny with no
+   instruction, and it is what the CLI already sends when this text is empty. */
+const DENY_WITH_INSTRUCTION =
+  "The user doesn't want to proceed with this tool use. The tool use was rejected " +
+  "(eg. if it was a file edit, the new_string was NOT written to the file). " +
+  "To tell you how to proceed, the user said:\n";
+
 /* ---- permission decision card (claude --permission-prompt-tool) ---- */
 /**
  * Permission decision card (CLI can_use_tool). Blocks the CLI until _decide(reqId,…).
@@ -45,10 +59,30 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
       const dot = pendingTool.querySelector('.dot');
       if (dot) dot.className = (d === 'deny') ? 'dot red' : 'dot done';
     }
-    if (window._decide) window._decide(reqId, d, msg || '');
+    // Bare user prose must never be the deny message on its own: the CLI hands a
+    // deny message to the model as an is_error tool_result, so unframed prose there
+    // reads as anomalous/injected output, and the model — told only that the tool
+    // failed — would narrate success for an edit that never ran (#98).
+    //
+    // The CLI itself has a canonical wrapper for exactly this case. Prefixing the
+    // user's words with DENY_WITH_INSTRUCTION reuses the CLI's own wording, so the
+    // model reads the tail as the user speaking rather than as stray tool output.
+    // The alternative (deny + a separately queued user message) costs an extra turn
+    // and produces a dead-end "the edit was declined" reply before the real one,
+    // because the model answers the deny before the queued text arrives.
+    //
+    // Wire path: Java completes "deny" + text, and chat.rs's `decision.len() > 4`
+    // slices the text back out as the deny message — the same channel as before,
+    // now carrying CLI-authored framing. JS-only; no DLL rebuild.
+    const out = (d === 'deny' && msg) ? DENY_WITH_INSTRUCTION + msg : '';
+    if (window._decide) window._decide(reqId, d, out);
     clearBottomCard();                          // card disappears — composer returns
     if (d === 'deny' && msg) {
-      addAnswered(msg, pane); startFreshTurn();  // instruction stays; reply goes below
+      // Keep the "User answered:" card: this is a decision the user made on a card,
+      // and it reads as such. (A reload replays it from the transcript as a plain
+      // user line, since that is what it is on the wire.)
+      addAnswered(msg, pane);
+      startFreshTurn();
     } else {
       // Process continues after the decision — start a fresh body below the edits
       // and re-show the working indicator so the user sees activity again.
@@ -82,7 +116,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   inp.placeholder = 'Tell Claude what to do instead';
   inp.onkeydown = (e) => {
     e.stopPropagation();
-    if (e.key === 'Enter') { e.preventDefault(); const v = inp.value.trim(); if (v) decide('deny', '[User typed]: ' + v); }
+    if (e.key === 'Enter') { e.preventDefault(); const v = inp.value.trim(); if (v) decide('deny', v); }
     else if (e.key === 'Escape') { e.preventDefault(); decide('deny', ''); }
   };
   instead.appendChild(inp); card.appendChild(instead);
@@ -135,7 +169,10 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
 
   function answeredText(i) {
     const st = state[i], q = questions[i];
-    if (st.choice === 'other') return '[User typed]: ' + st.other.trim();
+    // No "[User typed]: " prefix — this is a legitimate answer on the allow path
+    // (updatedInput.answers). The prefix leaked into the visible bubble and made
+    // the model read the answer as anomalous tool output (issue #98).
+    if (st.choice === 'other') return st.other.trim();
     if (st.choice != null && q.options[st.choice]) return q.options[st.choice].label;
     return '';
   }
