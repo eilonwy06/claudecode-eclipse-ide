@@ -114,6 +114,8 @@ public class ClaudeGuiView extends ViewPart {
     private org.eclipse.jface.util.IPropertyChangeListener statusPrefListener;
     // Re-pushes light/dark to the webview when the Eclipse workbench theme changes.
     private org.eclipse.jface.util.IPropertyChangeListener themeChangeListener;
+    // Re-pushes the right-click menu's key hints when the user's bindings change.
+    private org.eclipse.jface.bindings.IBindingManagerListener bindingChangeListener;
     @SuppressWarnings("unused") private BrowserFunction statusSelectionFn;
     private volatile String availableModelsJson;   // curated model list from /v1/models, pushed to the webview
     private volatile String cliVersionJson;        // {installed,latest,updateAvailable} for the update banner
@@ -167,6 +169,7 @@ public class ClaudeGuiView extends ViewPart {
         startStatusTimer();
         registerStatusPrefListener();
         registerThemeListener();
+        registerBindingListener();
         registerEditHandlers();
 
         active = this;
@@ -781,6 +784,24 @@ public class ClaudeGuiView extends ViewPart {
         org.eclipse.jface.resource.JFaceResources.getColorRegistry().addListener(themeChangeListener);
     }
 
+    /**
+     * Live key-hint refresh, for the same reason as the theme listener above: the menu has
+     * to name the keys the user has NOW. {@code setFocus()} re-pushes them, but it only runs
+     * on part activation, and Preferences is a dialog rather than a part — switching scheme
+     * leaves this view active throughout, so nothing re-pushed until the user happened to
+     * activate another part and come back. The binding manager tells us directly instead.
+     */
+    private void registerBindingListener() {
+        org.eclipse.ui.keys.IBindingService bs =
+                getSite().getService(org.eclipse.ui.keys.IBindingService.class);
+        if (bs == null) return;
+        bindingChangeListener = event -> {
+            if (!event.isActiveSchemeChanged() && !event.isActiveBindingsChanged()) return;
+            Display.getDefault().asyncExec(this::pushEditKeyHints);
+        };
+        bs.addBindingManagerListener(bindingChangeListener);
+    }
+
     // --- editing commands (copy/cut/paste/select-all) -------------------------
 
     /**
@@ -791,14 +812,29 @@ public class ClaudeGuiView extends ViewPart {
      * own dispatcher does the matching, including multi-stroke chords and per-platform
      * modifiers.
      *
-     * <p>This works because SWT forwards key presses made inside the {@link Browser} into
-     * the SWT event stream, where Eclipse's key-binding dispatcher (a {@code Display}
-     * filter) sees them — on Windows via WebView2's {@code AcceleratorKeyPressed}, on
-     * Linux/GTK via the WebKit DOM key proc. The dispatcher consumes a keystroke only when
-     * it finds a handler that reports itself handled; consuming clears {@code event.doit},
-     * which SWT reports back to the browser as "handled" so the page never sees the key.
-     * With no handler the command isn't consumed and the key falls through to the webview,
-     * which is exactly why these keys did nothing in here before.
+     * <p>This works only where SWT forwards key presses made inside the {@link Browser} into
+     * the SWT event stream, where Eclipse's key-binding dispatcher (a {@code Display} filter)
+     * sees them. The dispatcher consumes a keystroke only when it finds a handler that
+     * reports itself handled; consuming clears {@code event.doit}, which SWT reports back to
+     * the browser as "handled" so the page never sees the key. With no handler the command
+     * isn't consumed and the key falls through to the webview, which is exactly why these
+     * keys did nothing in here before.
+     *
+     * <p>That forwarding is per-platform, and only Windows is confirmed:
+     * <ul>
+     * <li><b>Windows</b> — verified. {@code Edge.handleAcceleratorKeyPressed} fires for
+     *     anything held with Ctrl or Alt and calls {@code sendKeyEvent}.</li>
+     * <li><b>Linux/GTK</b> — reported not working (issue #97). Note SWT's WebKit hooks
+     *     {@code key_press_event} only under {@code if (!GTK.GTK4)}, with no GTK4
+     *     replacement, so on GTK4 the webview emits no SWT key events at all; on GTK3 the
+     *     GDK event is re-dispatched to {@code browser.handle} and should arrive. Which of
+     *     the two applies is still unconfirmed.</li>
+     * <li><b>macOS</b> — untested.</li>
+     * </ul>
+     * Plain DEL is Windows-only by construction: JFace's bug-54654 branch exempts a
+     * {@code Browser} when {@code event.character == SWT.DEL}, and only the WebView2 path
+     * leaves {@code character} unset, so elsewhere the exemption applies and DEL keeps the
+     * webview's own behaviour.
      *
      * <p>Activation is on the view's <em>site</em>, so the handlers exist only while this
      * view is the active part and every other part keeps its own copy/paste. Text moves
@@ -1638,6 +1674,14 @@ public class ClaudeGuiView extends ViewPart {
                         .removeListener(themeChangeListener);
             } catch (Throwable ignored) {}
             themeChangeListener = null;
+        }
+        if (bindingChangeListener != null) {
+            try {
+                org.eclipse.ui.keys.IBindingService bs =
+                        getSite().getService(org.eclipse.ui.keys.IBindingService.class);
+                if (bs != null) bs.removeBindingManagerListener(bindingChangeListener);
+            } catch (Throwable ignored) {}
+            bindingChangeListener = null;
         }
         if (!editHandlers.isEmpty()) {
             try {
