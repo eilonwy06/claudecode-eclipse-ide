@@ -125,7 +125,7 @@ const TOOL_LABELS = {
   bash:'Run', bashoutput:'Run', killshell:'Run',
   glob:'Search', grep:'Search', toolsearch:'Search', websearch:'Search',
   findreferences:'Search', gettypehierarchy:'Search', getsymbolinfo:'Search',
-  webfetch:'Fetch', task:'Working', todowrite:'Planning', exitplanmode:'Planning',
+  webfetch:'Fetch', task:'Working', todowrite:'Planning', exitplanmode:"Claude's Plan",
   askuserquestion:'Asking', runtests:'Testing',
   getdiagnostics:'Checking', checkdocumentdirty:'Checking',
   getcurrentselection:'Reading', getlatestselection:'Reading',
@@ -151,6 +151,14 @@ function toolLabel(name) {
  * @param {"done"|"interrupted"|undefined} [status] reload path only — colors the dot
  * @returns {HTMLElement} the .tool-line item
  */
+/* Outcome text for an ExitPlanMode line. Shared by the LIVE decision path
+   (cards.js decide()) and the RELOAD path (below) so a tab switch or restart
+   renders the same thing — the transcript's done/interrupted status is the only
+   surviving record of which way the plan went.
+   @param {boolean} rejected @returns {string} */
+function planOutcomeText(rejected) {
+  return rejected ? 'Stayed in plan mode' : 'User approved the plan';
+}
 function makeToolLine(name, input, status) {
   input = input || {};
   const path = input.file_path || input.path || input.notebook_path || '';
@@ -165,6 +173,13 @@ function makeToolLine(name, input, status) {
     const sub = document.createElement('div'); sub.className = 'tool-sub'; sub.textContent = diff.summary;
     line.appendChild(sub);
     line.appendChild(diff.block);
+  }
+  // Reload path only (status set): re-state the plan outcome that decide() wrote
+  // live, so a reloaded conversation isn't left with a bare "Claude's Plan" line.
+  if (status && String(name).toLowerCase() === 'exitplanmode') {
+    const sub = document.createElement('div'); sub.className = 'tool-sub';
+    sub.textContent = planOutcomeText(status === 'interrupted');
+    line.appendChild(sub);
   }
   return line;
 }

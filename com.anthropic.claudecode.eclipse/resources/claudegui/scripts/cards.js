@@ -14,6 +14,45 @@ const DENY_WITH_INSTRUCTION =
   "(eg. if it was a file edit, the new_string was NOT written to the file). " +
   "To tell you how to proceed, the user said:\n";
 
+/* Identifies the ONE middle-option label that means "switch this session to
+   acceptEdits". The label is built by primary_suggestion() in chat.rs, which is
+   the only thing that crosses the bridge — the suggestion's type does not — so
+   the wording is the signal. Its other branches are deliberately excluded:
+     "Yes, allow '<rule>' …"      addRules      — scoped to one tool/path
+     "Yes, allow all <Tool> …"    addRules      — scoped to one tool
+     "Yes, allow edits in <dir> …" addDirectories — scoped to one directory
+     "Yes, switch to <m> mode …"  setMode, but not acceptEdits
+   Flipping the indicator (and therefore the next spawn's --permission-mode) to
+   acceptEdits for any of those would hand the session BROADER permission than
+   the user agreed to on the card. Keep this in step with primary_suggestion. */
+const ACCEPTS_ALL_EDITS = /^Yes, allow all edits\b/;
+
+/* ---- plan approval (ExitPlanMode) ----
+   The CLI asks for ExitPlanMode like any other tool — `checkPermissions` returns
+   a bare {behavior:"ask", message:"Exit plan mode?"} with NO permission_suggestions,
+   so this card's three options cannot be derived from the wire the way an edit's
+   middle option is; they are synthesised here to match the CLI's own dialog.
+
+   Plan mode is ONE SHOT: approving ends it. The CLI then exits to the mode it
+   remembered as `prePlanMode`, which is NOT necessarily the one picked here — so
+   the choice is pushed explicitly with set_permission_mode after the allow. */
+const PLAN_TOOL = 'ExitPlanMode';
+/** decision value → permission mode the user asked for by choosing it. */
+const PLAN_MODE_FOR = { allowAuto: 'acceptEdits', allowManual: 'default' };
+/* The CLI's own wording for a rejected plan, copied byte-exact from claude.exe
+   (its `dmn`, up to the "\n\nRejected plan:\n" slot, which we can't fill — the
+   plan text isn't on this wire). NOT DENY_WITH_INSTRUCTION: that one asserts a
+   file edit was skipped, which is wrong here and would drop edit-rejection
+   language into a planning conversation. */
+const PLAN_REJECTED =
+  "The agent proposed a plan that was rejected by the user. The user chose to stay " +
+  "in plan mode rather than proceed with implementation.\n";
+/* The tail fragment of the CLI's deny-with-instruction variant, byte-exact and on
+   its own — generic enough to carry "here is what to change" feedback without the
+   file-edit clause that precedes it there. The blank-line separator is added at
+   the join site (below), NOT baked in here, so this stays greppable in claude.exe. */
+const PLAN_FEEDBACK = "To tell you how to proceed, the user said:\n";
+
 /* ---- permission decision card (claude --permission-prompt-tool) ---- */
 /**
  * Permission decision card (CLI can_use_tool). Blocks the CLI until _decide(reqId,…).
@@ -32,11 +71,16 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   // flips it green on allow / red on deny.
   const pendingTool = lastToolLine(curTurn);
   if (pendingTool) pendingTool.classList.add('pending');
-  const isEdit = /edit|write|multiedit|str_replace|notebook|create/i.test(toolName || '');
+  // Keyed on the tool NAME alone — never on "has no suggestions", which plenty of
+  // ordinary asks also satisfy and which would give them plan options.
+  const isPlan = (toolName === PLAN_TOOL);
+  const isEdit = !isPlan && /edit|write|multiedit|str_replace|notebook|create/i.test(toolName || '');
   const card = document.createElement('div'); card.className = 'decision';
 
   const q = document.createElement('div'); q.className = 'dec-q';
-  if (isEdit && detail) {
+  if (isPlan) {
+    q.textContent = 'Accept this plan?';
+  } else if (isEdit && detail) {
     q.appendChild(document.createTextNode('Make this edit to '));
     const c = document.createElement('code'); c.textContent = detail; q.appendChild(c);
     q.appendChild(document.createTextNode('?'));
@@ -58,6 +102,14 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
       pendingTool.classList.remove('pending');
       const dot = pendingTool.querySelector('.dot');
       if (dot) dot.className = (d === 'deny') ? 'dot red' : 'dot done';
+      // The plan line states the OUTCOME, not a diff summary — a green
+      // "Claude's Plan … User approved the plan" reads very differently from a
+      // red "… Stayed in plan mode", and the dot alone doesn't say which.
+      if (isPlan) {
+        const sub = document.createElement('div'); sub.className = 'tool-sub';
+        sub.textContent = planOutcomeText(d === 'deny');   // shared with the reload path
+        pendingTool.appendChild(sub);
+      }
     }
     // Bare user prose must never be the deny message on its own: the CLI hands a
     // deny message to the model as an is_error tool_result, so unframed prose there
@@ -74,8 +126,36 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
     // Wire path: Java completes "deny" + text, and chat.rs's `decision.len() > 4`
     // slices the text back out as the deny message — the same channel as before,
     // now carrying CLI-authored framing. JS-only; no DLL rebuild.
-    const out = (d === 'deny' && msg) ? DENY_WITH_INSTRUCTION + msg : '';
+    let out = '';
+    if (d === 'deny' && isPlan) out = msg ? PLAN_REJECTED + '\n' + PLAN_FEEDBACK + msg : PLAN_REJECTED;
+    else if (d === 'deny' && msg) out = DENY_WITH_INSTRUCTION + msg;
     if (window._decide) window._decide(reqId, d, out);
+    // Approving the plan ENDS plan mode, so the indicator has to move off "Plan"
+    // — and to the mode the user actually chose, which the CLI won't do for us
+    // (it restores its own prePlanMode). Push it only AFTER the allow is written,
+    // or the control request races the CLI's own transition.
+    if (isPlan && PLAN_MODE_FOR[d]) {
+      const mode = PLAN_MODE_FOR[d];
+      if (t && window._setPermissionMode) {
+        try { window._setPermissionMode(t.id, mode); } catch (e) {}
+      }
+      if (typeof adoptModeForTab === 'function') adoptModeForTab(t, mode);
+    }
+    // "Yes, allow all edits …" IS a mode switch: chat.rs echoes the CLI's setMode
+    // suggestion back as updatedPermissions, so from here on the session behaves
+    // exactly like "Edit automatically". Move the indicator to match, or it keeps
+    // claiming "Manual" while nothing prompts again.
+    // NOT while the tab is in Plan. There, "allow all edits this session" answers
+    // the pending edit — it is not a request to leave planning. Adopting it anyway
+    // set t.permMode='acceptEdits', so the next message respawned out of plan mode,
+    // and the CLI then remembered prePlanMode==='acceptEdits', which SUPPRESSES the
+    // setMode suggestion on every later card (the missing middle option). Leaving
+    // t.permMode alone keeps Plan sticky exactly as it was before this flip existed.
+    if (d === 'allowRemember' && ACCEPTS_ALL_EDITS.test(rememberLabel || '')
+        && !(t && t.permMode === 'plan')
+        && typeof adoptModeForTab === 'function') {
+      adoptModeForTab(t, 'acceptEdits');
+    }
     clearBottomCard();                          // card disappears — composer returns
     if (d === 'deny' && msg) {
       // Keep the "User answered:" card: this is a decision the user made on a card,
@@ -95,9 +175,13 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   // Middle "remember" option is contextual: its label comes from the CLI's own
   // permission_suggestion (edits→"all edits", Bash→the command, etc.), and is
   // omitted entirely when the CLI offers no suggestion for this tool.
-  const opts = [['allow', 'Yes']];
-  if (rememberLabel) opts.push(['allowRemember', rememberLabel]);
-  opts.push(['deny', 'No']);
+  const opts = isPlan
+    ? [['allowAuto',   'Yes, and auto-accept'],
+       ['allowManual', 'Yes, and manually approve edits'],
+       ['deny',        'No, keep planning']]
+    : [['allow', 'Yes']];
+  if (!isPlan && rememberLabel) opts.push(['allowRemember', rememberLabel]);
+  if (!isPlan) opts.push(['deny', 'No']);
   opts.forEach(([d, label], i) => {
     const opt = document.createElement('div'); opt.className = 'dec-opt' + (i === 0 ? ' sel' : '');
     opt.setAttribute('data-d', d);
@@ -113,7 +197,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   const instead = document.createElement('div'); instead.className = 'dec-instead';
   instead.innerHTML = '<span class="num">' + insteadNum + '</span>';
   const inp = document.createElement('input'); inp.type = 'text';
-  inp.placeholder = 'Tell Claude what to do instead';
+  inp.placeholder = isPlan ? 'Tell Claude what to change' : 'Tell Claude what to do instead';
   inp.onkeydown = (e) => {
     e.stopPropagation();
     if (e.key === 'Enter') { e.preventDefault(); const v = inp.value.trim(); if (v) decide('deny', v); }

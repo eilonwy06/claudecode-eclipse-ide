@@ -25,7 +25,7 @@ let tabs = [], activeId = null, tabSeq = 0;
 // Defaults a NEW conversation starts with (not inherited from the last-viewed tab).
 const DEFAULT_EFFORT_IDX = 2;      // "high"
 const DEFAULT_THINKING = false;    // thinking off
-const DEFAULT_PERM_MODE = 'default';   // "Ask before edits"
+const DEFAULT_PERM_MODE = 'default';   // "Manual"
 function defaultModel() { return (typeof customModel !== 'undefined' && customModel) ? customModel : ''; }
 /** @returns {Tab|null} */
 function activeTab() { return tabs.find(t => t.id === activeId) || null; }

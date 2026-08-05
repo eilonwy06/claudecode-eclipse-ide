@@ -71,7 +71,7 @@
           <span class="file-chip empty" id="ctx-chip" title="Toggle file context" onclick="toggleContext()"><span id="ctx-ic">__FILEICON__</span> <span id="ctx-label">No file open</span></span>
         </div>
         <div class="cb-right">
-          <span class="modes-btn" id="modes-btn" onclick="toggleMenu('modes-menu', this)"><span id="modes-ic">__HAND__</span> <span id="modes-lbl">Ask before edits</span></span>
+          <span class="modes-btn" id="modes-btn" onclick="toggleMenu('modes-menu', this)"><span id="modes-ic">__HAND__</span> <span id="modes-lbl">Manual</span></span>
           <span id="send" class="disabled" title="Send">__SEND__</span>
         </div>
       </div>
@@ -94,10 +94,10 @@
   <!-- modes menu -->
   <div class="menu" id="modes-menu" style="min-width:280px">
     <div class="head"><span class="h">Modes</span></div>
-    <div class="item" data-mode="default" data-icon="HAND" onclick="selectMode(this)"><span class="ic">__HAND__</span><div class="txt"><span class="lbl">Ask before edits</span><span class="desc">Claude shows each edit in a diff to accept or reject</span></div><span class="check">__CHECK__</span></div>
+    <div class="item" data-mode="default" data-icon="HAND" onclick="selectMode(this)"><span class="ic">__HAND__</span><div class="txt"><span class="lbl">Manual</span><span class="desc">Claude shows each edit in a diff to accept or reject</span></div><span class="check">__CHECK__</span></div>
     <div class="item" data-mode="acceptEdits" data-icon="PENCIL" onclick="selectMode(this)"><span class="ic">__PENCIL__</span><div class="txt"><span class="lbl">Edit automatically</span><span class="desc">Claude applies edits without asking</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
-    <div class="item" data-mode="plan" data-icon="MAP" onclick="selectMode(this)"><span class="ic">__MAP__</span><div class="txt"><span class="lbl">Plan mode</span><span class="desc">Claude explores and presents a plan before editing</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
-    <div class="item" data-mode="bypassPermissions" data-icon="BOLT" onclick="selectMode(this)"><span class="ic">__BOLT__</span><div class="txt"><span class="lbl">Auto mode</span><span class="desc">Claude runs everything without asking (use with care)</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
+    <div class="item" data-mode="plan" data-icon="MAP" onclick="selectMode(this)"><span class="ic">__MAP__</span><div class="txt"><span class="lbl">Plan</span><span class="desc">Claude explores and presents a plan before editing</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
+    <div class="item" data-mode="bypassPermissions" data-icon="BOLT" onclick="selectMode(this)"><span class="ic">__BOLT__</span><div class="txt"><span class="lbl">Auto</span><span class="desc">Claude runs everything without asking (use with care)</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
     <div class="sep"></div>
     <div class="effort"><span class="lbl">__GAUGE__ Effort <span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span>
       <span class="slider eff-slider" title="Effort" onmousedown="effortDown(event)"><span class="track"></span><span class="fill eff-fill"></span><span class="knob eff-knob"></span></span></div>
