@@ -36,6 +36,8 @@ public class ClaudeCodeView extends ViewPart {
 
     private static final int INDICATOR_SIZE = 12;
 
+    /** The open instance, so {@link #debug} can reach this view's log from anywhere. */
+    private static ClaudeCodeView active;
     private StyledText logArea;
     private Label serverIndicator;
     private Label serverLabel;
@@ -83,8 +85,9 @@ public class ClaudeCodeView extends ViewPart {
         createStatusBar(container);
         createButtonRow(container);
         createLogArea(container, display);
+        active = this;
 
-        appendLog("Claude Code for Eclipse v3.1.11\n");
+        appendLog("Claude Code for Eclipse v3.1.12\n");
         appendLog("─────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {
@@ -454,8 +457,25 @@ public class ClaudeCodeView extends ViewPart {
         }
     }
 
+    /**
+     * Writes a diagnostic line to this view's log on behalf of code elsewhere in the
+     * plug-in, on the same terms the bridge tracing already uses: only while Debug mode
+     * is on, and only into the console the user turned Debug mode on to read. Silent when
+     * the view is closed, which is the same as the rest of the log — it is a live console,
+     * not a file.
+     */
+    public static void debug(String message) {
+        if (!DebugModeUi.isDebugEnabled()) return;
+        ClaudeCodeView view = active;
+        if (view == null) return;
+        Display.getDefault().asyncExec(() -> {
+            if (active == view) view.appendLog(message + "\n");
+        });
+    }
+
     @Override
     public void dispose() {
+        if (active == this) active = null;
         if (themeChangeListener != null) {
             try {
                 org.eclipse.jface.resource.JFaceResources.getColorRegistry()

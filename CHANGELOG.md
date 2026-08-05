@@ -4,7 +4,23 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.11] — 2026-08-03 *(current)*
+## [3.1.12] — 2026-08-05 *(current)*
+
+### Added
+- **Approving a plan asks how you want to continue.** Leaving plan mode now has its own card: apply edits automatically, keep being asked before each one, or stay in plan mode. The conversation ends up in the mode you picked instead of the one it started in.
+
+### Changed
+- **The permission modes are named Manual, Edit automatically, Plan and Auto.**
+- **The editing commands no longer wait for the page to report in while it loads.** Possibly why the key bindings have never worked on Linux ([#97](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/97)) — unconfirmed; Debug mode logs the handshake.
+
+### Fixed
+- **The permission mode button shows the mode you are actually in.** "Yes, allow all edits this session" switched the conversation without moving the button.
+- **Rejecting a plan no longer tells Claude a file edit was skipped.**
+- **The right-click menu picks up a key binding change straight away.**
+
+---
+
+## [3.1.11] — 2026-08-03
 
 ### Added
 - **The Claude Code view honours your Eclipse key bindings.** Cut, Copy, Paste, Select All and Delete in the prompt input follow whatever is set under **Window → Preferences → General → Keys** — the Emacs scheme's Alt+W / Ctrl+W / Ctrl+Y, your own customizations, multi-keystroke sequences and all. The right-click menu shows those keys too. Previously only Ctrl+X / Ctrl+C / Ctrl+V / Ctrl+A worked, and they still do on the default scheme.

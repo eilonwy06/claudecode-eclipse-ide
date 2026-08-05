@@ -403,6 +403,7 @@ public class ClaudeGuiView extends ViewPart {
         // rather than making copy/paste do nothing at all.
         editOpsReadyFn = new SimpleFunction(browser, "_editOpsReady", a -> {
             editOpsReady = true;
+            ClaudeCodeView.debug("[EDIT] _editOpsReady() from page");
             return null;
         });
 
@@ -437,6 +438,7 @@ public class ClaudeGuiView extends ViewPart {
                 // Re-push the theme too: the root composite's CSS-themed background may not
                 // be resolved at the instant `completed` fires, so settle it a few times.
                 Display.getCurrent().timerExec(ms, this::pushTheme);
+                Display.getCurrent().timerExec(ms, this::verifyEditOps);
             }
         }));
 
@@ -866,6 +868,8 @@ public class ClaudeGuiView extends ViewPart {
                 return browser != null && !browser.isDisposed() && pageLoaded && editOpsReady;
             }
             @Override public Object execute(org.eclipse.core.commands.ExecutionEvent event) {
+                ClaudeCodeView.debug("[EDIT] execute " + commandId + " (handled=" + isHandled()
+                        + ", pageLoaded=" + pageLoaded + ", editOpsReady=" + editOpsReady + ")");
                 if (isHandled()) op.run();
                 return null;
             }
@@ -1481,6 +1485,37 @@ public class ClaudeGuiView extends ViewPart {
         // Same idea for the key-binding scheme: cheap to re-read, and it means a scheme
         // change shows up in the right-click menu's hints on the next activation.
         pushEditKeyHints();
+    }
+
+    /**
+     * Host-driven half of the {@link #editOpsReady} handshake, and the reliable half.
+     *
+     * <p>The page also reports in by calling {@code _editOpsReady()} — but it does that
+     * while it is still parsing, and a JS&#8594;Java call is not the same thing on every
+     * platform. On Windows it is a synchronous WebView2 host object and on macOS an
+     * Objective-C selector on the script bridge, both direct in-process calls; on GTK it
+     * is a synchronous {@code XMLHttpRequest} to a custom {@code swt://} scheme that has
+     * to round-trip through SWT's request handler. Asking the page from here instead runs
+     * after {@code completed} and only needs {@code evaluate}, which is an ordinary script
+     * evaluation on all three. Retried on the same schedule as {@link #activateInput()},
+     * because a webview can report complete a beat before the scripts have run.
+     *
+     * <p>The flag stays a gate rather than an assumption: until the entry points provably
+     * exist, the edit handlers report themselves unhandled and the keys keep the webview's
+     * own behaviour, instead of being swallowed with no JS behind them.
+     */
+    private void verifyEditOps() {
+        if (editOpsReady || browser == null || browser.isDisposed() || !pageLoaded) return;
+        try {
+            Object r = browser.evaluate(
+                    "return !!(window.__ccCopy && window.__ccCut && window.__ccPaste"
+                  + " && window.__ccSelectAll && window.__ccDelete);");
+            if (Boolean.TRUE.equals(r)) editOpsReady = true;
+            ClaudeCodeView.debug("[EDIT] verifyEditOps -> " + r);
+        } catch (Exception e) {
+            // evaluate() throws while the page is mid-navigation; a later retry settles it.
+            ClaudeCodeView.debug("[EDIT] verifyEditOps failed: " + e);
+        }
     }
 
     private void activateInput() {
