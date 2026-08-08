@@ -133,9 +133,43 @@ function ccPaste(el) {
    string to escape in either direction. */
 window.__ccCopy = () => ccCopy();
 window.__ccCut = () => ccCut();
-window.__ccPaste = () => ccPaste();
+window.__ccPaste = () => { ccFlagHostPaste(); ccPaste(); };
 window.__ccSelectAll = () => ccSelectAll();
 window.__ccDelete = () => ccDeleteForward();
+
+/* Marks the paste we are about to do as ours. On Windows and macOS the webview is told
+   Eclipse consumed the keystroke and never acts on it, but GTK has no way to say that,
+   so WebKit goes on to run its own paste and the text lands twice (issue #97). The
+   composer's paste listener drops the one that follows this flag. It is a one-shot with
+   a short life on purpose: a middle-click paste arrives with nothing flagged and is left
+   alone, and if the flag were ever set too late we are back to the doubled paste rather
+   than to no paste at all. */
+let ccHostPasteTimer = 0;
+function ccFlagHostPaste() {
+  window.__ccHostPaste = true;
+  clearTimeout(ccHostPasteTimer);
+  ccHostPasteTimer = setTimeout(() => { window.__ccHostPaste = false; }, 250);
+}
+
+/* Reports the keys this page sees to the host's log, which is the other half of the
+   picture from the [EDIT] lines: on Linux the webview hands Eclipse the same press more
+   than once, and only the two logs together say where the copies come from and in what
+   order. Off unless Debug mode is on — the host sets __ccDebug — and limited to the
+   strokes an Eclipse binding could claim: anything held with Ctrl/Alt/Cmd, plus the key
+   straight after one, where the second half of a chord like Emacs's Ctrl+X H lands.
+   Ordinary typing is never reported: on GTK each report is a synchronous call into the
+   host and reporting every letter would be felt while typing. */
+let ccAfterModifier = false;
+document.addEventListener('keydown', (e) => {
+  const held = e.ctrlKey || e.altKey || e.metaKey;
+  const bare = e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta' || e.key === 'Shift';
+  const report = held || ccAfterModifier;
+  ccAfterModifier = held && !bare;
+  if (!report || !window.__ccDebug || !window._debugLog) return;
+  const combo = (e.ctrlKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.metaKey ? 'Cmd+' : '')
+              + (e.shiftKey ? 'Shift+' : '') + e.key;
+  _debugLog('[KEY] page saw ' + combo + ' (prevented=' + e.defaultPrevented + ')');
+}, true);
 
 /* The conversation a paste belongs to. It rides along with the request so downloaded
    images land in the tab that was pasted into, even if the user has moved on since. */

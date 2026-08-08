@@ -183,6 +183,10 @@ function renderPendingImages() {
    with an image/* MIME type; when present we consume the event so the textarea
    doesn't also paste a filename/text alternative. Plain-text paste is untouched. */
 input.addEventListener('paste', (e) => {
+  /* A paste we just performed ourselves — see ccFlagHostPaste. Letting WebKit run its
+     own paste on top of ours is what puts the text in twice on GTK, so this one is
+     dropped. Only ours: a middle-click paste is unflagged and pastes normally. */
+  if (window.__ccHostPaste) { window.__ccHostPaste = false; e.preventDefault(); return; }
   const data = e.clipboardData;
   if (!data) return;
   let took = false;

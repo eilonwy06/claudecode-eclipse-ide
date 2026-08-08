@@ -101,6 +101,7 @@ public class ClaudeGuiView extends ViewPart {
     private final java.util.concurrent.ConcurrentLinkedQueue<Map<String, String>> fetchedImages =
             new java.util.concurrent.ConcurrentLinkedQueue<>();
     @SuppressWarnings("unused") private BrowserFunction editOpsReadyFn;
+    @SuppressWarnings("unused") private BrowserFunction debugLogFn;
     /** Set by the page once the __cc* editing entry points exist — see registerEditHandlers. */
     private volatile boolean editOpsReady = false;
 
@@ -406,6 +407,13 @@ public class ClaudeGuiView extends ViewPart {
             ClaudeCodeView.debug("[EDIT] _editOpsReady() from page");
             return null;
         });
+        // What the page makes of a keystroke, logged next to the [EDIT] lines so the two
+        // can be read in order. The page only calls this while Debug mode is on — see
+        // pushDebugMode.
+        debugLogFn = new SimpleFunction(browser, "_debugLog", a -> {
+            if (a.length > 0 && a[0] instanceof String s) ClaudeCodeView.debug(s);
+            return null;
+        });
 
         // Backstop for what the JS handler can't cancel — a window.open/target=_blank
         // that WebView2 turns into a top-level load, or a meta refresh. (Keyboard
@@ -433,6 +441,7 @@ public class ClaudeGuiView extends ViewPart {
             pushCliVersion();        // ditto for the CLI update banner
             pushCliModels();         // ditto for the installed binary's model support
             pushEditKeyHints();      // label the right-click menu with the user's real keys
+            pushDebugMode();         // let the page report its keys while Debug mode is on
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
                 // Re-push the theme too: the root composite's CSS-themed background may not
@@ -868,8 +877,15 @@ public class ClaudeGuiView extends ViewPart {
                 return browser != null && !browser.isDisposed() && pageLoaded && editOpsReady;
             }
             @Override public Object execute(org.eclipse.core.commands.ExecutionEvent event) {
+                // The keystroke's own timestamp, straight off the SWT event the dispatcher
+                // matched. Two runs of one command carrying the SAME timestamp are one
+                // press reported twice; auto-repeat carries a different one each time.
+                Object trigger = event.getTrigger();
+                String when = (trigger instanceof org.eclipse.swt.widgets.Event swtEvent)
+                        ? Integer.toString(swtEvent.time) : "n/a";
                 ClaudeCodeView.debug("[EDIT] execute " + commandId + " (handled=" + isHandled()
-                        + ", pageLoaded=" + pageLoaded + ", editOpsReady=" + editOpsReady + ")");
+                        + ", pageLoaded=" + pageLoaded + ", editOpsReady=" + editOpsReady
+                        + ", time=" + when + ")");
                 if (isHandled()) op.run();
                 return null;
             }
@@ -1060,6 +1076,16 @@ public class ClaudeGuiView extends ViewPart {
      * so the old hints named a keystroke that does something else. Re-pushed on focus,
      * so switching scheme takes effect without a restart.
      */
+    /**
+     * Tells the page whether Debug mode is on, which is the only thing that makes it report
+     * the keys it sees. Re-pushed on activation, so ticking the box in Preferences takes
+     * effect as soon as the user clicks back into the view rather than on the next reopen.
+     */
+    private void pushDebugMode() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        browser.execute("window.__ccDebug = " + DebugModeUi.isDebugEnabled() + ";");
+    }
+
     private void pushEditKeyHints() {
         if (browser == null || browser.isDisposed() || !pageLoaded) return;
         org.eclipse.ui.keys.IBindingService bs =
@@ -1485,6 +1511,7 @@ public class ClaudeGuiView extends ViewPart {
         // Same idea for the key-binding scheme: cheap to re-read, and it means a scheme
         // change shows up in the right-click menu's hints on the next activation.
         pushEditKeyHints();
+        pushDebugMode();
     }
 
     /**
