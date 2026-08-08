@@ -4,7 +4,18 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.12] — 2026-08-05 *(current)*
+## [3.1.13] — 2026-08-08 *(current)*
+
+### Changed
+- **Pasting with Ctrl+V in the prompt input should no longer insert the text twice on Linux.** GTK gives no way to call off the webview's own paste, so the second one is dropped — unconfirmed on GTK ([#97](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/97)).
+- **Debug mode logs the keys the prompt input sees**, and stamps each editing command with the time of the press behind it, so one press reported twice reads differently from a key repeating.
+
+### Fixed
+- **Long paths and URLs no longer push the conversation sideways.** They wrap inside the message now instead of raising a horizontal scrollbar with a white square in its corner. Code blocks, tables and diffs still scroll within themselves.
+
+---
+
+## [3.1.12] — 2026-08-05
 
 ### Added
 - **Approving a plan asks how you want to continue.** Leaving plan mode now has its own card: apply edits automatically, keep being asked before each one, or stay in plan mode. The conversation ends up in the mode you picked instead of the one it started in.
