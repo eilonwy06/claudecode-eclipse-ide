@@ -109,6 +109,12 @@ public class ClaudeGuiView extends ViewPart {
     private final java.util.List<org.eclipse.ui.handlers.IHandlerActivation> editHandlers =
             new java.util.ArrayList<>();
 
+    // The (time, keyCode, stateMask) of the last SWT.KeyDown an edit handler acted on — see
+    // activateEditHandler. On GTK the same physical keystroke can reach Eclipse's key-binding
+    // dispatcher more than once (issue #97: Alt-combos deliver the character KeyDown three
+    // times, same timestamp each time); this collapses those repeats into one execution.
+    private String lastHandledKeyEvent = null;
+
     // Status bar (the shared SWT ClaudeStatusBar widget, reused from the CLI view).
     private ClaudeStatusBar statusBar;
     // Live-applies PREF_STATUSLINE_* changes (enable/toggles/refresh) without a restart.
@@ -886,7 +892,18 @@ public class ClaudeGuiView extends ViewPart {
                 ClaudeCodeView.debug("[EDIT] execute " + commandId + " (handled=" + isHandled()
                         + ", pageLoaded=" + pageLoaded + ", editOpsReady=" + editOpsReady
                         + ", time=" + when + ")");
-                if (isHandled()) op.run();
+                if (!isHandled()) return null;
+                // A right-click menu invocation carries no SWT Event trigger at all, so it
+                // always runs. A key-binding invocation is deduped against the last one this
+                // view acted on: same keyCode/stateMask/time is the SAME physical keystroke
+                // delivered again, not a fresh press (see lastHandledKeyEvent, issue #97 —
+                // GTK can hand Eclipse's dispatcher one Alt-combo keystroke three times).
+                if (trigger instanceof org.eclipse.swt.widgets.Event swtEvent) {
+                    String key = swtEvent.keyCode + "/" + swtEvent.stateMask + "/" + swtEvent.time;
+                    if (key.equals(lastHandledKeyEvent)) return null;
+                    lastHandledKeyEvent = key;
+                }
+                op.run();
                 return null;
             }
         }));
