@@ -110,6 +110,12 @@ function switchTab(id) {
   try { if (window._activeTab) window._activeTab(id); } catch (e) {} // status bar follows active tab
   renderTabs();
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  // Not scrollBottom(true): its rtab !== activeTab() guard exists specifically to
+  // keep a background stream from yanking the view on a tab switch, so it would
+  // wrongly bail here too. This tab is now the active one and always jumps to its
+  // own bottom regardless — but the button (armed by a PRIOR tab's streaming) needs
+  // telling this new view is already there, or it would show over an at-rest tab.
+  if (typeof updateJumpToLatest === 'function') updateJumpToLatest();
 }
 /* Loads a tab's stored model/effort/thinking/permission-mode into the composer UI
    + status bar. */

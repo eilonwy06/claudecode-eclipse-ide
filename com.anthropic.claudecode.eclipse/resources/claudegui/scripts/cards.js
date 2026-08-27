@@ -169,7 +169,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
       finalizeThink(); curBody = null; curText = '';
       showWorking();
     }
-    scrollBottom();
+    scrollBottom(true);   // the user just answered this card — take them to what follows
   }
 
   // Middle "remember" option is contextual: its label comes from the CLI's own
@@ -274,14 +274,14 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     if (window._answerQuestion) window._answerQuestion(reqId, JSON.stringify(answers));
     clearBottomCard();
     const summary = answers.map(a => questions.length > 1 ? (a.header + ': ' + a.answer) : a.answer).join('\n');
-    addAnswered(summary, pane); startFreshTurn(); scrollBottom();
+    addAnswered(summary, pane); startFreshTurn(); scrollBottom(true);   // user just answered
   }
   function cancel() {
     if (resolved) return; resolved = true;
     document.removeEventListener('keydown', onKey, true);
     resolveDot(true);
     if (window._answerQuestion) window._answerQuestion(reqId, '[]');
-    clearBottomCard(); scrollBottom();
+    clearBottomCard(); scrollBottom(true);   // user just dismissed the card
   }
 
   function render() {

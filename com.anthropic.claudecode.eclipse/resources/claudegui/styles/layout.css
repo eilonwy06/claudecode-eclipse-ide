@@ -91,7 +91,10 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 
 
 /* ── Composer ────────────────────────────────────────────── */
-#composer { flex-shrink: 0; padding: 8px 14px 12px; }
+/* position: relative so #jump-to-latest (chat.css) can anchor to this element's
+   top edge rather than the page's; nothing else inside #composer is absolutely
+   positioned, so this doesn't change any other element's containing block. */
+#composer { position: relative; flex-shrink: 0; padding: 8px 14px 12px; }
 /* Floats OVER the transcript at the composer's position (composer hides while a
    card is up). The transcript never reflows; showBottomCard reserves matching
    bottom padding in #messages so the last message can scroll above the card. */

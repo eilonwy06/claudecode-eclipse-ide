@@ -6,13 +6,52 @@ let curTurn = null, curBody = null, curText = '';
 let curThink = null, curThinkText = '', thinkStart = 0, turnStart = 0;
 
 function clearWelcome(pane) { if (!pane) return; const w = pane.querySelector('.welcome'); if (w) w.remove(); }
-function scrollBottom() {
+// How far from the true bottom still counts as "at the bottom" for the purpose of
+// (re-)arming followTail below — has to clear the viewport settling on first render
+// (scrollHeight starts equal to clientHeight before any content), not a streamed
+// chunk's height. A big chunk arriving is NOT what this threshold has to survive:
+// followTail decides that by staying whatever it last was, not by re-measuring.
+const SCROLL_BOTTOM_SLOP = 4;
+function isNearBottom() {
+  const scrollable = messagesEl.scrollHeight - messagesEl.clientHeight;
+  if (scrollable <= SCROLL_BOTTOM_SLOP) return true;   // nothing to scroll
+  return scrollable - messagesEl.scrollTop <= SCROLL_BOTTOM_SLOP;
+}
+// Whether the view should keep following new content as it streams in. This is
+// STATE, not a per-call measurement: scrollHeight forces a synchronous layout flush
+// the instant it's read, so by the time scrollBottom() below could measure anything
+// the just-appended content is already counted, making one big chunk (a code fence,
+// a whole tool-result block — none of this streams in byte-sized pieces) indistinguishable
+// from the user having scrolled up. Measuring only ever happens in the 'scroll'
+// listener, which fires from the user's own wheel/drag AND from scrollBottom's own
+// scrollTop write below — and that write always lands exactly at the bottom, so it
+// always re-arms followTail to true, which is the right value there regardless.
+let followTail = true;
+/**
+ * @param {boolean} [force] Jump to the bottom even if the user scrolled up to read
+ *   older content — for a deliberate action of theirs (sending a message, answering
+ *   a permission prompt) where snapping back down is expected, not a surprise.
+ *   Streamed content omits this so reading history isn't interrupted every time a
+ *   chunk arrives; see updateJumpToLatest for how they get back down themselves.
+ */
+function scrollBottom(force) {
   if (workingEl && workingEl.parentNode) workingEl.parentNode.appendChild(workingEl); // keep last
   // Don't yank the visible view to the bottom for a BACKGROUND tab's stream — only
   // the active tab's pane is on screen, so a background render must not scroll it.
   if (rtab && rtab !== activeTab()) return;
+  if (!force && !followTail) { updateJumpToLatest(); return; }
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  updateJumpToLatest();
 }
+// Shows the button once the user has scrolled away from the tail (followTail false),
+// hides it once they're following again — whether that's from clicking it
+// (scrollBottom(true) re-arms followTail via the scroll event its own write fires)
+// or scrolling back down themselves (the listener below).
+const jumpToLatestEl = document.getElementById('jump-to-latest');
+function updateJumpToLatest() {
+  if (jumpToLatestEl) jumpToLatestEl.classList.toggle('show', !followTail);
+}
+messagesEl.addEventListener('scroll', () => { followTail = isNearBottom(); updateJumpToLatest(); });
 /**
  * @param {string} text @param {string|null} [ctx] context-chip label (file:lines)
  * @param {{url: string, name: string, w: number, h: number}[]} [images] pasted-image chips
@@ -47,7 +86,7 @@ function addUserMessage(text, ctx, images, id) {
     box.appendChild(body);
   }
   turn.appendChild(box); pane.appendChild(turn);
-  scrollBottom();
+  scrollBottom(true);   // the user just sent this — take them to it even if they'd scrolled up
 }
 // Lazily create the assistant turn — only when real content (text or a tool)
 // arrives. While Claude is just "thinking", nothing but the working sunburst shows.

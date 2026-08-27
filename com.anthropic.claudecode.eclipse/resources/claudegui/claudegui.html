@@ -57,6 +57,11 @@
 
   <!-- Composer -->
   <div id="composer">
+    <!-- Shown when new content streams in below while the user has scrolled up to read
+         older content — see updateJumpToLatest in chat.js. Lives here, not inside
+         #messages, so it floats above the composer's top edge rather than scrolling
+         away with the transcript it's meant to be seen over. -->
+    <div id="jump-to-latest" onclick="scrollBottom(true)" title="Jump to latest">__DOWN__</div>
     <div id="usage-warn"></div>
     <div id="input-wrap">
       <!-- Thumbnails of pasted images awaiting send (per active tab). -->
