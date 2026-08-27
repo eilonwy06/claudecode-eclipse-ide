@@ -181,12 +181,13 @@ function renderPendingImages() {
 
 /* Capture image paste on the composer. A screenshot paste arrives as a file item
    with an image/* MIME type; when present we consume the event so the textarea
-   doesn't also paste a filename/text alternative. Plain-text paste is untouched. */
+   doesn't also paste a filename/text alternative. Plain-text paste is untouched.
+
+   Only Ctrl+V produces this DOM event at all — see the comment on window.__ccLastPaste
+   in contextmenu.js for why ccPaste() (the host's org.eclipse.ui.edit.paste handler,
+   and the right-click menu's Paste item) needs to know this one just happened. */
 input.addEventListener('paste', (e) => {
-  /* A paste we just performed ourselves — see ccFlagHostPaste. Letting WebKit run its
-     own paste on top of ours is what puts the text in twice on GTK, so this one is
-     dropped. Only ours: a middle-click paste is unflagged and pastes normally. */
-  if (window.__ccHostPaste) { window.__ccHostPaste = false; e.preventDefault(); return; }
+  window.__ccLastPaste = Date.now();
   const data = e.clipboardData;
   if (!data) return;
   let took = false;

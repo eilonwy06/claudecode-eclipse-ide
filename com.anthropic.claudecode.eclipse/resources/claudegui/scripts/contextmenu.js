@@ -108,7 +108,12 @@ function ccPaste(el) {
      both — its words into the composer, its images as chips — while a copied image on its
      own attaches only the image, so the platform's text alternative for it (a URL, a file
      name) doesn't end up in the composer as well. Images the fragment names by URL are
-     downloaded by the host and arrive later through __ccFetchedImages. */
+     downloaded by the host and arrive later through __ccFetchedImages.
+
+     This runs unconditionally, even on the Ctrl+V native-paste path below: a copied
+     file-manager path or a remote <img> URL in an HTML fragment has no bitmap on the DOM
+     event for images.js's own paste listener to find, so this host round trip is the only
+     way those become chips, on every binding including Ctrl+V. */
   if (window._clipImages) {
     let r = null;
     try { r = JSON.parse(_clipImages(ccTabId()) || 'null'); } catch (e) { r = null; }
@@ -117,6 +122,19 @@ function ccPaste(el) {
       if (r.text === false) return;
     }
   }
+  /* On GTK, Ctrl+V is recognized by WebKit itself as a paste shortcut, independent of
+     Eclipse's dispatcher — it fires a native DOM paste event on the composer, which
+     pastes the clipboard's TEXT (images.js's listener only handles a bitmap item; see
+     above for the rest), before the host's org.eclipse.ui.edit.paste handler even runs
+     (browser.execute() queues the handler's injected script behind the page's own
+     pending key processing, the same ordering issue #97's stray-character fix works
+     around). So: if a real paste event landed on the composer in roughly the same
+     instant as this call, its native paste already inserted the text, and inserting it
+     again here is what put it in twice. A window this short can't collide with an
+     unrelated later paste, and Emacs's Ctrl+Y produces no native paste event at all —
+     the only key WebKit treats as its own paste shortcut is Ctrl+V — so Ctrl+Y always
+     reaches the insert below. */
+  if (window.__ccLastPaste && Date.now() - window.__ccLastPaste < 300) return;
   if (window._clipGet) { ccInsertText(String(_clipGet() || ''), el); return; }
   if (navigator.clipboard && navigator.clipboard.readText) {
     navigator.clipboard.readText()
@@ -133,23 +151,9 @@ function ccPaste(el) {
    string to escape in either direction. */
 window.__ccCopy = () => ccCopy();
 window.__ccCut = () => ccCut();
-window.__ccPaste = () => { ccFlagHostPaste(); ccPaste(); };
+window.__ccPaste = () => ccPaste();
 window.__ccSelectAll = () => ccSelectAll();
 window.__ccDelete = () => ccDeleteForward();
-
-/* Marks the paste we are about to do as ours. On Windows and macOS the webview is told
-   Eclipse consumed the keystroke and never acts on it, but GTK has no way to say that,
-   so WebKit goes on to run its own paste and the text lands twice (issue #97). The
-   composer's paste listener drops the one that follows this flag. It is a one-shot with
-   a short life on purpose: a middle-click paste arrives with nothing flagged and is left
-   alone, and if the flag were ever set too late we are back to the doubled paste rather
-   than to no paste at all. */
-let ccHostPasteTimer = 0;
-function ccFlagHostPaste() {
-  window.__ccHostPaste = true;
-  clearTimeout(ccHostPasteTimer);
-  ccHostPasteTimer = setTimeout(() => { window.__ccHostPaste = false; }, 250);
-}
 
 /* Reports the keys this page sees to the host's log, which is the other half of the
    picture from the [EDIT] lines: on Linux the webview hands Eclipse the same press more
