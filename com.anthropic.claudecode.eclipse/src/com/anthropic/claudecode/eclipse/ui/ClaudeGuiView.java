@@ -887,21 +887,45 @@ public class ClaudeGuiView extends ViewPart {
                 // matched. Two runs of one command carrying the SAME timestamp are one
                 // press reported twice; auto-repeat carries a different one each time.
                 Object trigger = event.getTrigger();
-                String when = (trigger instanceof org.eclipse.swt.widgets.Event swtEvent)
-                        ? Integer.toString(swtEvent.time) : "n/a";
-                ClaudeCodeView.debug("[EDIT] execute " + commandId + " (handled=" + isHandled()
-                        + ", pageLoaded=" + pageLoaded + ", editOpsReady=" + editOpsReady
-                        + ", time=" + when + ")");
-                if (!isHandled()) return null;
+                org.eclipse.swt.widgets.Event swtEvent =
+                        trigger instanceof org.eclipse.swt.widgets.Event e ? e : null;
+                String when = swtEvent != null ? Integer.toString(swtEvent.time) : "n/a";
                 // A right-click menu invocation carries no SWT Event trigger at all, so it
                 // always runs. A key-binding invocation is deduped against the last one this
                 // view acted on: same keyCode/stateMask/time is the SAME physical keystroke
                 // delivered again, not a fresh press (see lastHandledKeyEvent, issue #97 —
                 // GTK can hand Eclipse's dispatcher one Alt-combo keystroke three times).
-                if (trigger instanceof org.eclipse.swt.widgets.Event swtEvent) {
-                    String key = swtEvent.keyCode + "/" + swtEvent.stateMask + "/" + swtEvent.time;
-                    if (key.equals(lastHandledKeyEvent)) return null;
+                // Checked before logging so the log itself says which of several same-
+                // timestamp dispatches actually ran, instead of showing "execute" three
+                // times over with nothing to tell them apart.
+                String key = swtEvent != null
+                        ? swtEvent.keyCode + "/" + swtEvent.stateMask + "/" + swtEvent.time : null;
+                boolean deduped = isHandled() && key != null && key.equals(lastHandledKeyEvent);
+                ClaudeCodeView.debug("[EDIT] execute " + commandId + " (handled=" + isHandled()
+                        + ", pageLoaded=" + pageLoaded + ", editOpsReady=" + editOpsReady
+                        + ", time=" + when + (deduped ? ", deduped" : "") + ")");
+                if (!isHandled() || deduped) return null;
+                if (swtEvent != null) {
                     lastHandledKeyEvent = key;
+                    // On GTK only, consuming this keystroke (doit=false, set by the
+                    // dispatcher once isHandled() claimed it) doesn't stop WebKit from also
+                    // inserting it as text -- confirmed for the plain, unmodified key that
+                    // completes an Emacs chord (Ctrl+X H selects all AND types "h", issue
+                    // #97). Windows/macOS honor the consume (see registerEditHandlers'
+                    // per-platform notes above), so arming there could only ever eat a
+                    // later, unrelated keystroke that happens to match -- gate on GTK.
+                    // Guard only a trigger that could actually produce that stray insert:
+                    // no Ctrl/Alt/Command, and a printable character (not e.g. plain DEL,
+                    // which is 0x7F and inserts nothing -- arming for it would leave the
+                    // guard armed for the NEXT keystroke instead, silently eating the
+                    // following typed letter). The armed value is the character itself, so
+                    // the page only drops an insert that actually matches this keystroke.
+                    char ch = swtEvent.character;
+                    if ("gtk".equals(SWT.getPlatform())
+                            && (swtEvent.stateMask & (SWT.CTRL | SWT.ALT | SWT.COMMAND)) == 0
+                            && ch >= 0x20 && ch != 0x7F) {
+                        executeJS("window.__ccArmKeyGuard && __ccArmKeyGuard(" + (int) ch + ")");
+                    }
                 }
                 op.run();
                 return null;

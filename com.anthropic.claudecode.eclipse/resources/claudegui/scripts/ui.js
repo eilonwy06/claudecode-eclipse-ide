@@ -149,6 +149,77 @@ input.addEventListener('beforeinput', (e) => {
   if (/^[\u0000-\u001F\u007F-\u009F]+$/.test(e.data)) e.preventDefault();
 });
 
+/* A key bound to one of Eclipse's org.eclipse.ui.edit.* commands (issue #97): on GTK,
+   the dispatcher consuming the keystroke (doit=false) doesn't stop WebKit from ALSO
+   inserting it as text once the key carries a plain, unmodified character -- an Emacs
+   Ctrl+X H both selects all AND types "h" into the composer.
+
+   The natural fix would be to arm a guard before running the command and have it
+   preventDefault() the stray beforeinput. That does NOT work: browser.execute() on
+   WebKitGTK queues the injected script behind the page's own pending key processing,
+   so the arm call lands in the page strictly AFTER the stray keydown/beforeinput for
+   that same keystroke has already run and inserted the character (confirmed against a
+   live GTK build -- the arm log line comes after the insert's beforeinput line, not
+   before). There is no preventing an insert that already happened by the time we're
+   able to say anything about it.
+
+   So this undoes it instead. Every single-character insertText beforeinput on the
+   composer is recorded (character + position); when the command's own arm call
+   arrives afterward carrying the SAME character, the just-inserted character at that
+   recorded position is deleted. Both the record and the arm are one-shot and scoped
+   to the exact character, so ordinary typing (no arm ever follows it) and an edit
+   command that inserts nothing (e.g. Delete, which never arms -- see
+   activateEditHandler) are both untouched. execCommand('delete') is used rather than
+   setRangeText so the removal stays on the textarea's native undo stack, same as
+   ccDeleteSelection.
+
+   Arming (and therefore undoing) is refused unless the composer already has focus.
+   selectAll works on the transcript too when the composer isn't focused (see
+   ccSelectAll/ccField), and a stray GTK insert can only ever land in whatever field
+   the keystroke's own focus was in -- so an edit op that ran against the transcript
+   never gets a beforeinput on #input to record, and there is nothing here to undo. */
+let ccLastInsert = null;   // { code, at, pos, replaced } -- pos is the caret position right
+                           // after the insert; replaced is whatever selection the insert
+                           // overwrote (usually "", but not when the stray keystroke lands
+                           // while a chord's own selectAll has something selected already --
+                           // see below).
+input.addEventListener('beforeinput', (e) => {
+  if (e.inputType === 'insertText' && e.data && e.data.length === 1) {
+    ccLastInsert = {
+      code: e.data.codePointAt(0), at: Date.now(),
+      pos: input.selectionStart + 1,
+      replaced: input.value.slice(input.selectionStart, input.selectionEnd),
+    };
+  }
+});
+window.__ccArmKeyGuard = (code) => {
+  if (document.activeElement !== input) return;
+  const ins = ccLastInsert;
+  ccLastInsert = null;   // one-shot regardless of match
+  if (!ins || ins.code !== code || Date.now() - ins.at > 500) return;
+  const pos = Math.min(ins.pos, input.value.length);
+  input.focus();
+  input.setSelectionRange(pos - 1, pos);
+  // Undoing this insert means putting back whatever it overwrote -- usually nothing, but
+  // a chord repeated right after its own selectAll (Ctrl+X H, Ctrl+X H) has that command's
+  // selection still live when the second H's stray insert lands, and REPLACES it. Deleting
+  // the "h" alone would not bring the replaced text back; insertText with the saved
+  // replacement does, and re-selecting it after matches what the user actually had before
+  // op.run() (queued right after this call) reads the selection for copy/cut.
+  let ok;
+  if (ins.replaced) {
+    ok = document.execCommand('insertText', false, ins.replaced);
+    if (ok) input.setSelectionRange(pos - 1, pos - 1 + ins.replaced.length);
+  } else {
+    ok = document.execCommand('delete');
+  }
+  if (!ok) {
+    input.setRangeText(ins.replaced, pos - 1, pos, 'start');
+    input.setSelectionRange(pos - 1, pos - 1 + ins.replaced.length);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+};
+
 input.addEventListener('keydown', (e) => {
   // Set before the slash menu gets a look in: it claims Up/Down but never the
   // horizontal arrows, so a guard set here is always the one this keypress needs.
