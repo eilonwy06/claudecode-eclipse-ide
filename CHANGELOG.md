@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.13] — 2026-08-08 *(current)*
+## [3.1.14] — 2026-08-27 *(current)*
+
+### Fixed
+- **The prompt input's key bindings no longer misfire on Linux.** One press of Emacs's Ctrl+Y pasted two or three times, Ctrl+X H typed an "h" on top of selecting all, and Ctrl+V pasted the clipboard twice — GTK acting on a keystroke Eclipse had already taken. Any custom scheme shaped the same way is covered, not just Emacs. Windows and macOS were never affected ([@jmoraleda](https://github.com/jmoraleda), PR #100, [#97](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/97))
+
+---
+
+## [3.1.13] — 2026-08-08
 
 ### Changed
 - **Pasting with Ctrl+V in the prompt input should no longer insert the text twice on Linux.** GTK gives no way to call off the webview's own paste, so the second one is dropped — unconfirmed on GTK ([#97](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/97)).
