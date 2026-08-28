@@ -54,3 +54,21 @@ function clearBottomCard() {
   ensureWorking();
 }
 
+/* ---- server-side timeout dismissal ----
+   The Java side blocks on a per-card timeout preference and, on expiry, already
+   answers the CLI itself (deny / dismissed) before this ever runs — it just has
+   no way to tell the page the card it raised is now moot. Each card registers a
+   same-shape cleanup here (index by reqId) right before showBottomCard, and
+   unregisters it the moment it resolves itself (click / Enter / Esc) so a click
+   racing the timeout can't double-fire. Java invokes dismissTimedOutCard via
+   browser.execute once its future.get(...) times out. */
+const pendingCardTimeouts = new Map();  // reqId -> () => void
+function registerCardTimeout(reqId, onTimedOut) { pendingCardTimeouts.set(reqId, onTimedOut); }
+function unregisterCardTimeout(reqId) { pendingCardTimeouts.delete(reqId); }
+window.dismissTimedOutCard = function(reqId) {
+  const fn = pendingCardTimeouts.get(reqId);
+  if (!fn) return;   // already resolved by the user, or not this page's card
+  pendingCardTimeouts.delete(reqId);
+  fn();
+};
+

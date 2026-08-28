@@ -12,6 +12,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -1718,6 +1719,13 @@ public class ClaudeGuiView extends ViewPart {
                     com.anthropic.claudecode.eclipse.Constants.PREF_APPROVAL_TIMEOUT_MODE,
                     com.anthropic.claudecode.eclipse.Constants.PREF_APPROVAL_TIMEOUT_SECONDS);
             return future.get(seconds, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            // The card is still on screen (the user never answered): the JS side has
+            // no idea we're about to give up on its behalf, so tell it to tear the
+            // card down and show what happened — otherwise it sits there forever
+            // even though the CLI has already moved on with this "deny".
+            dismissTimedOutCard(reqId);
+            return "deny";
         } catch (Exception e) {
             return "deny";
         } finally {
@@ -1727,6 +1735,21 @@ public class ClaudeGuiView extends ViewPart {
                 catch (Exception ignored) {}
             }
         }
+    }
+
+    /** Tells the page a card's Java-side wait timed out, so it can dismiss the
+     *  card presentation-only — the CLI already has its answer (see the
+     *  matching JS comment on registerCardTimeout in cards.js). Safe to call for
+     *  a card that already resolved itself (window.dismissTimedOutCard no-ops). */
+    private static void dismissTimedOutCard(String reqId) {
+        ClaudeGuiView view = active;
+        if (view == null || view.browser == null) return;
+        final String rid = esc(reqId);
+        Display.getDefault().asyncExec(() -> {
+            if (view.browser != null && !view.browser.isDisposed() && view.pageLoaded) {
+                view.browser.execute("window.dismissTimedOutCard && window.dismissTimedOutCard('" + rid + "')");
+            }
+        });
     }
 
     /**
@@ -1763,6 +1786,9 @@ public class ClaudeGuiView extends ViewPart {
                     com.anthropic.claudecode.eclipse.Constants.PREF_QUESTION_TIMEOUT_MODE,
                     com.anthropic.claudecode.eclipse.Constants.PREF_QUESTION_TIMEOUT_SECONDS);
             return future.get(seconds, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            dismissTimedOutCard(reqId);   // see the matching comment in requestApproval
+            return "[]";
         } catch (Exception e) {
             return "[]";
         } finally {

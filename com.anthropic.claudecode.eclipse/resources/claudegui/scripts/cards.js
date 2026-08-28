@@ -96,6 +96,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   let resolved = false;
   function decide(d, msg) {
     if (resolved) return; resolved = true;
+    unregisterCardTimeout(reqId);
     document.removeEventListener('keydown', onKey, true);
     // Resolve the pending tool's dot: allow → green (finished), deny → red (rejected).
     if (pendingTool) {
@@ -217,6 +218,33 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   }
   document.addEventListener('keydown', onKey, true);
 
+  // Java already answered "deny" to the CLI by the time this fires (its own
+  // future.get(...) timed out) — this is presentation-only cleanup, so it must
+  // NOT call window._decide again (that reqId is no longer pending on the Java
+  // side; a stray second answer would be sent for nothing).
+  registerCardTimeout(reqId, () => {
+    if (resolved) return; resolved = true;
+    document.removeEventListener('keydown', onKey, true);
+    if (pendingTool) {
+      pendingTool.classList.remove('pending');
+      const dot = pendingTool.querySelector('.dot');
+      if (dot) dot.className = 'dot red';
+      if (isPlan) {
+        const sub = document.createElement('div'); sub.className = 'tool-sub';
+        sub.textContent = planOutcomeText(true);
+        pendingTool.appendChild(sub);
+      }
+    }
+    clearBottomCard();
+    // addAnswered inserts a new sibling turn div; startFreshTurn must follow it
+    // (curTurn = null) or the CLI's continuation streams into the turn ABOVE this
+    // note instead of below it — the same pairing decide()'s message-deny branch
+    // uses, not the silent plain-deny branch (which inserts nothing).
+    addAnswered('(No response — the request timed out and was denied.)', pane);
+    startFreshTurn();
+    scrollBottom();
+  });
+
   showBottomCard(card);
 };
 
@@ -265,6 +293,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   }
   function finish() {
     if (resolved || !allAnswered()) return; resolved = true;
+    unregisterCardTimeout(reqId);
     document.removeEventListener('keydown', onKey, true);
     resolveDot(false);
     const answers = questions.map((q, i) => ({
@@ -278,6 +307,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   }
   function cancel() {
     if (resolved) return; resolved = true;
+    unregisterCardTimeout(reqId);
     document.removeEventListener('keydown', onKey, true);
     resolveDot(true);
     if (window._answerQuestion) window._answerQuestion(reqId, '[]');
@@ -347,6 +377,23 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     if (e.key === 'Escape' && (!document.activeElement || document.activeElement.tagName !== 'INPUT')) { e.preventDefault(); cancel(); }
   }
   document.addEventListener('keydown', onKey, true);
+
+  // Java already answered "[]" (dismissed) to the CLI by the time this fires — see
+  // the matching comment on the approval card's registerCardTimeout for why this
+  // must be presentation-only and never call window._answerQuestion again.
+  registerCardTimeout(reqId, () => {
+    if (resolved) return; resolved = true;
+    document.removeEventListener('keydown', onKey, true);
+    resolveDot(true);
+    clearBottomCard();
+    // Same pairing as finish(): addAnswered's new sibling turn div requires
+    // startFreshTurn right after it (see the matching comment on the approval
+    // card's timeout handler) so Claude's continuation lands below this note.
+    addAnswered('(No response — the question timed out and was dismissed.)', pane);
+    startFreshTurn();
+    scrollBottom();
+  });
+
   render(); showBottomCard(card);
 };
 
