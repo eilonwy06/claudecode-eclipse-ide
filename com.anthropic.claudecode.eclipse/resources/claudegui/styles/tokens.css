@@ -40,6 +40,23 @@
   --send-off-fg: #8a7a72;     /* disabled send button fg */
   --on-accent: #fff;          /* text on accent/selection fills */
   --tbtn-active: #3a3550;     /* toolbar button toggled-on bg */
+  /* Tab strip: the ACTIVE tab must read as lighter/selected, matching the content
+     pane (--bg) it opens into; inactive tabs recede. --bg-soft can't be reused here
+     — it's shared with cards/composer, where "distinct surface" (not "lighter") is
+     the correct read, and in light mode --bg-soft is darker than --bg, which would
+     invert the tab relationship (issue: active tab looked grayer than inactive). */
+  --tab-bg: #1e1e1e;          /* inactive tab bg — matches --bg */
+  --tab-bg-active: #232323;   /* active tab bg — same as dark's old --bg-soft */
+  /* Unchanged from the original: dark's --bg-soft WAS the hover-preview value
+     (there was no distinct third value), so this equals --tab-bg-active exactly
+     — a hovered inactive tab previews the active look, same as before this token
+     split. Light needs a genuinely different (in-between) value — see that block. */
+  --tab-hover-preview: #232323;
+  /* Separate token for the title pill's hover fill (#convo-header .title-wrap):
+     needs a step clearly visible against --tab-bg specifically, not the tab strip's
+     inactive/active/hover relationship. In dark this equals --bg-hover's existing
+     value, since --tab-bg IS --bg here and nothing changed. */
+  --chrome-hover: #2f2f2f;
   --warn-border: #b58b2e;     /* usage-warning banner */
   --warn-bg: rgba(181,139,46,.12);
   --warn-fg: #d8b66a;
@@ -91,6 +108,20 @@
   --send-off-fg: #a89a92;
   --on-accent: #fff;
   --tbtn-active: #dfe3f0;
+  /* See the dark block's comment: active must be lighter than inactive. In light
+     mode that means active = pure white (matching --bg, the content pane), and
+     inactive recedes to a visible gray — the reverse of --bg-soft's #f3f3f3-on-
+     #ffffff relationship, which is correct for cards but was wrong for tabs. */
+  --tab-bg: #ececec;
+  --tab-bg-active: #ffffff;
+  /* A genuine in-between value (unlike dark, where hover always equalled active):
+     light's inactive (#ececec) and active (#ffffff) are close enough that jumping
+     straight to --tab-bg-active on hover reads as "did this just become active?" */
+  --tab-hover-preview: #f5f5f5;
+  /* --bg-hover (#e8e8e8) is only a 4-unit step from --tab-bg (#ececec) — too
+     close to read as a hover state on the title pill. A clearly darker value
+     against this specific base, not a reuse of a token calibrated for --bg. */
+  --chrome-hover: #dcdcdc;
   --warn-border: #c79a2e;
   --warn-bg: rgba(199,154,46,.14);
   --warn-fg: #8a6a12;
