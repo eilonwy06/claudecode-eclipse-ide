@@ -251,7 +251,7 @@ setInterval(sweepStaleWorking, 2000);
 function ensureWorking() {
   // Operates on the render-target tab; don't show a gerund if that tab's own card
   // is pending (it replaces the working indicator).
-  if (rtab && rtab.streaming && !workingEl && !(pendingCard && pendingCardOwner === rtab)) showWorking();
+  if (rtab && rtab.streaming && !workingEl && !rtab.pendingCard) showWorking();
 }
 /* Live token count shown beside the "Thinking…" marker (real output tokens via the
    CLI partial-message stream), removed once thinking finalizes to "Thought for Ns". */

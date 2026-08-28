@@ -24,6 +24,9 @@
  *   undefined (a brand-new tab) means caught-up, same as true (see chat.js)
  * @property {number} [scrollTop] this tab's own #messages.scrollTop, parked on switch-away
  *   since #messages is one shared scroll container — undefined means "at the bottom"
+ * @property {HTMLElement|null} [pendingCard] this tab's own blocking approval/question/advisor
+ *   card, if one is currently awaiting an answer (see carddock.js) — kept per-tab so one tab's
+ *   card can never evict another's
  */
 /** @type {Tab[]} */
 let tabs = [], activeId = null, tabSeq = 0;
@@ -191,7 +194,8 @@ function closeTab(id, opts) {
   if (t.streaming && window._cancelRequest) window._cancelRequest(id);   // stop its stream
   if (window._disposeTab) window._disposeTab(id);                         // free its process
   if (rtab === t) rtab = null;
-  if (pendingCardOwner === t) { pendingCard = null; pendingCardOwner = null; }
+  // t.pendingCard (if any) goes with it — no separate global reference to clear now
+  // that the card lives on the Tab object itself.
   t.pane.remove();
   tabs.splice(idx, 1);
   if (opts.keepRoot) return;   // closeRoot is tearing the whole root down
@@ -340,8 +344,7 @@ function clearSession() {
   if (t.streaming) doCancel();
   hideWorking();
   curTurn = null; curBody = null; curText = ''; curThink = null; curThinkText = '';
-  if (pendingCardOwner === t) { pendingCard = null; pendingCardOwner = null; }
-  clearBottomCard();
+  clearBottomCard(t);   // drop this tab's own pending card, if any — /clear replaces its conversation
   // Drop the process so the next send starts a genuinely new conversation
   // (spawns without --resume) instead of continuing the one just cleared.
   if (window._disposeTab) window._disposeTab(t.id);
