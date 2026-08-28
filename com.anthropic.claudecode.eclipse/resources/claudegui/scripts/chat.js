@@ -17,17 +17,27 @@ function isNearBottom() {
   if (scrollable <= SCROLL_BOTTOM_SLOP) return true;   // nothing to scroll
   return scrollable - messagesEl.scrollTop <= SCROLL_BOTTOM_SLOP;
 }
-// Whether the view should keep following new content as it streams in. This is
-// STATE, not a per-call measurement: scrollHeight forces a synchronous layout flush
-// the instant it's read, so by the time scrollBottom() below could measure anything
-// the just-appended content is already counted, making one big chunk (a code fence,
-// a whole tool-result block — none of this streams in byte-sized pieces) indistinguishable
-// from the user having scrolled up. Measuring only ever happens in the 'scroll'
-// listener (the user's own wheel/drag) and, explicitly, right after scrollBottom's
-// own scrollTop write below — that write is a NO-OP (and so fires no 'scroll' event)
-// whenever the view is already sitting at that same position, which is exactly the
-// state a stale-false followTail plus a since-arrived resize back to the bottom can
-// produce; relying on the event alone would leave followTail stuck at false forever.
+// Whether the ACTIVE tab's view should keep following new content as it streams
+// in. This is STATE, not a per-call measurement: scrollHeight forces a synchronous
+// layout flush the instant it's read, so by the time scrollBottom() below could
+// measure anything the just-appended content is already counted, making one big
+// chunk (a code fence, a whole tool-result block — none of this streams in
+// byte-sized pieces) indistinguishable from the user having scrolled up. Measuring
+// only ever happens in the 'scroll' listener (the user's own wheel/drag) and,
+// explicitly, right after scrollBottom's own scrollTop write below — that write is
+// a NO-OP (and so fires no 'scroll' event) whenever the view is already sitting at
+// that same position, which is exactly the state a stale-false followTail plus a
+// since-arrived resize back to the bottom can produce; relying on the event alone
+// would leave followTail stuck at false forever.
+//
+// Kept as ONE module global describing whichever tab is currently on screen (like
+// curTurn/curBody etc. — see loadRender's comment in tabs.js) rather than always
+// reading activeTab().followTail, since #messages is one shared scroll container:
+// only the active tab's position is ever meaningfully "current". switchTab saves
+// this (and the raw scrollTop, since "was scrolled up" alone doesn't say how far —
+// a background pane's scrollTop isn't preserved by the DOM on its own) onto the
+// outgoing Tab and restores the incoming one's, the same pattern already used for
+// each tab's composer draft.
 let followTail = true;
 /**
  * @param {boolean} [force] Jump to the bottom even if the user scrolled up to read

@@ -19,6 +19,10 @@
  * @property {boolean} [compacting]   /compact (or auto-compact) running — gerund pinned to "Compacting…"
  * @property {Object}  [_r]           parked render globals while another tab is loaded (see loadRender)
  * @property {HTMLElement|null} [_compEl] latest "Compacted chat" element awaiting its summary body
+ * @property {boolean} [followTail] whether #messages should auto-scroll to new content
+ *   for THIS tab; undefined (a brand-new tab) means caught-up, same as true (see chat.js)
+ * @property {number} [scrollTop] this tab's own #messages.scrollTop, saved on switch-away
+ *   since #messages is one shared scroll container — undefined means "at the bottom"
  */
 /** @type {Tab[]} */
 let tabs = [], activeId = null, tabSeq = 0;
@@ -90,10 +94,19 @@ function createTab(opts) {
   return tabs[tabs.length - 1];
 }
 function switchTab(id) {
-  // Each tab keeps its own unsent draft: stash the composer into the outgoing tab,
-  // then restore the incoming tab's draft so drafts don't bleed across tabs.
+  // Each tab keeps its own unsent draft, and its own scroll-follow state: stash the
+  // composer + #messages is ONE shared scroll container (only the active tab's pane
+  // is ever display:'' at a time), so a background pane's scroll position isn't
+  // preserved by the DOM on its own — followTail/scrollTop are saved onto the
+  // outgoing tab here, the same pattern as the draft, or switching away and back
+  // always resets to caught-up-at-the-bottom regardless of where the user had
+  // scrolled to.
   const prev = tabById(activeId);
-  if (prev && prev.id !== id) prev.draft = input.value;
+  if (prev && prev.id !== id) {
+    prev.draft = input.value;
+    prev.followTail = followTail;
+    prev.scrollTop = messagesEl.scrollTop;
+  }
   activeId = id;
   tabs.forEach(t => { t.pane.style.display = (t.id === id) ? '' : 'none'; });
   const t = activeTab();
@@ -109,18 +122,20 @@ function switchTab(id) {
   if (typeof syncComposer === 'function') syncComposer();           // send/stop reflects THIS tab
   try { if (window._activeTab) window._activeTab(id); } catch (e) {} // status bar follows active tab
   renderTabs();
-  // Not scrollBottom(true): this tab is now the active one and always jumps to its
-  // own bottom regardless of rtab, which scrollBottom's guard would otherwise
-  // wrongly apply here too.
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  // followTail is reset directly rather than left to the 'scroll' event this write
-  // may fire: when the incoming tab's content is already shorter than the viewport,
-  // scrollTop is already 0 and the assignment above is a no-op, so no 'scroll' event
-  // fires — leaving followTail at whatever the PREVIOUS tab last set it to (false,
-  // if that tab had been scrolled up) and silently disabling auto-scroll on this
-  // tab for the rest of its life. Always true here: a fresh switch always starts
-  // caught up, matching the jump this function just performed.
-  followTail = true;
+  // Restore THIS tab's own remembered state rather than always jumping to the
+  // bottom: a brand-new tab (followTail/scrollTop both undefined) defaults to
+  // caught-up, matching the previous always-jump behavior; a tab last left
+  // scrolled up reopens at the same spot instead of silently snapping down and
+  // hiding exactly the earlier content the user had scrolled up to read. Set
+  // directly rather than left to the 'scroll' event this scrollTop write may
+  // fire — restoring a position the container happens to already be at (e.g. two
+  // tabs both left scrolled to their own top) is a no-op and fires no event,
+  // which would otherwise leave followTail stuck at whatever the PREVIOUS tab
+  // left it as. Not scrollBottom(true) for the followTail:true case: this tab is
+  // now the active one and always jumps to its own bottom regardless of rtab,
+  // which scrollBottom's background-tab guard would otherwise wrongly apply here.
+  followTail = t.followTail !== false;
+  messagesEl.scrollTop = followTail ? messagesEl.scrollHeight : (t.scrollTop || 0);
   if (typeof updateJumpToLatest === 'function') updateJumpToLatest();
 }
 /* Loads a tab's stored model/effort/thinking/permission-mode into the composer UI
@@ -294,6 +309,12 @@ function clearSession() {
   t.compacting = false;
   t.downgradeWarned = null;
   t.pane.innerHTML = '';
+  // The old transcript's scroll state is meaningless against an emptied pane — left
+  // alone, a scrolled-up t.scrollTop would reopen the fresh conversation scrolled
+  // into blank space (with the jump arrow showing) the next time this tab is
+  // switched to. t is the active tab, so the module global needs resetting too.
+  t.followTail = true; t.scrollTop = 0;
+  followTail = true;
   document.getElementById('convo-title').textContent = t.title;
   renderTabs();
   if (typeof renderPendingImages === 'function') renderPendingImages();
