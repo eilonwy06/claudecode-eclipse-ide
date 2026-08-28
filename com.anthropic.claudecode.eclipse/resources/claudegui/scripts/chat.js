@@ -23,9 +23,11 @@ function isNearBottom() {
 // the just-appended content is already counted, making one big chunk (a code fence,
 // a whole tool-result block — none of this streams in byte-sized pieces) indistinguishable
 // from the user having scrolled up. Measuring only ever happens in the 'scroll'
-// listener, which fires from the user's own wheel/drag AND from scrollBottom's own
-// scrollTop write below — and that write always lands exactly at the bottom, so it
-// always re-arms followTail to true, which is the right value there regardless.
+// listener (the user's own wheel/drag) and, explicitly, right after scrollBottom's
+// own scrollTop write below — that write is a NO-OP (and so fires no 'scroll' event)
+// whenever the view is already sitting at that same position, which is exactly the
+// state a stale-false followTail plus a since-arrived resize back to the bottom can
+// produce; relying on the event alone would leave followTail stuck at false forever.
 let followTail = true;
 /**
  * @param {boolean} [force] Jump to the bottom even if the user scrolled up to read
@@ -38,14 +40,24 @@ function scrollBottom(force) {
   if (workingEl && workingEl.parentNode) workingEl.parentNode.appendChild(workingEl); // keep last
   // Don't yank the visible view to the bottom for a BACKGROUND tab's stream — only
   // the active tab's pane is on screen, so a background render must not scroll it.
-  if (rtab && rtab !== activeTab()) return;
+  // force is a deliberate action ON THE ACTIVE TAB ITSELF (send, answer a card,
+  // click the jump-to-latest arrow) — it must bypass this, or a background tab
+  // that streamed anything since the last switch leaves rtab stale and silently
+  // defeats every one of those actions on the tab actually on screen.
+  if (!force && rtab && rtab !== activeTab()) return;
   if (!force && !followTail) { updateJumpToLatest(); return; }
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  // Set directly rather than left to the 'scroll' event this write may fire: if the
+  // view is already sitting at the bottom (e.g. this is a force call arriving while
+  // followTail is stale-false), the write above is a no-op and no event fires —
+  // leaving followTail stuck false and the arrow visibly unable to fix itself even
+  // though scrollBottom(true) just ran and did put the view at the true bottom.
+  followTail = true;
   updateJumpToLatest();
 }
 // Shows the button once the user has scrolled away from the tail (followTail false),
-// hides it once they're following again — whether that's from clicking it
-// (scrollBottom(true) re-arms followTail via the scroll event its own write fires)
+// hides it once they're following again — whether that's from clicking it (scrollBottom
+// sets followTail directly, not relying on the scroll event its own write may not fire)
 // or scrolling back down themselves (the listener below).
 const jumpToLatestEl = document.getElementById('jump-to-latest');
 function updateJumpToLatest() {
