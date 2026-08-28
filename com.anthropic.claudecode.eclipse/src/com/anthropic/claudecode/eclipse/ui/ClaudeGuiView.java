@@ -634,7 +634,8 @@ public class ClaudeGuiView extends ViewPart {
         String[] use = tabColors != null ? tabColors : lastEditorAreaTabColors;
         if (Activator.getDefault().getPreferenceStore().getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_DEBUG_MODE)) {
             Activator.log("editor-area tab colors: "
-                    + (use == null ? "unavailable" : use[0] + " / " + use[1]) + " (mode=" + mode + ")");
+                    + (use == null ? "unavailable" : use[0] + " / " + use[1]) + " (mode=" + mode + ")"
+                    + " [" + lastTabColorsDiagnostic + "]");
         }
         String call = "window.onTheme && window.onTheme('" + mode + "'"
                 + (use != null ? ",'" + use[0] + "','" + use[1] + "'" : "")
@@ -661,6 +662,11 @@ public class ClaudeGuiView extends ViewPart {
      * {@code null} if the editor area isn't in the model yet, isn't rendered as a
      * CTabFolder (e.g. zero editors open), or the colors aren't readable.
      */
+    /** Set by {@link #findEditorAreaTabColors()} on every call — which step it got to,
+     *  for the debug-mode log line in {@link #pushTheme()} (this method itself only
+     *  returns null/non-null, so this is the only way to see WHERE it failed). */
+    private String lastTabColorsDiagnostic = "not yet run";
+
     private String[] findEditorAreaTabColors() {
         try {
             org.eclipse.ui.IWorkbench wb = org.eclipse.ui.PlatformUI.getWorkbench();
@@ -668,22 +674,60 @@ public class ClaudeGuiView extends ViewPart {
                     wb.getService(org.eclipse.e4.ui.workbench.modeling.EModelService.class);
             org.eclipse.e4.ui.model.application.MApplication application =
                     wb.getService(org.eclipse.e4.ui.model.application.MApplication.class);
-            if (modelService == null || application == null) return null;
+            if (modelService == null || application == null) {
+                lastTabColorsDiagnostic = "modelService=" + modelService + " application=" + application;
+                return null;
+            }
 
             org.eclipse.e4.ui.model.application.ui.MUIElement element =
                     modelService.find(org.eclipse.ui.IPageLayout.ID_EDITOR_AREA, application);
+            String elementClassBeforeDeref = element == null ? "null" : element.getClass().getName();
             if (element instanceof org.eclipse.e4.ui.model.application.ui.advanced.MPlaceholder ph) {
                 element = ph.getRef();
             }
-            if (!(element instanceof org.eclipse.e4.ui.model.application.ui.basic.MPartStack stack)) return null;
-            if (!(stack.getWidget() instanceof org.eclipse.swt.custom.CTabFolder tabFolder)) return null;
-            if (tabFolder.isDisposed()) return null;
+            // ID_EDITOR_AREA resolves to an MArea (the editor area's own container),
+            // NOT the MPartStack directly — confirmed by logging the actual class here
+            // against a live GTK session. The real per-editor tab folder (the one
+            // showing open file tabs) is a descendant of it, tagged by E4's renderer
+            // with a CSS class name containing "EditorStack" — findElements walks
+            // down to find it rather than assuming a fixed nesting depth, since that
+            // can vary with split editors / multiple editor areas.
+            if (!(element instanceof org.eclipse.e4.ui.model.application.ui.advanced.MArea area)) {
+                lastTabColorsDiagnostic = "find(" + org.eclipse.ui.IPageLayout.ID_EDITOR_AREA + ") -> "
+                        + elementClassBeforeDeref + ", after MPlaceholder deref -> "
+                        + (element == null ? "null" : element.getClass().getName()) + " (want MArea)";
+                return null;
+            }
+            // A split editor area has more than one MPartStack descendant. Prefer the
+            // one E4 itself tags as the primary data stack (confirmed present as a
+            // literal tag, not the element ID, via a live GTK log dump); fall back to
+            // the first live one so a split editor still works even if some future
+            // Eclipse version stops tagging it this way.
+            org.eclipse.swt.custom.CTabFolder tabFolder = null;
+            org.eclipse.swt.custom.CTabFolder firstLive = null;
+            for (org.eclipse.e4.ui.model.application.ui.basic.MPartStack stack
+                    : modelService.findElements(area, null, org.eclipse.e4.ui.model.application.ui.basic.MPartStack.class)) {
+                if (!(stack.getWidget() instanceof org.eclipse.swt.custom.CTabFolder ctf) || ctf.isDisposed()) continue;
+                if (firstLive == null) firstLive = ctf;
+                if (stack.getTags().contains("org.eclipse.e4.primaryDataStack")) { tabFolder = ctf; break; }
+            }
+            if (tabFolder == null) tabFolder = firstLive;
+            if (tabFolder == null) {
+                lastTabColorsDiagnostic = "MArea found, but no descendant MPartStack has a live CTabFolder widget"
+                        + " (zero editors open, or the editor area isn't rendered yet)";
+                return null;
+            }
 
             org.eclipse.swt.graphics.Color inactive = tabFolder.getBackground();
             org.eclipse.swt.graphics.Color active = tabFolder.getSelectionBackground();
-            if (inactive == null || inactive.isDisposed() || active == null || active.isDisposed()) return null;
+            if (inactive == null || inactive.isDisposed() || active == null || active.isDisposed()) {
+                lastTabColorsDiagnostic = "inactive=" + inactive + " active=" + active + " (disposed or null)";
+                return null;
+            }
+            lastTabColorsDiagnostic = "ok";
             return new String[]{ ColorUtils.toHex(inactive.getRGB()), ColorUtils.toHex(active.getRGB()) };
-        } catch (Exception ignore) {
+        } catch (Exception e) {
+            lastTabColorsDiagnostic = "threw " + e;
             return null;
         }
     }
