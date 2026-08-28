@@ -327,14 +327,24 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     otxt.appendChild(Object.assign(document.createElement('div'), { className: 'q-otitle', textContent: 'Other' }));
     orow.appendChild(otxt);
     orow.onclick = () => { state[activeQ].choice = 'other'; render();
-      setTimeout(() => { const i = card.querySelector('.q-other-in input'); if (i) i.focus(); }, 0); };
+      setTimeout(() => { const i = card.querySelector('.q-other-in textarea'); if (i) i.focus(); }, 0); };
     card.appendChild(orow);
     if (state[activeQ].choice === 'other') {
       const oin = document.createElement('div'); oin.className = 'q-other-in';
-      const inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = 'Type your answer'; inp.value = state[activeQ].other;
-      inp.oninput = () => { state[activeQ].other = inp.value; submit.classList.toggle('ready', allAnswered()); };
-      inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(); } };
+      // textarea, not input: a single-line <input> has no notion of a newline at
+      // all, so Shift+Enter had nothing to fall through to. Mirrors the main
+      // composer (#input in ui.js) — auto-grow on input, Enter submits, Shift+Enter
+      // is left alone to insert a newline natively.
+      const inp = document.createElement('textarea'); inp.rows = 1; inp.placeholder = 'Type your answer'; inp.value = state[activeQ].other;
+      const grow = () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 160) + 'px'; };
+      inp.oninput = () => { state[activeQ].other = inp.value; submit.classList.toggle('ready', allAnswered()); grow(); };
+      inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finish(); } };
       oin.appendChild(inp); card.appendChild(oin);
+      // render() re-seeds .value from saved state on every option click / question-tab
+      // switch, but oninput (where grow() normally runs) doesn't fire for that — size
+      // it once here too, or a revisited multi-line answer comes back collapsed to one
+      // row. Needs to be in the DOM first for scrollHeight to mean anything.
+      grow();
     }
     submit.className = 'q-submit' + (allAnswered() ? ' ready' : '');
     submit.innerHTML = '<span class="num">1</span><span>Submit answers</span>';
@@ -344,7 +354,14 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   }
   function onKey(e) {
     if (resolved) return;
-    if (e.key === 'Escape' && (!document.activeElement || document.activeElement.tagName !== 'INPUT')) { e.preventDefault(); cancel(); }
+    // Capture-phase on document: runs before the Other field's own onkeydown, so
+    // that handler's stopPropagation can't shield it — the tag check here is what
+    // has to do it. Must accept TEXTAREA too now that Other is one (was INPUT-only
+    // when it was a single-line <input>), or Escape while typing an answer
+    // dismisses the whole card and throws away what was typed.
+    const ae = document.activeElement;
+    const inField = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+    if (e.key === 'Escape' && !inField) { e.preventDefault(); cancel(); }
   }
   document.addEventListener('keydown', onKey, true);
   render(); showBottomCard(card);
