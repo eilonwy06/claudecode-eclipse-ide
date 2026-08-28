@@ -20,4 +20,9 @@ public final class ColorUtils {
     public static double luminance(RGB rgb) {
         return luminance(rgb.red, rgb.green, rgb.blue);
     }
+
+    /** Formats an SWT {@link RGB} as a CSS hex color ({@code "#rrggbb"}). */
+    public static String toHex(RGB rgb) {
+        return String.format("#%02x%02x%02x", rgb.red, rgb.green, rgb.blue);
+    }
 }
