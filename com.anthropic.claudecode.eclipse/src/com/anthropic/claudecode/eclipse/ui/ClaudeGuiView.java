@@ -1713,7 +1713,11 @@ public class ClaudeGuiView extends ViewPart {
             }
         });
         try {
-            return future.get(30, TimeUnit.MINUTES);
+            long seconds = com.anthropic.claudecode.eclipse.Constants.resolveTimeoutSeconds(
+                    Activator.getDefault().getPreferenceStore(),
+                    com.anthropic.claudecode.eclipse.Constants.PREF_APPROVAL_TIMEOUT_MODE,
+                    com.anthropic.claudecode.eclipse.Constants.PREF_APPROVAL_TIMEOUT_SECONDS);
+            return future.get(seconds, TimeUnit.SECONDS);
         } catch (Exception e) {
             return "deny";
         } finally {
@@ -1754,7 +1758,11 @@ public class ClaudeGuiView extends ViewPart {
             }
         });
         try {
-            return future.get(30, TimeUnit.MINUTES);
+            long seconds = com.anthropic.claudecode.eclipse.Constants.resolveTimeoutSeconds(
+                    Activator.getDefault().getPreferenceStore(),
+                    com.anthropic.claudecode.eclipse.Constants.PREF_QUESTION_TIMEOUT_MODE,
+                    com.anthropic.claudecode.eclipse.Constants.PREF_QUESTION_TIMEOUT_SECONDS);
+            return future.get(seconds, TimeUnit.SECONDS);
         } catch (Exception e) {
             return "[]";
         } finally {
