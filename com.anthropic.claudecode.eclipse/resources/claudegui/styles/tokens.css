@@ -111,17 +111,26 @@
   /* See the dark block's comment: active must be lighter than inactive. In light
      mode that means active = pure white (matching --bg, the content pane), and
      inactive recedes to a visible gray — the reverse of --bg-soft's #f3f3f3-on-
-     #ffffff relationship, which is correct for cards but was wrong for tabs. */
-  --tab-bg: #ececec;
+     #ffffff relationship, which is correct for cards but was wrong for tabs.
+     #f8f8f8 is not a guess: it's the real color a live GTK CTabFolder's
+     getBackground() reported (ClaudeGuiView.findEditorAreaTabColors samples it
+     dynamically at runtime and overrides this via inline style — this is only
+     the fallback for when that lookup fails, e.g. zero editors open at startup). */
+  --tab-bg: #f8f8f8;
   --tab-bg-active: #ffffff;
-  /* A genuine in-between value (unlike dark, where hover always equalled active):
-     light's inactive (#ececec) and active (#ffffff) are close enough that jumping
-     straight to --tab-bg-active on hover reads as "did this just become active?" */
-  --tab-hover-preview: #f5f5f5;
-  /* --bg-hover (#e8e8e8) is only a 4-unit step from --tab-bg (#ececec) — too
-     close to read as a hover state on the title pill. A clearly darker value
-     against this specific base, not a reuse of a token calibrated for --bg. */
-  --chrome-hover: #dcdcdc;
+  /* Static in both themes — NOT sampled at runtime like --tab-bg/--tab-bg-active
+     above. A genuine in-between value (unlike dark, where hover always equalled
+     active): light's inactive/active gap is small enough that jumping straight
+     to --tab-bg-active on hover reads as "did this just become active?" On a
+     theme whose sampled pair differs a lot from #f8f8f8/#ffffff this fixed value
+     could land outside that pair's range and invert hover again — a known gap,
+     not yet worth deriving from the sample without another data point. */
+  --tab-hover-preview: #fbfbfb;
+  /* Also static/not sampled. --bg-hover (#e8e8e8) reads as too subtle a step
+     against --tab-bg's lighter #f8f8f8 base to register as a hover state on the
+     title pill. A clearly visible value against this specific base, not a reuse
+     of a token calibrated for --bg. */
+  --chrome-hover: #ebebeb;
   --warn-border: #c79a2e;
   --warn-bg: rgba(199,154,46,.14);
   --warn-fg: #8a6a12;
