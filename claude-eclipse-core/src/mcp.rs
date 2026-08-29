@@ -50,7 +50,7 @@ async fn handle_request(
     match method {
         "initialize" => handle_initialize(Arc::clone(&state), sender, id),
         "initialized" => {} // notification, no response
-        "tools/list" => handle_tools_list(sender, id),
+        "tools/list" => handle_tools_list(state, sender, id).await,
         "tools/call" => handle_tools_call(state, sender, id, &msg).await,
         "shutdown" => {
             if let Some(id) = id {
@@ -106,15 +106,75 @@ fn handle_initialize(state: Arc<AppState>, sender: UnboundedSender<SseEvent>, id
 }
 
 // ---------------------------------------------------------------------------
-// tools/list — static definitions that mirror the Java McpToolRegistry
+// tools/list — asked of the Java McpToolRegistry at request time
 // ---------------------------------------------------------------------------
 
-fn handle_tools_list(sender: UnboundedSender<SseEvent>, id: Option<Value>) {
+/// Sentinel tool name that makes the existing `executeEclipseTool` callback return the
+/// registry's own tool definitions. Deliberately NOT a new JNI method: adding one to
+/// `NativeCore.ToolCallback` would change the interface the DLL looks up by signature, so
+/// a DLL and a plugin jar of different vintages would stop talking to each other. Reusing
+/// the one call that already exists keeps both directions compatible — an older plugin
+/// simply answers "Unknown tool" and we fall back below.
+///
+/// The leading `$` cannot collide with a registered tool: names come from
+/// `McpTool.toolName()`, which are all plain identifiers.
+const LIST_TOOLS_SENTINEL: &str = "$listTools";
+
+async fn handle_tools_list(
+    state: Arc<AppState>,
+    sender: UnboundedSender<SseEvent>,
+    id: Option<Value>,
+) {
     let id = match id {
         Some(id) => id,
         None => return,
     };
-    let tools = json!([
+
+    if let Some(tools) = tools_from_java(state).await {
+        send_result(&sender, &id, json!({ "tools": tools }));
+        return;
+    }
+
+    // Fallback only. Reached when no callback is registered yet (a client connecting
+    // before Eclipse finishes wiring the bridge) or when the plugin predates the
+    // sentinel. It is allowed to be incomplete — Java is the source of truth, and
+    // anything missing here is still callable, just not advertised.
+    send_result(&sender, &id, json!({ "tools": fallback_tools() }));
+}
+
+/// Asks Java for the live tool definitions. `None` on any failure, so the caller can fall
+/// back rather than serve an empty list and leave the client with no tools at all.
+async fn tools_from_java(state: Arc<AppState>) -> Option<Value> {
+    let (java_vm, callback) = {
+        let guard = state.tool_callback.lock().unwrap();
+        let cb = guard.as_ref()?;
+        (Arc::clone(&cb.java_vm), Arc::clone(&cb.callback))
+    };
+
+    // Same blocking-thread treatment as tools/call: JNI must not stall the executor.
+    let raw = tokio::task::spawn_blocking(move || {
+        call_java_tool(&java_vm, &callback, LIST_TOOLS_SENTINEL, "{}")
+    })
+    .await
+    .ok()?;
+
+    // Java answers in the standard McpToolResult envelope, so the array arrives as text
+    // inside content[0]. An older plugin returns isError with "Unknown tool: $listTools",
+    // which fails one of the steps below and lands us on the fallback.
+    let envelope: Value = serde_json::from_str(&raw).ok()?;
+    if envelope.get("isError").and_then(Value::as_bool).unwrap_or(false) {
+        return None;
+    }
+    let text = envelope.get("content")?.get(0)?.get("text")?.as_str()?;
+    let tools: Value = serde_json::from_str(text).ok()?;
+    match tools.as_array() {
+        Some(a) if !a.is_empty() => Some(tools),
+        _ => None,
+    }
+}
+
+fn fallback_tools() -> Value {
+    json!([
         {
             "name": "openFile",
             "description": "Open a file in the Eclipse editor at an optional line and column, with optional text selection.",
@@ -223,6 +283,45 @@ fn handle_tools_list(sender: UnboundedSender<SseEvent>, id: Option<Value>) {
             }
         },
         {
+            "name": "build",
+            "description": "Clean and/or rebuild Eclipse projects and report the resulting compile errors. Scope: the named projects, or the whole workspace when none are given. Modes: clean-rebuild (default), clean, rebuild (full build), incremental. Returns per-project error/warning counts plus the problem markers themselves.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "projects": {
+                        "type": "array",
+                        "description": "Project names to build. Omit or leave empty to build the whole workspace.",
+                        "items": { "type": "string" }
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "clean-rebuild (default) | clean | rebuild | incremental",
+                        "enum": ["clean-rebuild", "clean", "rebuild", "incremental"]
+                    }
+                }
+            }
+        },
+        {
+            "name": "runAs",
+            "description": "Run a project the way right-click > Run As does — including 'Eclipse Application', 'Java Application', 'JUnit Plug-in Test', or any other launcher installed in this IDE, plus any saved launch configuration by name. Call without 'option' to list what is available for the project. Note that an Eclipse Application launch starts a second, long-running IDE.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project name, e.g. com.anthropic.claudecode.eclipse" },
+                    "option":  { "type": "string", "description": "Run As option label or id, e.g. 'Eclipse Application'. Omit to list the options instead of launching." },
+                    "config":  { "type": "string", "description": "Name of an existing launch configuration to run instead of a Run As option. Takes precedence over 'option'." },
+                    "mode": {
+                        "type": "string",
+                        "description": "run (default) or debug",
+                        "enum": ["run", "debug"]
+                    },
+                    "force": { "type": "boolean", "description": "Run the option even when it does not apply to this project type (default false)." },
+                    "waitSeconds": { "type": "integer", "description": "Seconds to wait for the launched process to exit before returning (default 0). Leave at 0 for an Eclipse Application, which is not meant to terminate." }
+                },
+                "required": ["project"]
+            }
+        },
+        {
             "name": "approvalPrompt",
             "description": "Permission prompt: ask the user to approve a tool call before it runs. Returns a JSON string {\"behavior\":\"allow\",\"updatedInput\":<input>} or {\"behavior\":\"deny\",\"message\":\"...\"}.",
             "inputSchema": {
@@ -269,8 +368,7 @@ fn handle_tools_list(sender: UnboundedSender<SseEvent>, id: Option<Value>) {
                 "required": ["questions"]
             }
         }
-    ]);
-    send_result(&sender, &id, json!({ "tools": tools }));
+    ])
 }
 
 // ---------------------------------------------------------------------------
