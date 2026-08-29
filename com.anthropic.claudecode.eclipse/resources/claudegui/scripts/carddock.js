@@ -31,9 +31,14 @@ function renderBottomCard() {
     if (bottomCardEl.firstChild !== pendingCard) { bottomCardEl.innerHTML = ''; bottomCardEl.appendChild(pendingCard); }
     bottomCardEl.style.display = 'block';
     composer.style.display = 'none';
-    // Card only shows for the active tab → scroll directly (not via scrollBottom's
-    // background guard, whose rtab may be a stale background stream).
-    requestAnimationFrame(() => { padForBottomCard(); messagesEl.scrollTop = messagesEl.scrollHeight; });
+    // Card only shows for the active tab → autoScroll, not scrollBottom, whose background
+    // guard reads an rtab that may be a stale background stream. autoScroll has no such
+    // guard and obeys Scroll Lock, which a card must too: the card floats at the composer
+    // position and is fully visible wherever the transcript sits, so holding still costs
+    // the user nothing and moving them costs them their place.
+    // padForBottomCard stays OUTSIDE the scroll decision — the reserved space is layout,
+    // not movement, and it has to be right for when they do scroll back down.
+    requestAnimationFrame(() => { padForBottomCard(); autoScroll(); });
   } else {
     bottomCardEl.innerHTML = '';
     bottomCardEl.style.display = 'none';

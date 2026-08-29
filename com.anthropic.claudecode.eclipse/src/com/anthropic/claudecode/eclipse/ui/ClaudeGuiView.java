@@ -18,6 +18,8 @@ import com.google.gson.reflect.TypeToken;
 
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.FileLocator;
+import org.eclipse.jface.action.Action;
+import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.browser.Browser;
 import org.eclipse.swt.browser.BrowserFunction;
@@ -56,6 +58,8 @@ public class ClaudeGuiView extends ViewPart {
     private Composite root;   // the view's root composite — its themed background drives light/dark detection
     private long browserHwnd = 0;
     private boolean pageLoaded = false;
+    /** View-toolbar Scroll Lock toggle; see {@link #createToolBar()}. */
+    private Action scrollLockAction;
 
     // One claude process per conversation/tab, so tabs never block each other.
     private final java.util.Map<String, ChatProcessManager> managers = new java.util.concurrent.ConcurrentHashMap<>();
@@ -128,6 +132,17 @@ public class ClaudeGuiView extends ViewPart {
     private volatile String cliVersionJson;        // {installed,latest,updateAvailable} for the update banner
     private volatile String cliModelsJson;         // newest model per family the INSTALLED binary can run
     private volatile String lastRustStatusJson;   // latest onStatus payload (context %, cost, tokens)
+
+    // --- account-global usage probe (see fetchUsageAsync) ---------------------
+    /** Floor between {@code /usage} probes — the windows are 5-hour/7-day. */
+    private static final long USAGE_FETCH_MIN_INTERVAL_MS = 60_000L;
+    /** One probe in flight at a time. */
+    private final java.util.concurrent.atomic.AtomicBoolean usageFetchInFlight =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    /** Epoch ms of the last completed probe; throttles {@link #fetchUsageAsync()}. */
+    private volatile long lastUsageFetchMs;
+    /** Set when the native lib has no {@code fetchUsage} export — stop probing. */
+    private volatile boolean usageProbeUnavailable;
     private volatile String displayModel = "";     // shown model — live GUI selection OR last actual (whichever changed last)
     private volatile String lastEffort = "";       // current GUI selection
     private volatile boolean lastThinking = true;
@@ -174,10 +189,14 @@ public class ClaudeGuiView extends ViewPart {
         statusBar.setLayoutData(new org.eclipse.swt.layout.GridData(SWT.FILL, SWT.CENTER, true, false));
         applyStatusBarEnabled();
         startStatusTimer();
+        // Seed the Session/Weekly percentages now, so a user who only ever opens
+        // this view sees them without having to send a turn first (issue #99).
+        fetchUsageAsync();
         registerStatusPrefListener();
         registerThemeListener();
         registerBindingListener();
         registerEditHandlers();
+        createToolBar();
 
         active = this;
         // Persistent protocol, ONE manager per tab (created on first send) so
@@ -448,6 +467,7 @@ public class ClaudeGuiView extends ViewPart {
             pushCliModels();         // ditto for the installed binary's model support
             pushEditKeyHints();      // label the right-click menu with the user's real keys
             pushDebugMode();         // let the page report its keys while Debug mode is on
+            pushScrollLock();        // the toolbar toggle outlives the page — re-apply it
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
                 // Re-push the theme too: the root composite's CSS-themed background may not
@@ -508,6 +528,45 @@ public class ClaudeGuiView extends ViewPart {
     private void pushCliModels() {
         if (cliModelsJson == null || browser == null || browser.isDisposed() || !pageLoaded) return;
         browser.execute("window.onCliModels && window.onCliModels('" + esc(cliModelsJson) + "')");
+    }
+
+    /**
+     * Builds the view toolbar. Scroll Lock is deliberately the same {@code AS_CHECK_BOX}
+     * action the Claude Terminal carries (see {@code ClaudeCliView#createToolBar}), down
+     * to the shared {@link com.anthropic.claudecode.eclipse.Constants#IMG_SCROLL_LOCK}
+     * icon.
+     *
+     * <p>Where the Terminal's freezes the viewport outright, this one <em>arms</em> the
+     * webview's follow-tail behavior (see {@code scrollLocked} in {@code chat.js}):
+     * checked, the transcript scrolls only while the user is already at the bottom and
+     * holds still the moment they scroll up to read; unchecked, it follows every render
+     * unconditionally, exactly as it did before the toggle existed.
+     *
+     * <p>View-wide rather than per-tab: the webview keeps a single scroll container
+     * shared by every tab's pane, so one toggle governs every conversation in the view.
+     */
+    private void createToolBar() {
+        IToolBarManager toolBar = getViewSite().getActionBars().getToolBarManager();
+        scrollLockAction = new Action("Scroll Lock", Action.AS_CHECK_BOX) {
+            @Override
+            public void run() { pushScrollLock(); }
+        };
+        scrollLockAction.setToolTipText("Scroll Lock");
+        scrollLockAction.setImageDescriptor(Activator.getImageDescriptor(
+                com.anthropic.claudecode.eclipse.Constants.IMG_SCROLL_LOCK));
+        toolBar.add(scrollLockAction);
+    }
+
+    /**
+     * Pushes the toolbar's Scroll Lock state into the webview. Called on every toggle
+     * AND on every page load: the checkbox lives in Java and survives a reload, the
+     * page's own {@code scrollLocked} does not, so without the reload re-push the
+     * toolbar would read "locked" while the transcript happily scrolled.
+     */
+    private void pushScrollLock() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        boolean locked = scrollLockAction != null && scrollLockAction.isChecked();
+        browser.execute("window.onScrollLock && window.onScrollLock(" + locked + ")");
     }
 
     /** Resolves installed-vs-latest CLI versions and pushes the result to the webview. */
@@ -1304,12 +1363,75 @@ public class ClaudeGuiView extends ViewPart {
         final String resolvedId = actualId;
         final boolean isActive = tabId.equals(activeTabId);
         if (isActive) { lastRustStatusJson = json; if (!resolvedId.isEmpty()) displayModel = prettyModel(resolvedId); }
+        // A turn just finished, so the subscription windows have actually moved —
+        // this is the one moment worth paying for a refresh (see fetchUsageAsync).
+        fetchUsageAsync();
         Display.getDefault().asyncExec(() -> {
             if (isActive) refreshStatusBar();
             if (!resolvedId.isEmpty() && browser != null && !browser.isDisposed() && pageLoaded) {
                 browser.execute("window.onResolvedModel && window.onResolvedModel('" + esc(tabId) + "','" + esc(resolvedId) + "')");
             }
         });
+    }
+
+    /**
+     * Refreshes the account-global Session/Weekly percentages by asking the CLI's
+     * own {@code /usage} command, then feeds the result into the shared
+     * {@link ClaudeStatusStore} so {@link #buildStatus()} picks it up on the next
+     * render — the same store the Terminal's statusLine writes to.
+     *
+     * <p>This exists because the CLI statusLine, the store's only other producer,
+     * <b>never fires for this view</b>: it is injected by {@code ClaudeCliView}
+     * and print mode ({@code -p}) does not run a status line at all. Without this,
+     * a user who only ever opens Claude Code sees those two segments stay empty
+     * forever (issue #99).
+     *
+     * <p><b>Threading and cost.</b> The probe spawns a whole {@code claude}
+     * process, measured at <b>~7s</b> wall time, so it runs on a plain daemon
+     * thread and never the UI thread; only the repaint hops back via
+     * {@code asyncExec}. It costs the user's quota nothing (the CLI answers
+     * {@code /usage} locally, with no API call), but 7s of process is not free,
+     * so it is throttled to at most once a minute and to one probe in flight —
+     * the percentages are of 5-hour / 7-day windows and cannot move meaningfully
+     * faster than that. It runs in an isolated temp directory whose transcripts
+     * are purged afterwards, so it neither pollutes the session list nor loads
+     * the workspace's {@code CLAUDE.md}/hooks.
+     */
+    private void fetchUsageAsync() {
+        if (usageProbeUnavailable) return;
+        // Nothing renders these numbers while the bar is switched off — don't pay
+        // for a process spawn (refreshStatusBar reads the same preference).
+        try {
+            if (!Activator.getDefault().getPreferenceStore()
+                    .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_STATUSLINE_ENABLED)) return;
+        } catch (Throwable ignored) {}
+
+        long now = System.currentTimeMillis();
+        if (now - lastUsageFetchMs < USAGE_FETCH_MIN_INTERVAL_MS) return;
+        if (!usageFetchInFlight.compareAndSet(false, true)) return;
+        Thread t = new Thread(() -> {
+            try {
+                String cmd = Activator.getDefault().getPreferenceStore()
+                        .getString(com.anthropic.claudecode.eclipse.Constants.PREF_CLAUDE_CMD);
+                if (cmd == null || cmd.isBlank()) cmd = "claude";
+                String json = NativeCore.fetchUsage(cmd, workspaceRoot());
+                if (json != null && !json.isEmpty()) {
+                    ClaudeStatusStore.acceptStatusLine(json);
+                    Display.getDefault().asyncExec(this::refreshStatusBar);
+                }
+            } catch (UnsatisfiedLinkError e) {
+                // Native lib predates fetchUsage (a platform still pending its
+                // rebuild) — degrade to "no percentages", exactly as the status
+                // callback registration does in HttpSseServer.
+                usageProbeUnavailable = true;
+            } catch (Throwable ignored) {
+            } finally {
+                lastUsageFetchMs = System.currentTimeMillis();
+                usageFetchInFlight.set(false);
+            }
+        }, "claude-usage-probe");
+        t.setDaemon(true);
+        t.start();
     }
 
     private void loadPage() {
@@ -1734,6 +1856,21 @@ public class ClaudeGuiView extends ViewPart {
     /** Legacy overload (MCP {@code AskUserQuestionTool}) — routes the card to the active tab. */
     public static String requestQuestion(String questionsJson) {
         return requestQuestion(active != null ? active.activeTabId : "", questionsJson);
+    }
+
+    /**
+     * Whether an in-chat question card can actually be shown right now — i.e. whether a GUI
+     * view is open with its page loaded.
+     *
+     * <p>For callers that have a text fallback and need to tell two cases apart:
+     * {@link #requestQuestion} answers {@code "[]"} both when the user dismissed a card and
+     * when no card was ever rendered (no GUI view — the call came from the Terminal view, or
+     * during shutdown). Those mean opposite things. Check this first and the caller can say
+     * "name one of these" instead of claiming the user cancelled something they never saw.
+     */
+    public static boolean canAskQuestion() {
+        ClaudeGuiView view = active;
+        return view != null && view.browser != null && !view.browser.isDisposed() && view.pageLoaded;
     }
 
     public static String requestQuestion(String tabId, String questionsJson) {

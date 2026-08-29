@@ -19,6 +19,10 @@
  * @property {boolean} [compacting]   /compact (or auto-compact) running — gerund pinned to "Compacting…"
  * @property {Object}  [_r]           parked render globals while another tab is loaded (see loadRender)
  * @property {HTMLElement|null} [_compEl] latest "Compacted chat" element awaiting its summary body
+ * @property {boolean} [followTail] whether #messages should follow new content for THIS tab;
+ *   undefined (a brand-new tab) means caught-up, same as true (see chat.js)
+ * @property {number} [scrollTop] this tab's own #messages.scrollTop, parked on switch-away
+ *   since #messages is one shared scroll container — undefined means "at the bottom"
  */
 /** @type {Tab[]} */
 let tabs = [], activeId = null, tabSeq = 0;
@@ -93,7 +97,14 @@ function switchTab(id) {
   // Each tab keeps its own unsent draft: stash the composer into the outgoing tab,
   // then restore the incoming tab's draft so drafts don't bleed across tabs.
   const prev = tabById(activeId);
-  if (prev && prev.id !== id) prev.draft = input.value;
+  if (prev && prev.id !== id) {
+    prev.draft = input.value;
+    // Parked unconditionally, even with the lock off: the toggle can be armed while this
+    // tab sits in the background, and the position it was left at is the only record of
+    // where the user had read up to.
+    prev.followTail = followTail;
+    prev.scrollTop = messagesEl.scrollTop;
+  }
   activeId = id;
   tabs.forEach(t => { t.pane.style.display = (t.id === id) ? '' : 'none'; });
   const t = activeTab();
@@ -109,7 +120,28 @@ function switchTab(id) {
   if (typeof syncComposer === 'function') syncComposer();           // send/stop reflects THIS tab
   try { if (window._activeTab) window._activeTab(id); } catch (e) {} // status bar follows active tab
   renderTabs();
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  // #messages is one scroll container shared by every pane, so a background pane's
+  // position is not preserved by the DOM on its own and every switch has to place it.
+  //
+  // Armed: restore THIS tab's own remembered spot, so a tab left scrolled up reopens
+  // where the user stopped reading instead of snapping down and hiding the very content
+  // they had scrolled up to see. A brand-new tab (both undefined) reads as caught-up.
+  //
+  // Off: land on the bottom, which is the released behavior the toggle promises not to
+  // change while off — with the lock off the transcript follows unconditionally anyway,
+  // so a restored position would only survive until the next render.
+  //
+  // followTail is set directly either way rather than left to the 'scroll' event this
+  // write may fire: restoring a position the container already holds is a no-op that
+  // fires nothing, which would strand followTail at whatever the PREVIOUS tab left.
+  if (scrollLocked && t) {
+    followTail = t.followTail !== false;
+    messagesEl.scrollTop = followTail ? messagesEl.scrollHeight : (t.scrollTop || 0);
+  } else {
+    followTail = true;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+  updateJumpToLatest();
 }
 /* Loads a tab's stored model/effort/thinking/permission-mode into the composer UI
    + status bar. */
@@ -282,6 +314,13 @@ function clearSession() {
   t.compacting = false;
   t.downgradeWarned = null;
   t.pane.innerHTML = '';
+  // The old transcript's scroll state means nothing against an emptied pane: left alone, a
+  // scrolled-up scrollTop would reopen the fresh conversation scrolled into blank space
+  // with the button showing, the next time this tab is switched to while the lock is on.
+  // t is the active tab, so the module global needs resetting alongside it.
+  t.followTail = true; t.scrollTop = 0;
+  followTail = true;
+  if (typeof updateJumpToLatest === 'function') updateJumpToLatest();
   document.getElementById('convo-title').textContent = t.title;
   renderTabs();
   if (typeof renderPendingImages === 'function') renderPendingImages();

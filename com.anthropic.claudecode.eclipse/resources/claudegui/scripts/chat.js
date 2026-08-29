@@ -6,12 +6,92 @@ let curTurn = null, curBody = null, curText = '';
 let curThink = null, curThinkText = '', thinkStart = 0, turnStart = 0;
 
 function clearWelcome(pane) { if (!pane) return; const w = pane.querySelector('.welcome'); if (w) w.remove(); }
-function scrollBottom() {
+/* Scroll Lock — the view toolbar's checkbox (the same Action, and the same icon, the
+   Claude Terminal carries; see ClaudeGuiView#createToolBar). It ARMS the follow-tail
+   behavior below rather than freezing the transcript outright:
+
+     off  → the transcript always scrolls to the bottom on every render (the original
+            behavior, untouched).
+     on   → it scrolls only while you are already at the bottom. Scroll up to read and
+            it holds; scroll back down and it resumes on its own.
+
+   View-wide, not per-tab: #messages is a single scroll container shared by every tab's
+   pane (chat.css), so one toggle governs every conversation in the view. Java owns the
+   checked state because this variable doesn't survive a webview reload and the toolbar
+   checkbox does — hence the re-push from the page-load handler. */
+let scrollLocked = false;
+window.onScrollLock = function(locked) {
+  scrollLocked = !!locked;
+  // Both edges: unlocking has to retire the button now, not at the next render.
+  updateJumpToLatest();
+};
+// How far from the true bottom still counts as "at the bottom" for the purpose of
+// (re-)arming followTail — has to clear the viewport settling on first render
+// (scrollHeight starts equal to clientHeight before any content), not a streamed
+// chunk's height. A big chunk arriving is NOT what this threshold has to survive:
+// followTail decides that by staying whatever it last was, not by re-measuring.
+const SCROLL_BOTTOM_SLOP = 4;
+function isNearBottom() {
+  const scrollable = messagesEl.scrollHeight - messagesEl.clientHeight;
+  if (scrollable <= SCROLL_BOTTOM_SLOP) return true;   // nothing to scroll
+  return scrollable - messagesEl.scrollTop <= SCROLL_BOTTOM_SLOP;
+}
+// Whether the ACTIVE tab's view should keep following new content. This is STATE, not a
+// per-call measurement: scrollHeight forces a synchronous layout flush the instant it's
+// read, so by the time autoScroll could measure anything the just-appended content is
+// already counted, making one big chunk (a code fence, a whole tool-result block — none of
+// this streams in byte-sized pieces) indistinguishable from the user having scrolled up.
+// Measuring only ever happens in the 'scroll' listener (the user's own wheel/drag) and,
+// explicitly, right after each scrollTop write below — a write landing on a position the
+// container already holds is a NO-OP that fires no event, so relying on the event alone
+// leaves followTail stuck at false forever.
+// Maintained even while unlocked, so arming the toggle mid-read is instantly correct.
+//
+// ONE module global describing whichever tab is on screen (like curTurn/curBody — see
+// loadRender in tabs.js) rather than always reading activeTab().followTail, since
+// #messages is a single scroll container: only the active tab's position is ever
+// meaningfully current. switchTab parks this and the raw scrollTop onto the outgoing Tab
+// and restores the incoming one's, the same pattern already used for the composer draft.
+let followTail = true;
+// Only meaningful while armed: the button must never appear with the toggle off, where
+// the transcript follows unconditionally and there is nothing to jump back to.
+const jumpToLatestEl = document.getElementById('jump-to-latest');
+function updateJumpToLatest() {
+  if (jumpToLatestEl) jumpToLatestEl.classList.toggle('show', scrollLocked && !followTail);
+}
+messagesEl.addEventListener('scroll', () => { followTail = isNearBottom(); updateJumpToLatest(); });
+/* The one place the transcript decides whether to move. Shared with showWorking, which
+   appends outside of scrollBottom. */
+function autoScroll() {
+  if (scrollLocked && !followTail) { updateJumpToLatest(); return; }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  // Set directly rather than left to the 'scroll' event this write may fire: when the view
+  // already sits at the bottom the write is a no-op and no event arrives, which would
+  // strand followTail at false and leave the button unable to retire itself.
+  followTail = true;
+  updateJumpToLatest();
+}
+/**
+ * @param {boolean} [force] Jump to the bottom even when the lock is armed and the user
+ *   has scrolled up — for a deliberate action of theirs (sending a message, answering a
+ *   permission prompt) where landing on what follows is expected, not a surprise.
+ */
+function scrollBottom(force) {
   if (workingEl && workingEl.parentNode) workingEl.parentNode.appendChild(workingEl); // keep last
   // Don't yank the visible view to the bottom for a BACKGROUND tab's stream — only
   // the active tab's pane is on screen, so a background render must not scroll it.
-  if (rtab && rtab !== activeTab()) return;
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  // force is a deliberate action ON THE ACTIVE TAB ITSELF and must bypass this: rtab
+  // tracks whichever tab last received a stream event, not the one on screen, so a
+  // background tab that has streamed anything since the last switch leaves rtab stale
+  // and would otherwise silently defeat every one of those actions.
+  if (!force && rtab && rtab !== activeTab()) return;
+  if (force) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    followTail = true;   // same no-op-write reasoning as autoScroll
+    updateJumpToLatest();
+    return;
+  }
+  autoScroll();
 }
 /**
  * @param {string} text @param {string|null} [ctx] context-chip label (file:lines)
@@ -47,6 +127,10 @@ function addUserMessage(text, ctx, images, id) {
     box.appendChild(body);
   }
   turn.appendChild(box); pane.appendChild(turn);
+  // NOT scrollBottom(true): with the lock armed, sending must not move the view either.
+  // The lock means "leave my scroll position alone" without exception — being thrown to
+  // the bottom by your own message is the same interruption as being thrown there by a
+  // streamed chunk. Unlocked, this still jumps to the bottom as it always did.
   scrollBottom();
 }
 // Lazily create the assistant turn — only when real content (text or a tool)

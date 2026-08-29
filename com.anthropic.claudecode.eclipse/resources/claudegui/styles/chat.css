@@ -24,6 +24,21 @@
 #messages::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; border: 2px solid var(--bg); }
 #messages::-webkit-scrollbar-track { background: transparent; }
 
+/* Floats just above #composer's top edge, shown only while streamed content is
+   arriving below the user's scroll position (see updateJumpToLatest in chat.js).
+   Lives inside #composer (layout.css gives it position: relative) rather than
+   #messages, which is the scroll container — an absolutely-positioned child of
+   THAT would scroll away with the transcript instead of staying put over it.
+   Anchored to the composer's top rather than a fixed screen position so it tracks
+   correctly as the composer grows (textarea auto-grow, pending-image strip). */
+#jump-to-latest { display: none; position: absolute; left: 50%; top: 0; z-index: 5;
+  transform: translate(-50%, calc(-100% - 8px)); width: 30px; height: 30px; border-radius: 50%;
+  align-items: center; justify-content: center; cursor: pointer;
+  background: var(--menu-bg); color: var(--fg-soft); border: 1px solid var(--border);
+  box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+#jump-to-latest.show { display: flex; }
+#jump-to-latest:hover { color: var(--fg); border-color: var(--accent-dim); }
+
 .turn { position: relative; margin: 10px 0; }
 /* First bubble in a conversation gets breathing room below the title header. */
 .pane > .turn:first-child { margin-top: 18px; }
