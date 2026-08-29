@@ -1626,6 +1626,179 @@ fn fire_string(
     );
 }
 
+/// Extracts the two subscription-window percentages from the CLI's `/usage`
+/// text and renders them in the **statusLine schema**, so Java can hand the
+/// result straight to `ClaudeStatusStore.acceptStatusLine` and reuse the
+/// existing `ClaudeStatus.parse` — no new JSON shape, no new Java parser.
+///
+/// The text we parse looks like:
+/// ```text
+/// Current session: 44% used · resets Aug 29, 2:10am (Asia/Irkutsk)
+/// Current week (all models): 64% used · resets Aug 31, 8am (Asia/Irkutsk)
+/// ```
+/// Only the integer before `%` is read. The reset timestamps in this text are
+/// **localized prose** and deliberately not parsed — the structured epoch value
+/// already arrives on the `rate_limit_event` stream (`onRateLimit`), which is a
+/// far smaller thing to keep working across CLI versions.
+///
+/// `Current week` is anchored on `all models` because the CLI also compiles
+/// per-model weekly variants; matching the bare prefix could pick up the wrong
+/// line. Returns `None` when neither window is found, so a changed output
+/// format degrades to "no data" rather than to wrong numbers.
+fn usage_json_from_text(text: &str) -> Option<String> {
+    let mut five_hour = None;
+    let mut seven_day = None;
+
+    for line in text.lines() {
+        let t = line.trim();
+        let lower = t.to_ascii_lowercase();
+        if !lower.starts_with("current ") {
+            continue;
+        }
+        let pct = match percent_used_in(t) {
+            Some(p) => p,
+            None => continue,
+        };
+        if lower.starts_with("current session") {
+            five_hour.get_or_insert(pct);
+        } else if lower.starts_with("current week") && lower.contains("all models") {
+            seven_day.get_or_insert(pct);
+        }
+    }
+
+    if five_hour.is_none() && seven_day.is_none() {
+        return None;
+    }
+
+    let mut limits = serde_json::Map::new();
+    if let Some(p) = five_hour {
+        limits.insert("five_hour".into(), serde_json::json!({ "used_percentage": p }));
+    }
+    if let Some(p) = seven_day {
+        limits.insert("seven_day".into(), serde_json::json!({ "used_percentage": p }));
+    }
+    Some(serde_json::json!({ "rate_limits": limits }).to_string())
+}
+
+/// Reads the integer percentage from a `… NN% used …` fragment. Anchors on the
+/// `%` and walks back over the digits, so it is unaffected by whatever prose
+/// precedes or follows it.
+fn percent_used_in(line: &str) -> Option<u32> {
+    let bytes = line.as_bytes();
+    for (i, b) in bytes.iter().enumerate() {
+        if *b != b'%' {
+            continue;
+        }
+        let mut start = i;
+        while start > 0 && bytes[start - 1].is_ascii_digit() {
+            start -= 1;
+        }
+        if start == i {
+            continue; // a '%' with no digits before it
+        }
+        if let Ok(p) = line[start..i].parse::<u32>() {
+            return Some(p.min(100));
+        }
+    }
+    None
+}
+
+/// Fetches the account-global subscription usage by running the CLI's own
+/// `/usage` command in print mode, returning statusLine-schema JSON (see
+/// [`usage_json_from_text`]) or `None`.
+///
+/// **This costs the user's quota nothing.** The CLI answers `/usage` locally:
+/// the turn reports `model: "<synthetic>"`, `total_cost_usd: 0`,
+/// `duration_api_ms: 0`, zero tokens and `num_turns: 0` — there is no API call.
+///
+/// It is not *free* in wall time, though: a full `claude` process start-up
+/// measured **~7 s** here (cold ~8.4 s), which is why the caller must run this
+/// off the UI thread and throttle it. (The CLI's own `duration_ms` reports
+/// ~1.3 s — that measures only the work after start-up, so don't size the
+/// caller's threading against it.) Throttling is safe: these are percentages of
+/// 5-hour and 7-day windows and cannot move meaningfully faster.
+///
+/// **The probe deliberately does NOT run in the workspace.** `/usage` is
+/// account-global, so the workspace buys nothing, and running there would cost
+/// two things: every probe would drop a `/usage` transcript into the project's
+/// session directory — which `session.rs` enumerates *without* filtering on
+/// entrypoint, so it would surface in the GUI's own session picker — and each
+/// probe would load the project's `CLAUDE.md`, hooks, plugins and skills,
+/// firing any `SessionStart` hook the user has. Instead it runs in a dedicated
+/// temp directory whose transcripts are purged after each run, so nothing
+/// accumulates and the user's real session list is untouched.
+///
+/// The entrypoint is additionally pinned to `sdk-cli` (the chat sessions use
+/// `claude-eclipse-ide`): the CLI's own `/resume` hides `sdk-cli` sessions, so
+/// the probe stays out of that picker too.
+pub fn fetch_usage(claude_cmd: &str, _workspace_root: &str) -> Option<String> {
+    let probe_dir = std::env::temp_dir().join(USAGE_PROBE_DIR);
+    std::fs::create_dir_all(&probe_dir).ok()?;
+
+    let args: Vec<String> = vec!["-p".into(), "/usage".into()];
+    let mut cmd = crate::launch::claude_command(claude_cmd, &args);
+    cmd.current_dir(&probe_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+    for (k, v) in crate::shell_env::captured_env().to_inject() {
+        cmd.env(k, v);
+    }
+    // Keep these probe sessions out of `/resume` (see doc comment).
+    cmd.env("CLAUDE_CODE_ENTRYPOINT", "sdk-cli");
+
+    let out = cmd.output().ok();
+    purge_probe_transcripts();
+    let out = out?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    usage_json_from_text(&text)
+}
+
+/// Directory name the probe runs in; also the suffix its project folder carries.
+const USAGE_PROBE_DIR: &str = "claude-eclipse-usage";
+
+/// Deletes the project folder the `/usage` probe just wrote to, so its
+/// transcripts never accumulate and never reach any session list.
+///
+/// **Matched by suffix, not by an exact hash.** `session.rs`'s `workspace_hash`
+/// maps every non-alphanumeric char to `-`, so the folder is the probe path
+/// slugified — but Windows may hand back either the short (`WINDOW~1`) or long
+/// (`Windows 10`) form of the temp path depending on how `%TEMP%` is set, and
+/// the two slugify differently. Recomputing the hash from our own string would
+/// silently miss the folder whenever the CLI saw the other form. Every project
+/// folder ending in `-claude-eclipse-usage` is ours, so match that instead.
+///
+/// Best-effort: failures are ignored, since a leftover file is harmless and the
+/// next probe retries the sweep.
+fn purge_probe_transcripts() {
+    let home = match std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+        Some(h) => std::path::PathBuf::from(h),
+        None => return,
+    };
+    let projects = home.join(".claude").join("projects");
+    let entries = match std::fs::read_dir(&projects) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let suffix: String = format!("-{USAGE_PROBE_DIR}")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if !p.is_dir() {
+            continue;
+        }
+        if entry.file_name().to_string_lossy().ends_with(&suffix) {
+            let _ = std::fs::remove_dir_all(&p);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::build_user_content;
@@ -1674,5 +1847,79 @@ mod tests {
         assert_eq!(build_user_content("hi", "not json"), json!("hi"));
         // images present but every one lacks data → plain string, not an empty array
         assert_eq!(build_user_content("hi", r#"[{"media_type":"image/png"}]"#), json!("hi"));
+    }
+
+    // ---- /usage parsing -------------------------------------------------
+    // The sample below is the VERBATIM stdout of `claude -p "/usage"` captured
+    // from the CLI on 2026-08-28; keep it byte-exact so a format change is
+    // caught here rather than in the status bar.
+    use super::{usage_json_from_text, percent_used_in};
+
+    const REAL_USAGE_OUTPUT: &str = "\
+You are currently using your subscription to power your Claude Code usage
+
+Current session: 44% used · resets Aug 29, 2:10am (Asia/Irkutsk)
+Current week (all models): 64% used · resets Aug 31, 8am (Asia/Irkutsk)
+
+What's contributing to your limits usage?
+Approximate, based on local sessions on this machine — does not include other devices or claude.ai. Behaviors are independent characteristics, not a breakdown.
+
+Last 24h · 485 requests · 16 sessions
+  64% of your usage was at >150k context
+  Top MCP servers: eclipse 2%
+
+Last 7d · 1048 requests · 17 sessions
+  87% of your usage was at >150k context
+  75% of your usage came from sessions active for 8+ hours
+  Top MCP servers: eclipse 1%";
+
+    #[test]
+    fn parses_both_windows_from_real_output() {
+        let v: serde_json::Value =
+            serde_json::from_str(&usage_json_from_text(REAL_USAGE_OUTPUT).unwrap()).unwrap();
+        assert_eq!(v["rate_limits"]["five_hour"]["used_percentage"], 44);
+        assert_eq!(v["rate_limits"]["seven_day"]["used_percentage"], 64);
+    }
+
+    #[test]
+    fn ignores_the_contributing_breakdown_percentages() {
+        // "64% of your usage was at >150k context" must never be read as a
+        // window value, and "Top MCP servers: eclipse 2%" must not either.
+        let v: serde_json::Value =
+            serde_json::from_str(&usage_json_from_text(REAL_USAGE_OUTPUT).unwrap()).unwrap();
+        assert_eq!(v["rate_limits"].as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn weekly_requires_the_all_models_qualifier() {
+        // A per-model weekly line must not be mistaken for the account weekly.
+        let txt = "Current session: 10% used\nCurrent week (Opus): 90% used";
+        let v: serde_json::Value = serde_json::from_str(&usage_json_from_text(txt).unwrap()).unwrap();
+        assert_eq!(v["rate_limits"]["five_hour"]["used_percentage"], 10);
+        assert!(v["rate_limits"].get("seven_day").is_none());
+    }
+
+    #[test]
+    fn one_window_alone_still_reports() {
+        let txt = "Current session: 7% used · resets later";
+        let v: serde_json::Value = serde_json::from_str(&usage_json_from_text(txt).unwrap()).unwrap();
+        assert_eq!(v["rate_limits"]["five_hour"]["used_percentage"], 7);
+        assert!(v["rate_limits"].get("seven_day").is_none());
+    }
+
+    #[test]
+    fn unrecognized_output_yields_none_not_wrong_numbers() {
+        assert!(usage_json_from_text("").is_none());
+        assert!(usage_json_from_text("Login required to view usage.").is_none());
+        // Format drift: the labels changed → report nothing rather than guess.
+        assert!(usage_json_from_text("5h window: 44% used\n7d window: 64% used").is_none());
+    }
+
+    #[test]
+    fn percent_scanner_handles_edges() {
+        assert_eq!(percent_used_in("Current session: 0% used"), Some(0));
+        assert_eq!(percent_used_in("Current session: 100% used"), Some(100));
+        assert_eq!(percent_used_in("no digits % here"), None);
+        assert_eq!(percent_used_in("nothing at all"), None);
     }
 }

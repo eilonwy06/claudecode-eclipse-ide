@@ -224,6 +224,32 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_register
     server.register_status_callback(java_vm(), global_ref);
 }
 
+/// Runs the CLI's own `/usage` command and returns the account-global
+/// subscription limits as statusLine-schema JSON (`{"rate_limits":{…}}`), or
+/// `""` when they can't be determined.
+///
+/// **Blocking** — it spawns a short-lived `claude` process (~1.3 s), so Java
+/// must call it off the UI thread. It costs the user's quota nothing (the CLI
+/// answers `/usage` locally, with no API call); see `chat::fetch_usage`.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_fetchUsage(
+    mut env: JNIEnv,
+    _class: JClass,
+    claude_cmd: JString,
+    workspace_root: JString,
+) -> jstring {
+    let cmd: String = match env.get_string(&claude_cmd) {
+        Ok(s) => s.into(),
+        Err(_) => return env.new_string("").unwrap().into_raw(),
+    };
+    let root: String = match env.get_string(&workspace_root) {
+        Ok(s) => s.into(),
+        Err(_) => String::new(),
+    };
+    let json = chat::fetch_usage(&cmd, &root).unwrap_or_default();
+    env.new_string(json).unwrap().into_raw()
+}
+
 // ===========================================================================
 // Lock-file JNI entry points
 // ===========================================================================
