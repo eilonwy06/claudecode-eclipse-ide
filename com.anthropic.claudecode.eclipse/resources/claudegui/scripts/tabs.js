@@ -123,24 +123,16 @@ function switchTab(id) {
   // #messages is one scroll container shared by every pane, so a background pane's
   // position is not preserved by the DOM on its own and every switch has to place it.
   //
-  // Armed: restore THIS tab's own remembered spot, so a tab left scrolled up reopens
-  // where the user stopped reading instead of snapping down and hiding the very content
-  // they had scrolled up to see. A brand-new tab (both undefined) reads as caught-up.
-  //
-  // Off: land on the bottom, which is the released behavior the toggle promises not to
-  // change while off — with the lock off the transcript follows unconditionally anyway,
-  // so a restored position would only survive until the next render.
-  //
-  // followTail is set directly either way rather than left to the 'scroll' event this
-  // write may fire: restoring a position the container already holds is a no-op that
-  // fires nothing, which would strand followTail at whatever the PREVIOUS tab left.
-  if (scrollLocked && t) {
-    followTail = t.followTail !== false;
-    messagesEl.scrollTop = followTail ? messagesEl.scrollHeight : (t.scrollTop || 0);
-  } else {
-    followTail = true;
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
+  // Restore THIS tab's own remembered state rather than always jumping to the bottom: a
+  // brand-new tab (followTail/scrollTop both undefined) defaults to caught-up, matching
+  // the previous always-jump behavior; a tab last left scrolled up reopens at the same
+  // spot instead of silently snapping down and hiding exactly the earlier content the
+  // user had scrolled up to read. Set directly rather than left to the 'scroll' event
+  // this scrollTop write may fire — restoring a position the container happens to
+  // already be at is a no-op and fires no event, which would otherwise leave followTail
+  // stuck at whatever the PREVIOUS tab left it as.
+  followTail = t.followTail !== false;
+  messagesEl.scrollTop = followTail ? messagesEl.scrollHeight : (t.scrollTop || 0);
   updateJumpToLatest();
 }
 /* Loads a tab's stored model/effort/thinking/permission-mode into the composer UI
