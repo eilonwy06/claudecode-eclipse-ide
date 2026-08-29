@@ -50,14 +50,13 @@
   </div>
 
   <!-- Conversation header -->
+  <!-- New session / Session history moved to the native Eclipse view toolbar
+       (ClaudeGuiView#createToolBar), matching the Claude Terminal view's own
+       toolbar layout — this row now holds only the editable title. -->
   <div id="convo-header">
     <div class="title-wrap" id="title-wrap" onclick="startTitleEdit()">
       <span class="title" id="convo-title">Claude Code</span>
       <span class="title-edit" id="title-edit" title="Rename">__PENCIL__</span>
-    </div>
-    <div class="actions">
-      <div class="tbtn" id="history-btn" title="Session history" onclick="toggleHistory(this)">__CLOCK__</div>
-      <div class="tbtn" title="New session" onclick="newSession()">__NEWCHAT__</div>
     </div>
   </div>
 

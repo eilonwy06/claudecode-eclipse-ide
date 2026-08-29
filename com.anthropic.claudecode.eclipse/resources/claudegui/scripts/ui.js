@@ -36,6 +36,32 @@ function toggleMenu(id, anchor) {
   openMenuEl = menu; openAnchor = anchor;
 }
 
+/* Drops a menu from the page's top-right corner rather than gluing it to an in-page
+   button — for a trigger that lives OUTSIDE the webview entirely (a native Eclipse
+   toolbar Action has no DOM element of its own to hand positionMenu/getBoundingClientRect).
+   The Eclipse view toolbar sits directly above the browser viewport with its actions
+   right-aligned, so this corner is the closest approximation to "under those buttons"
+   available without Java pushing the toolbar's actual screen coordinates across the
+   bridge — not true anchoring, just a fixed spot that reads as coming from up there.
+   No openAnchor is set (there's nothing to re-anchor to): clampOpenMenu's anchorless
+   branch already keeps a fixed-position menu on-screen through a resize on its own. */
+function positionMenuFixed(menu, rightGap) {
+  if (!menu) return;
+  const mw = menu.offsetWidth;
+  const left = Math.max(8, window.innerWidth - mw - (rightGap != null ? rightGap : 8));
+  // Below whichever header row is actually the last one visible — #update-banner
+  // sits right after #convo-header in the DOM and shows only when the installed CLI
+  // is outdated, so anchoring to #convo-header alone would put the panel under the
+  // banner instead of below it on those days. Read live, not hardcoded, so a taller
+  // header (a longer title) or the banner appearing/disappearing still clears
+  // correctly. +6 gap matches positionMenu's own below-anchor case.
+  const banner = document.getElementById('update-banner');
+  const bannerShown = banner && banner.classList.contains('show');
+  const header = document.getElementById(bannerShown ? 'update-banner' : 'convo-header');
+  const top = header ? header.getBoundingClientRect().bottom + 6 : 8;
+  menu.style.left = left + 'px'; menu.style.top = top + 'px';
+}
+
 // Disable the browser right-click context menu (no "Inspect element" in the plugin).
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -63,8 +89,11 @@ document.addEventListener('click', openLinkExternally, true);
 document.addEventListener('auxclick', (e) => { if (e.button === 1) openLinkExternally(e); }, true);
 
 document.addEventListener('click', (e) => {
+  // #history-btn is gone (moved to the native toolbar, see openHistoryFromToolbar in
+  // history.js) — its trigger is now outside the page entirely, so there's no in-page
+  // button click for this listener to exempt; nothing else changes here.
   if (openMenuEl && !openMenuEl.contains(e.target) &&
-      !e.target.closest('#plus-btn,#slash-btn,#modes-btn,#history-btn')) closeMenus();
+      !e.target.closest('#plus-btn,#slash-btn,#modes-btn')) closeMenus();
   // The slash menu isn't tracked by openMenuEl — close it on any click outside it,
   // the input, or the slash button.
   if (slashState.open && !e.target.closest('#slash-menu,#input,#slash-btn')) closeSlash();

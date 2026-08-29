@@ -655,6 +655,32 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
      */
     private void createToolBar() {
         IToolBarManager toolBar = getViewSite().getActionBars().getToolBarManager();
+
+        // Same two actions, same icons, as the Claude Terminal's own toolbar (see
+        // ClaudeCliView#configureActionBars) — moved out of the webview's own
+        // #convo-header row for visual consistency between the two views. Unlike the
+        // Terminal's (which spawn/resume a whole new CLI process directly), these call
+        // back into the page: the GUI's "new session" and "history" are page-level UI
+        // concepts (a new tab, an in-page searchable panel), not new OS processes.
+        Action newSession = new Action("New Session") {
+            @Override
+            public void run() { pushToolbarAction("newSession"); }
+        };
+        newSession.setToolTipText("New Claude Session");
+        newSession.setImageDescriptor(Activator.getImageDescriptor(
+                com.anthropic.claudecode.eclipse.Constants.IMG_NEW_CLI_SESSION));
+        toolBar.add(newSession);
+
+        Action sessionHistory = new Action("Session history") {
+            @Override
+            public void run() { pushToolbarAction("openHistoryFromToolbar"); }
+        };
+        sessionHistory.setToolTipText("Session history");
+        sessionHistory.setImageDescriptor(Activator.getImageDescriptor(
+                com.anthropic.claudecode.eclipse.Constants.IMG_SESSION_HISTORY));
+        toolBar.add(sessionHistory);
+        toolBar.add(new org.eclipse.jface.action.Separator());
+
         scrollLockAction = new Action("Scroll Lock", Action.AS_CHECK_BOX) {
             @Override
             public void run() { pushScrollLock(); }
@@ -663,6 +689,14 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         scrollLockAction.setImageDescriptor(Activator.getImageDescriptor(
                 com.anthropic.claudecode.eclipse.Constants.IMG_SCROLL_LOCK));
         toolBar.add(scrollLockAction);
+    }
+
+    /** Runs a no-argument page-side function by name, e.g. from a toolbar Action's
+     *  run() — the action lives outside the webview, so it has no DOM element of its
+     *  own to drive the call from the page side the way an in-page button would. */
+    private void pushToolbarAction(String jsFunctionName) {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        browser.execute("window." + jsFunctionName + " && window." + jsFunctionName + "()");
     }
 
     /**

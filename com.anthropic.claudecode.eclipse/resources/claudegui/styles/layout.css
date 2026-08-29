@@ -110,7 +110,9 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 #cwd-row .ct { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 /* ── Conversation header ─────────────────────────────────── */
-#convo-header { display: flex; align-items: center; justify-content: space-between;
+/* Only child now (New Session / Session history moved to the native toolbar) —
+   no justify-content needed to keep the title pinned to the left edge. */
+#convo-header { display: flex; align-items: center;
   padding: 9px 14px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
 
 /* ---- CLI update banner ----
@@ -143,7 +145,6 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 #convo-header .title-input { max-width: 340px; box-sizing: border-box;
   background: var(--bg-code); border: 1px solid var(--accent); border-radius: 5px;
   padding: 3px 6px; color: var(--fg); font-size: 13px; font-weight: 600; outline: none; }
-#convo-header .actions { display: flex; gap: 2px; }
 
 
 /* ── Composer ────────────────────────────────────────────── */

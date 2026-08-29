@@ -69,7 +69,19 @@ window.onHistoryLoaded = function(json) {
   histLoaded = true; setHistoryLoading(false); renderHistoryList();
   clampOpenMenu();   // the list may be a different width than "Loading…" — re-pin so it isn't cut off
 };
-function toggleHistory(anchor) {
+/* Called from the native Eclipse view toolbar's "Session history" Action
+ * (ClaudeGuiView#createToolBar → pushToolbarAction) — that button lives outside the
+ * webview entirely, so there's no in-page anchor element to glue the panel to the
+ * way an ordinary in-page button would (see positionMenuFixed's comment in ui.js).
+ *
+ * Toggles: clicking the toolbar button again closes the panel. This works cleanly
+ * here (unlike an in-page trigger) because the click never reaches the page's own
+ * document-level "close on click outside" listener at all — this function is the
+ * ENTIRE reaction to that click, so wasOpen faithfully reflects the panel's state
+ * from just before this call, with no risk of that other listener having already
+ * closed it first.
+ */
+window.openHistoryFromToolbar = function() {
   const panel = document.getElementById('history-panel');
   const wasOpen = panel.classList.contains('open');
   closeMenus();
@@ -81,10 +93,10 @@ function toggleHistory(anchor) {
   renderHistoryList();
   loadHistoryAsync();
   panel.classList.add('open');
-  positionMenu(panel, anchor);
-  openMenuEl = panel; openAnchor = anchor;
+  positionMenuFixed(panel);
+  openMenuEl = panel;   // openAnchor stays null — nothing in-page to re-anchor to
   if (s) setTimeout(() => s.focus(), 0);
-}
+};
 function histTab(which) {
   const local = which === 'local';
   document.getElementById('hist-tab-local').classList.toggle('active', local);
