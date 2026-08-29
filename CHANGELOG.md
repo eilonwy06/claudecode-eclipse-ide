@@ -4,15 +4,21 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.15] — Unreleased
+## [3.1.15] — 2026-08-30 *(current)*
 
 ### Added
-- **Scroll Lock in the Claude Code view.** A toolbar toggle, the same one the Terminal has. With it on, reading back through a conversation no longer drags you to the bottom every time Claude writes a line, a tool finishes, or a card appears — and sending a message leaves you where you are. A **Jump to latest** button shows while you're held back; turning the lock off, or switching tabs, follows along again. It applies to every tab, is off by default, and changes nothing while off. Built on [@jmoraleda](https://github.com/jmoraleda)'s follow-the-tail behaviour (PR #101), which the toggle now arms rather than replaces.
+- **Scroll Lock in the Claude Code view.** A toolbar toggle, the same one the Terminal has. With it on, reading back through a conversation no longer drags you to the bottom every time Claude writes a line, a tool finishes, or a card appears — and sending a message leaves you where you are. A **Jump to latest** button shows while you're held back; turning the lock off, or switching tabs, follows along again. It applies to every tab, is off by default, and changes nothing while off ([@jmoraleda](https://github.com/jmoraleda), PR #101).
 - **New MCP tools: `refresh`, `clean`, `build` and `runAs`.** Claude can refresh, clean and rebuild your projects or the whole workspace, and run a project the way Run As does.
+- **The permission, question and diff-review cards have configurable timeouts.** Default (30 minutes), Never, or a custom number of seconds, set independently for each ([@jmoraleda](https://github.com/jmoraleda), PR #102).
+
+### Fixed
+- **Session and weekly usage now show in the Claude Code view.** They stayed blank unless you also used the Terminal view, which was the only thing filling them in ([#99](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/99)).
+- **The "Other" box on a question card takes more than one line.** Shift+Enter inserts a newline, and Escape while typing no longer throws the answer away ([@jmoraleda](https://github.com/jmoraleda), PR #103).
+- **A card that times out now clears itself.** It used to sit on screen after Claude had already moved on ([@jmoraleda](https://github.com/jmoraleda), PR #102).
 
 ---
 
-## [3.1.14] — 2026-08-27 *(current)*
+## [3.1.14] — 2026-08-27
 
 ### Fixed
 - **The prompt input's key bindings no longer misfire on Linux.** One press of Emacs's Ctrl+Y pasted two or three times, Ctrl+X H typed an "h" on top of selecting all, and Ctrl+V pasted the clipboard twice — GTK acting on a keystroke Eclipse had already taken. Any custom scheme shaped the same way is covered, not just Emacs. Windows and macOS were never affected ([@jmoraleda](https://github.com/jmoraleda), PR #100, [#97](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/97))
