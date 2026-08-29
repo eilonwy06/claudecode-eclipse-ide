@@ -142,7 +142,17 @@ function openLightbox(im) {
   img.src = im.url;
   img.alt = im.name || 'image';
   box.classList.add('open');
+  // Tooltip names the key Eclipse actually has bound (Esc, or Ctrl+G under Emacs, where Esc
+  // is a multi-stroke prefix the page never receives). The markup names no key at all, so
+  // the worst case here is the bare "Close preview" rather than a wrong one.
+  registerHintPainter(box.querySelector('.lb-x'), function paintCloseTitle() {
+    const x = box.querySelector('.lb-x');
+    if (!x) return;
+    const k = cancelKeyName();
+    x.title = k ? 'Close preview (' + k + ')' : 'Close preview';
+  });
   document.addEventListener('keydown', lightboxKey, true);
+  registerOverlayCancel(closeLightbox, false);   // not tab-owned — no visibility guard
 }
 function closeLightbox() {
   const box = document.getElementById('lightbox');
@@ -151,6 +161,7 @@ function closeLightbox() {
   const img = box.querySelector('img');
   if (img) img.src = '';        // release the data URL
   document.removeEventListener('keydown', lightboxKey, true);
+  unregisterOverlayCancel();
 }
 /* Backdrop click closes; clicks on the image itself don't. */
 (function wireLightbox() {

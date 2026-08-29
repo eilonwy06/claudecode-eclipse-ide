@@ -19,11 +19,13 @@ function openRewindDialog() {
   renderRewind();
   document.getElementById('rewind-overlay').classList.add('open');
   document.addEventListener('keydown', rwKey, true);
+  registerOverlayCancel(closeRewindDialog, false);   // not tab-owned — no visibility guard
 }
 function closeRewindDialog() {
   rwState = null;
   document.getElementById('rewind-overlay').classList.remove('open');
   document.removeEventListener('keydown', rwKey, true);
+  unregisterOverlayCancel();
 }
 document.getElementById('rewind-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'rewind-overlay') closeRewindDialog();
@@ -193,8 +195,15 @@ function renderRewind() {
     });
     win.appendChild(list);
     const foot = document.createElement('div'); foot.className = 'rw-foot';
-    foot.innerHTML = '<span class="key">↑</span><span class="key">↓</span> to navigate · '
-      + '<span class="key">Enter</span> to select · <span class="key">Esc</span> to close';
+    // Close key is whatever Eclipse has bound (Esc, or Ctrl+G under Emacs); the clause is
+    // dropped rather than naming a key that Eclipse swallows before the page sees it.
+    // Repaints in place, so changing scheme with the picker open updates it immediately.
+    registerHintPainter(foot, () => {
+      const closeKey = cancelKeyName();
+      foot.innerHTML = '<span class="key">↑</span><span class="key">↓</span> to navigate · '
+        + '<span class="key">Enter</span> to select'
+        + (closeKey ? ' · <span class="key">' + closeKey + '</span> to close' : '');
+    });
     win.appendChild(foot);
     const s = list.querySelector('.rw-item.sel');
     if (s) s.scrollIntoView({ block: 'nearest' });

@@ -82,6 +82,7 @@ public class ClaudeGuiView extends ViewPart {
     @SuppressWarnings("unused") private BrowserFunction currentContextFn;
     @SuppressWarnings("unused") private BrowserFunction decideFn;
     @SuppressWarnings("unused") private BrowserFunction answerQuestionFn;
+    @SuppressWarnings("unused") private BrowserFunction overlayOpenFn;
     @SuppressWarnings("unused") private BrowserFunction modelConfigFn;
     @SuppressWarnings("unused") private BrowserFunction accountInfoFn;
     @SuppressWarnings("unused") private BrowserFunction saveSessionPrefsFn;
@@ -400,6 +401,13 @@ public class ClaudeGuiView extends ViewPart {
             }
             return null;
         });
+        // Page-local overlays (advisor card, rewind picker, lightbox) announcing themselves,
+        // so the dismiss-key context can be activated for them too — Java raises none of them
+        // and would otherwise never know they are up. See overlaySetOpen.
+        overlayOpenFn = new SimpleFunction(browser, "_overlayOpen", a -> {
+            if (a.length >= 1 && a[0] instanceof Boolean open) overlaySetOpen(open);
+            return null;
+        });
 
         // A link in a response must not replace the conversation: this webview has no
         // back button, so navigating away loses the chat until the view is closed and
@@ -463,6 +471,8 @@ public class ClaudeGuiView extends ViewPart {
             disableDevTools();
             disableZoom();
             pushTheme();             // apply the current Eclipse light/dark theme
+            pushCancelHint(this);    // …and the current dismiss key, before any card exists
+            hookBindingChanges();    // keep it live if the user switches scheme later
             pushAvailableModels();   // in case the model list arrived before the page loaded
             pushCliVersion();        // ditto for the CLI update banner
             pushCliModels();         // ditto for the installed binary's model support
@@ -1826,8 +1836,10 @@ public class ClaudeGuiView extends ViewPart {
             } catch (Exception ignored) {}
         }
 
+        cardOpened();
         Display.getDefault().asyncExec(() -> {
             if (view.browser != null && !view.browser.isDisposed() && view.pageLoaded) {
+                pushCancelHint(view);
                 view.browser.execute("window.onApprovalRequest && window.onApprovalRequest('"
                         + tid + "','" + reqId + "','" + tn + "','" + dt + "','" + rl + "')");
             } else {
@@ -1851,11 +1863,205 @@ public class ClaudeGuiView extends ViewPart {
         } catch (Exception e) {
             return "deny";
         } finally {
+            cardClosed();
             PENDING.remove(reqId);
             if (preview[0] != null) {
                 try { com.anthropic.claudecode.eclipse.tools.DiffPreview.close(preview[0]); }
                 catch (Exception ignored) {}
             }
+        }
+    }
+
+    // ── Card key binding (Esc / Ctrl+G under Emacs) ─────────────────────────────────
+
+    private static final String CARD_CONTEXT_ID =
+            "com.anthropic.claudecode.eclipse.contexts.cardOpen";
+    private static final String DISMISS_COMMAND_ID =
+            "com.anthropic.claudecode.eclipse.commands.dismissCard";
+
+    private static final Object CARD_LOCK = new Object();
+    private static int cardDepth;
+    private static org.eclipse.ui.contexts.IContextActivation cardActivation;
+
+    /**
+     * Activates the card key-binding context. Called by every card raiser before the card
+     * goes up, and paired with {@link #cardClosed()} in a {@code finally} — a leaked
+     * activation would leave Esc bound to "dismiss a card" with no card on screen.
+     *
+     * <p>Depth-counted rather than a boolean: the raisers block, but nothing structurally
+     * prevents a second card while one is up, and an inner card's close must not deactivate
+     * the outer one's binding.
+     */
+    static void cardOpened() {
+        synchronized (CARD_LOCK) {
+            if (++cardDepth != 1) return;
+        }
+        Display.getDefault().asyncExec(() -> {
+            synchronized (CARD_LOCK) {
+                // Re-check under the lock: a card that opened and closed before this ran
+                // must not leave the context activated behind it.
+                if (cardDepth == 0 || cardActivation != null) return;
+                org.eclipse.ui.contexts.IContextService svc = contextService();
+                if (svc != null) cardActivation = svc.activateContext(CARD_CONTEXT_ID);
+            }
+        });
+    }
+
+    /** Deactivates the card context once the last open card has resolved. */
+    static void cardClosed() {
+        synchronized (CARD_LOCK) {
+            if (cardDepth > 0 && --cardDepth != 0) return;
+        }
+        Display.getDefault().asyncExec(() -> {
+            synchronized (CARD_LOCK) {
+                if (cardDepth != 0 || cardActivation == null) return;
+                org.eclipse.ui.contexts.IContextService svc = contextService();
+                if (svc != null) {
+                    try { svc.deactivateContext(cardActivation); } catch (Exception ignored) {}
+                }
+                cardActivation = null;
+            }
+        });
+    }
+
+    /**
+     * Page-local overlays (advisor card, rewind picker, lightbox) telling us they are open,
+     * via the {@code _overlayOpen} browser function. Nothing on the Java side raises them, so
+     * without this the key context never activates for them and their cancel key stays dead.
+     *
+     * <p>Edge-triggered on purpose: repeated {@code true}s (or {@code false}s) are ignored, so
+     * an overlay that is torn down without unregistering — the advisor card can be replaced
+     * mid-turn by a blocking card — can only leak one activation, which the next
+     * open/close corrects. A counter would accumulate that leak instead.
+     */
+    static void overlaySetOpen(boolean open) {
+        synchronized (CARD_LOCK) {
+            if (open == overlayOpen) return;
+            overlayOpen = open;
+        }
+        if (open) cardOpened(); else cardClosed();
+    }
+
+    private static boolean overlayOpen;
+
+    private static org.eclipse.ui.contexts.IContextService contextService() {
+        try {
+            return org.eclipse.ui.PlatformUI.getWorkbench()
+                    .getService(org.eclipse.ui.contexts.IContextService.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * The printable label of whatever key currently dismisses a card — "Esc" under the
+     * default scheme, "Ctrl+G" under Emacs, or whatever the user rebound it to in
+     * Preferences &gt; Keys. Empty when nothing is bound, which the page renders as no hint
+     * at all rather than promising a key that does nothing.
+     *
+     * <p>Must be called on the UI thread. Reading it per card rather than caching it is
+     * deliberate: the scheme can change while the view is open.
+     */
+    static String cancelKeyLabel() {
+        try {
+            org.eclipse.ui.keys.IBindingService bs = org.eclipse.ui.PlatformUI.getWorkbench()
+                    .getService(org.eclipse.ui.keys.IBindingService.class);
+            if (bs == null) return "";
+
+            // Deliberately NOT getBestActiveBindingFormattedFor. That reports only bindings
+            // whose context is currently ACTIVE, and ours is scoped to cardOpen — inactive
+            // whenever no card is up, which is precisely when the hint has to be drawn. It
+            // answers empty at page load and hides every hint. Walking the binding table is
+            // context-independent and still honours the active scheme and user rebindings,
+            // since getBindings() returns the live set.
+            org.eclipse.jface.bindings.Scheme scheme = bs.getActiveScheme();
+            String schemeId = scheme != null ? scheme.getId() : null;
+            org.eclipse.jface.bindings.Binding[] all = bs.getBindings();
+            if (all == null) return "";
+
+            String fallback = "";
+            for (org.eclipse.jface.bindings.Binding b : all) {
+                if (b == null) continue;
+                org.eclipse.core.commands.ParameterizedCommand pc = b.getParameterizedCommand();
+                // A null command is a deletion marker — the user unbound the key. Skipping it
+                // (rather than treating it as a match) is what makes an unbound command
+                // report "", which the page renders as no hint at all.
+                if (pc == null || pc.getCommand() == null) continue;
+                if (!DISMISS_COMMAND_ID.equals(pc.getCommand().getId())) continue;
+                org.eclipse.jface.bindings.TriggerSequence ts = b.getTriggerSequence();
+                if (ts == null || ts.isEmpty()) continue;
+                if (schemeId != null && schemeId.equals(b.getSchemeId())) return ts.format();
+                // Another scheme's binding: remember it, but keep looking for the active
+                // scheme's. Only used when the active scheme defines none.
+                if (fallback.isEmpty()) fallback = ts.format();
+            }
+            return fallback;
+        } catch (Exception ignored) {
+            // No workbench (headless/shutdown) — fall through to "no hint".
+        }
+        return "";
+    }
+
+    /**
+     * Invoked by {@link com.anthropic.claudecode.eclipse.ui.handlers.DismissCardHandler}
+     * when the bound key is pressed. Routes to the page's own cancel path so the keyboard
+     * and in-page routes stay identical.
+     */
+    public static void dismissActiveCard() {
+        ClaudeGuiView view = active;
+        if (view == null || view.browser == null || view.browser.isDisposed()
+                || !view.pageLoaded) {
+            return;
+        }
+        view.browser.execute("window.cancelActiveCard && window.cancelActiveCard()");
+    }
+
+    /** Pushes the current cancel-key label to the page. UI thread; call before raising a card. */
+    private static void pushCancelHint(ClaudeGuiView view) {
+        if (view.browser == null || view.browser.isDisposed() || !view.pageLoaded) return;
+        view.browser.execute("window.setCancelHint && window.setCancelHint('"
+                + esc(cancelKeyLabel()) + "')");
+    }
+
+    /**
+     * Repaints every visible hint the moment Eclipse's bindings change — picking Emacs in
+     * Preferences &gt; Keys and hitting Apply has to update the text there and then, not on
+     * the next card.
+     *
+     * <p>The signal is the binding service's own listener, the same shape as taking live
+     * theme changes off the JFace {@code ColorRegistry}: the component that owns the state
+     * publishes the change, so nothing here has to poll or guess when to re-read.
+     * {@code setCancelHint} is a no-op when the label is unchanged, so the noisier events
+     * (locale, platform) cost nothing.
+     */
+    private org.eclipse.jface.bindings.IBindingManagerListener bindingListener;
+
+    private void hookBindingChanges() {
+        try {
+            org.eclipse.ui.keys.IBindingService bs = org.eclipse.ui.PlatformUI.getWorkbench()
+                    .getService(org.eclipse.ui.keys.IBindingService.class);
+            if (bs == null) return;
+            bindingListener = event -> {
+                if (!event.isActiveSchemeChanged() && !event.isActiveBindingsChanged()) return;
+                if (browser == null || browser.isDisposed() || !pageLoaded) return;
+                pushCancelHint(this);
+            };
+            bs.addBindingManagerListener(bindingListener);
+        } catch (Exception e) {
+            // No binding service (headless/shutdown) — hints simply stay as last pushed.
+            bindingListener = null;
+        }
+    }
+
+    private void unhookBindingChanges() {
+        if (bindingListener == null) return;
+        try {
+            org.eclipse.ui.keys.IBindingService bs = org.eclipse.ui.PlatformUI.getWorkbench()
+                    .getService(org.eclipse.ui.keys.IBindingService.class);
+            if (bs != null) bs.removeBindingManagerListener(bindingListener);
+        } catch (Exception ignored) {
+        } finally {
+            bindingListener = null;
         }
     }
 
@@ -1908,8 +2114,10 @@ public class ClaudeGuiView extends ViewPart {
         QPENDING.put(reqId, future);
         final String tid = esc(tabId == null ? "" : tabId);
         final String qjson = esc(questionsJson == null ? "[]" : questionsJson);
+        cardOpened();
         Display.getDefault().asyncExec(() -> {
             if (view.browser != null && !view.browser.isDisposed() && view.pageLoaded) {
+                pushCancelHint(view);
                 view.browser.execute("window.onAskQuestion && window.onAskQuestion('"
                         + tid + "','" + reqId + "','" + qjson + "')");
             } else {
@@ -1929,6 +2137,7 @@ public class ClaudeGuiView extends ViewPart {
         } catch (Exception e) {
             return "[]";
         } finally {
+            cardClosed();
             QPENDING.remove(reqId);
         }
     }
@@ -1936,6 +2145,7 @@ public class ClaudeGuiView extends ViewPart {
     @Override
     public void dispose() {
         if (active == this) active = null;
+        unhookBindingChanges();
         contextPolling = false;
         if (statusPrefListener != null) {
             try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(statusPrefListener); }

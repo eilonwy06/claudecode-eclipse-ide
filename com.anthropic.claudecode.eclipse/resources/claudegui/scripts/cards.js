@@ -97,6 +97,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   function decide(d, msg) {
     if (resolved) return; resolved = true;
     unregisterCardTimeout(reqId);
+    unregisterCardCancel();
     document.removeEventListener('keydown', onKey, true);
     // Resolve the pending tool's dot: allow → green (finished), deny → red (rejected).
     if (pendingTool) {
@@ -206,8 +207,16 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   };
   instead.appendChild(inp); card.appendChild(instead);
 
-  const esc = document.createElement('div'); esc.className = 'dec-esc'; esc.textContent = 'Esc to cancel';
+  // Label comes from the live Eclipse binding (Esc, or Ctrl+G under Emacs). Always built,
+  // then hidden when nothing is bound — an element that was never created could not repaint
+  // itself if the user binds a key while the card is up.
+  const esc = document.createElement('div'); esc.className = 'dec-esc';
   card.appendChild(esc);
+  registerHintPainter(esc, () => {
+    const t = cancelHintText();
+    esc.textContent = t;
+    esc.style.display = t ? '' : 'none';
+  });
 
   // Number-key shortcuts map to the visible options in order; Esc cancels.
   function onKey(e) {
@@ -217,6 +226,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
     if (n >= 1 && n <= opts.length) { e.preventDefault(); decide(opts[n - 1][0], ''); }
   }
   document.addEventListener('keydown', onKey, true);
+  registerCardCancel(() => decide('deny', ''));
 
   // Java already answered "deny" to the CLI by the time this fires (its own
   // future.get(...) timed out) — this is presentation-only cleanup, so it must
@@ -224,6 +234,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   // side; a stray second answer would be sent for nothing).
   registerCardTimeout(reqId, () => {
     if (resolved) return; resolved = true;
+    unregisterCardCancel();
     document.removeEventListener('keydown', onKey, true);
     if (pendingTool) {
       pendingTool.classList.remove('pending');
@@ -294,6 +305,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   function finish() {
     if (resolved || !allAnswered()) return; resolved = true;
     unregisterCardTimeout(reqId);
+    unregisterCardCancel();
     document.removeEventListener('keydown', onKey, true);
     resolveDot(false);
     const answers = questions.map((q, i) => ({
@@ -308,6 +320,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   function cancel() {
     if (resolved) return; resolved = true;
     unregisterCardTimeout(reqId);
+    unregisterCardCancel();
     document.removeEventListener('keydown', onKey, true);
     resolveDot(true);
     if (window._answerQuestion) window._answerQuestion(reqId, '[]');
@@ -366,7 +379,18 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
       // composer (#input in ui.js) — auto-grow on input, Enter submits, Shift+Enter
       // is left alone to insert a newline natively.
       const inp = document.createElement('textarea'); inp.rows = 1; inp.placeholder = 'Type your answer'; inp.value = state[activeQ].other;
-      const grow = () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 160) + 'px'; };
+      // box-sizing is border-box globally (tokens.css), so style.height has to cover padding
+      // AND border — but scrollHeight only covers content + padding. Setting height straight
+      // from scrollHeight leaves the box short by exactly the border, so it overflows by 2px
+      // at every size and shows a scrollbar that never goes away. offsetHeight - clientHeight
+      // is that border. The composer doesn't need this: #input has no padding or border.
+      const grow = () => {
+        inp.style.height = 'auto';
+        const natural = inp.scrollHeight + (inp.offsetHeight - inp.clientHeight);
+        inp.style.height = Math.min(natural, 160) + 'px';
+        // Only scroll once the answer is genuinely taller than the cap.
+        inp.style.overflowY = natural > 160 ? 'auto' : 'hidden';
+      };
       inp.oninput = () => { state[activeQ].other = inp.value; submit.classList.toggle('ready', allAnswered()); grow(); };
       inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finish(); } };
       oin.appendChild(inp); card.appendChild(oin);
@@ -380,7 +404,16 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     submit.innerHTML = '<span class="num">1</span><span>Submit answers</span>';
     submit.onclick = finish;
     card.appendChild(submit);
-    card.appendChild(Object.assign(document.createElement('div'), { className: 'q-esc', textContent: 'Esc to cancel' }));
+    // Live Eclipse binding label, not a hardcoded "Esc" — under the Emacs scheme Esc is a
+    // multi-stroke prefix and never arrives, so naming it would be a lie. Hidden, not
+    // omitted, so it can repaint if the binding changes while the card is open.
+    const qesc = Object.assign(document.createElement('div'), { className: 'q-esc' });
+    card.appendChild(qesc);
+    registerHintPainter(qesc, () => {
+      const t = cancelHintText();
+      qesc.textContent = t;
+      qesc.style.display = t ? '' : 'none';
+    });
   }
   function onKey(e) {
     if (resolved) return;
@@ -394,12 +427,14 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     if (e.key === 'Escape' && !inField) { e.preventDefault(); cancel(); }
   }
   document.addEventListener('keydown', onKey, true);
+  registerCardCancel(cancel);
 
   // Java already answered "[]" (dismissed) to the CLI by the time this fires — see
   // the matching comment on the approval card's registerCardTimeout for why this
   // must be presentation-only and never call window._answerQuestion again.
   registerCardTimeout(reqId, () => {
     if (resolved) return; resolved = true;
+    unregisterCardCancel();
     document.removeEventListener('keydown', onKey, true);
     resolveDot(true);
     clearBottomCard();

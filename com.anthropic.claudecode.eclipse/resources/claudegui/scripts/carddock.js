@@ -59,6 +59,79 @@ function clearBottomCard() {
   ensureWorking();
 }
 
+/* ---- cancel key (Eclipse binding) ----
+   Java binds a real Eclipse command to Esc (default scheme) or Ctrl+G (Emacs, where
+   Esc is a multi-stroke prefix Eclipse swallows before the page ever sees it) and calls
+   cancelActiveCard when it fires. Each card registers its own cancel() here while it is
+   up. This is ADDITIVE to the cards' in-page Escape listeners: if the Eclipse dispatcher
+   route turns out not to reach us from inside WebView2, default-scheme Esc keeps working
+   exactly as it did, so the worst case is no change rather than a regression.
+
+   setCancelHint carries the label of whichever key is actually bound, so the card can
+   advertise the truth instead of hardcoding "Esc". Empty means nothing is bound — the
+   card then shows no hint at all rather than naming a key that does nothing. */
+let cancelHint = 'Esc';
+let activeCardCancel = null, activeCancelIsBottom = false;
+
+/* Every hint on screen repaints itself when the binding changes, rather than waiting to be
+   rebuilt. Java pushes a new label the moment Eclipse's BindingManager fires — switching
+   scheme in Preferences and hitting Apply must update visible text there and then, not on
+   the next card. Keyed by element and self-pruning: a hint whose card is gone is simply
+   dropped on the next pass, so no surface needs teardown wiring. */
+const hintPainters = new Map();   // element -> () => void
+function registerHintPainter(el, paint) {
+  if (!el) return;
+  hintPainters.set(el, paint);
+  // Guarded like the refresh pass: a hint that fails to draw must not take the card it
+  // belongs to down with it. The hint is the least important thing on screen.
+  try { paint(); } catch (e) {}
+}
+function refreshCancelHints() {
+  for (const [el, paint] of hintPainters) {
+    if (!el.isConnected) { hintPainters.delete(el); continue; }
+    try { paint(); } catch (e) {}
+  }
+}
+window.setCancelHint = function(label) {
+  const next = label || '';
+  if (next === cancelHint) return;
+  cancelHint = next;
+  refreshCancelHints();
+};
+/* Raw key name for hints that embed it in their own sentence ("… to close", "(Esc)"). */
+function cancelKeyName() { return cancelHint; }
+function cancelHintText() { return cancelHint ? cancelHint + ' to cancel' : ''; }
+
+/* Java-raised blocking cards: Java already activated the key context around its own
+   future.get(), so these must NOT notify it again. */
+function registerCardCancel(fn) { activeCardCancel = fn; activeCancelIsBottom = true; }
+function unregisterCardCancel() { activeCardCancel = null; activeCancelIsBottom = false; }
+
+/* Page-local overlays (advisor card, rewind picker, lightbox). Java cannot know these are
+   open — nothing on its side raised them — so the page has to say so, or the key context
+   never activates and the key stays dead however honest the hint is. _overlayOpen is
+   edge-triggered on the Java side, so a missed unregister can only ever be one deep and the
+   next register/unregister corrects it. */
+function registerOverlayCancel(fn, isBottomCard) {
+  activeCardCancel = fn; activeCancelIsBottom = !!isBottomCard;
+  if (window._overlayOpen) window._overlayOpen(true);
+}
+function unregisterOverlayCancel() {
+  activeCardCancel = null; activeCancelIsBottom = false;
+  if (window._overlayOpen) window._overlayOpen(false);
+}
+
+window.cancelActiveCard = function() {
+  if (!activeCardCancel) return;
+  // Bottom cards only: one parked on a background tab must not vanish because a key was
+  // pressed over another conversation. Mirrors renderBottomCard's own visibility test.
+  // Overlays (rewind, lightbox) are not tab-owned, so the test does not apply to them.
+  if (activeCancelIsBottom && (!pendingCard || pendingCardOwner !== activeTab())) return;
+  const fn = activeCardCancel;
+  activeCardCancel = null; activeCancelIsBottom = false;
+  fn();
+};
+
 /* ---- server-side timeout dismissal ----
    The Java side blocks on a per-card timeout preference and, on expiry, already
    answers the CLI itself (deny / dismissed) before this ever runs — it just has

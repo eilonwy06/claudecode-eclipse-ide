@@ -81,6 +81,22 @@
             name="Activate Claude Terminal"
             description="Open the Claude Terminal view"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.dismissCard"
+            name="Dismiss Claude Card"
+            description="Dismiss the permission, question or diff-review card awaiting an answer"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+   </extension>
+
+   <!-- Active only while a card is awaiting an answer, so the binding below cannot
+        shadow Esc (or anything else) for the rest of the IDE. Activated and
+        deactivated by ClaudeGuiView.cardOpened/cardClosed. -->
+   <extension point="org.eclipse.ui.contexts">
+      <context
+            id="com.anthropic.claudecode.eclipse.contexts.cardOpen"
+            name="Claude Card Open"
+            description="A Claude permission, question or diff-review card is awaiting an answer"
+            parentId="org.eclipse.ui.contexts.window"/>
    </extension>
 
    <!-- Command Handlers -->
@@ -103,6 +119,9 @@
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
             class="com.anthropic.claudecode.eclipse.ui.handlers.ActivateClaudeCliHandler"/>
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.dismissCard"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.DismissCardHandler"/>
    </extension>
 
    <!-- Key Bindings -->
@@ -123,6 +142,23 @@
             commandId="com.anthropic.claudecode.eclipse.commands.activateCli"
             schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
             sequence="M1+`"/>
+      <!-- Per scheme, because the Emacs scheme claims ESC as a multi-stroke PREFIX
+           (ESC V, ESC F, ESC D, …): Eclipse holds the keystroke waiting for a second
+           one, so it never reaches the card. CTRL+G is Emacs's own keyboard-quit, and
+           the only thing binding it there is clear.mark under textEditorScope, which
+           is not active in a view. Both are scoped to the card context, so the card
+           advertises whichever binding is actually live — see
+           ClaudeGuiView.cancelKeyLabel(). -->
+      <key
+            commandId="com.anthropic.claudecode.eclipse.commands.dismissCard"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            contextId="com.anthropic.claudecode.eclipse.contexts.cardOpen"
+            sequence="ESC"/>
+      <key
+            commandId="com.anthropic.claudecode.eclipse.commands.dismissCard"
+            schemeId="org.eclipse.ui.emacsAcceleratorConfiguration"
+            contextId="com.anthropic.claudecode.eclipse.contexts.cardOpen"
+            sequence="CTRL+G"/>
    </extension>
 
    <!-- Menus and Toolbar -->

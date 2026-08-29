@@ -138,7 +138,11 @@
   <div id="rewind-overlay"><div id="rewind-win"></div></div>
 
   <!-- image lightbox (click an image chip) -->
-  <div id="lightbox"><div class="lb-frame"><img alt=""><span class="lb-x" title="Close preview (Esc)">__X__</span></div></div>
+  <!-- No key named in the markup: openLightbox fills in whichever one Eclipse actually has
+       bound (Esc, or Ctrl+G under Emacs). Hardcoding "(Esc)" here would ship a wrong tooltip
+       to every Emacs user for the instant before the script runs, and a permanently wrong
+       one if the element is ever shown without going through openLightbox. -->
+  <div id="lightbox"><div class="lb-frame"><img alt=""><span class="lb-x" title="Close preview">__X__</span></div></div>
 
   <!-- slash command menu -->
   <div class="menu" id="slash-menu"></div>
