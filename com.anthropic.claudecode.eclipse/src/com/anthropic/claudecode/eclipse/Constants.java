@@ -1,5 +1,9 @@
 package com.anthropic.claudecode.eclipse;
 
+import java.util.concurrent.TimeUnit;
+
+import org.eclipse.jface.preference.IPreferenceStore;
+
 public final class Constants {
 
     public static final String PLUGIN_ID = "com.anthropic.claudecode.eclipse";
@@ -29,6 +33,29 @@ public final class Constants {
     public static final String PREF_HTTPS_PROXY = "httpsProxy";
     public static final String PREF_NO_PROXY = "noProxy";
 
+    // ── Decision-card timeouts ───────────────────────────────────────────────
+    // How long each kind of blocking "waiting on the user" card (permission
+    // approval, AskUserQuestion, diff review) waits before giving up and
+    // resolving on its own. Each is one of TIMEOUT_MODE_DEFAULT/_NEVER/_CUSTOM
+    // plus a *_SECONDS value; TIMEOUT_MODE_DEFAULT reproduces the plugin's
+    // longstanding hardcoded 30-minute wait for that card.
+    public static final String PREF_APPROVAL_TIMEOUT_MODE = "approvalTimeoutMode";
+    public static final String PREF_APPROVAL_TIMEOUT_SECONDS = "approvalTimeoutSeconds";
+    public static final String PREF_QUESTION_TIMEOUT_MODE = "questionTimeoutMode";
+    public static final String PREF_QUESTION_TIMEOUT_SECONDS = "questionTimeoutSeconds";
+    public static final String PREF_DIFF_REVIEW_TIMEOUT_MODE = "diffReviewTimeoutMode";
+    public static final String PREF_DIFF_REVIEW_TIMEOUT_SECONDS = "diffReviewTimeoutSeconds";
+
+    /** Use the plugin's longstanding default wait (currently 30 minutes) for this card. */
+    public static final String TIMEOUT_MODE_DEFAULT = "default";
+    /** Wait indefinitely (in practice: a very long ceiling — see resolveTimeoutSeconds). */
+    public static final String TIMEOUT_MODE_NEVER = "never";
+    /** Wait exactly the paired *_SECONDS preference. */
+    public static final String TIMEOUT_MODE_CUSTOM = "custom";
+
+    /** The wait every decision-card timeout has always used, preserved as the default. */
+    public static final int DEFAULT_DECISION_TIMEOUT_SECONDS = 30 * 60;
+
     // ── Claude Terminal status bar (statusLine) ─────────────────────────────
     /** Master switch: inject the statusLine and show the per-tab status bar. */
     public static final String PREF_STATUSLINE_ENABLED = "statuslineEnabled";
@@ -49,6 +76,31 @@ public final class Constants {
     public static final String IMG_NEW_CLI_SESSION = "new_cli_session";
     public static final String IMG_SCROLL_LOCK = "scroll_lock";
     public static final String IMG_SESSION_HISTORY = "session_history";
+
+    /**
+     * A ceiling used for {@link #TIMEOUT_MODE_NEVER}: none of the three decision-card
+     * waits are guaranteed to be released early if their tab/view/editor closes while
+     * the card is pending (the CompletableFuture just sits there), so a truly unbounded
+     * {@code future.get()} could wedge that worker thread — and the CLI call it's
+     * servicing — forever. 30 days is "never" for any human waiting on a prompt, while
+     * still guaranteeing the thread eventually unblocks.
+     */
+    private static final long NEVER_TIMEOUT_SECONDS = TimeUnit.DAYS.toSeconds(30);
+
+    /**
+     * Resolves one of the three decision-card timeout preference pairs (mode + custom
+     * seconds) to the number of seconds to actually wait.
+     */
+    public static long resolveTimeoutSeconds(IPreferenceStore store, String modeKey, String secondsKey) {
+        String mode = store.getString(modeKey);
+        if (TIMEOUT_MODE_NEVER.equals(mode)) {
+            return NEVER_TIMEOUT_SECONDS;
+        }
+        if (TIMEOUT_MODE_CUSTOM.equals(mode)) {
+            return store.getInt(secondsKey);
+        }
+        return DEFAULT_DECISION_TIMEOUT_SECONDS;   // TIMEOUT_MODE_DEFAULT, or unrecognized/unset
+    }
 
     private Constants() {}
 }
