@@ -4,6 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
+## [3.1.15] — Unreleased
+
+### Added
+- **Scroll Lock in the Claude Code view.** A toolbar toggle, the same one the Terminal has. With it on, reading back through a conversation no longer drags you to the bottom every time Claude writes a line, a tool finishes, or a card appears — and sending a message leaves you where you are. A **Jump to latest** button shows while you're held back; turning the lock off, or switching tabs, follows along again. It applies to every tab, is off by default, and changes nothing while off. Built on [@jmoraleda](https://github.com/jmoraleda)'s follow-the-tail behaviour (PR #101), which the toggle now arms rather than replaces.
+- **New MCP tools: `refresh`, `clean`, `build` and `runAs`.** Claude can refresh, clean and rebuild your projects or the whole workspace, and run a project the way Run As does.
+
+---
+
 ## [3.1.14] — 2026-08-27 *(current)*
 
 ### Fixed
