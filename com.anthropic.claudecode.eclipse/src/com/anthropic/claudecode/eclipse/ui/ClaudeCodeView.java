@@ -348,7 +348,23 @@ public class ClaudeCodeView extends ViewPart {
         }
     }
 
+    /** Diagnostic helper: relay liveness without throwing if the native lib is old. */
+    private static boolean safeRelayRunning() {
+        try { return NativeCore.bridgeRelayIsRunning(); } catch (Throwable t) { return false; }
+    }
+
+    /** Diagnostic helper: native-side connection state without throwing. */
+    private static boolean safeBridgeConnected() {
+        try { return NativeCore.bridgeIsConnected(); } catch (Throwable t) { return false; }
+    }
+
     private void startBridge() {
+        // [DIAG] A relay that is already live here means relay_start() will take its
+        // early-return branch and hand back the PREVIOUS generation's ports.
+        if (isDebugMode()) {
+            appendLog("[DIAG] relayRunning before start: " + safeRelayRunning() + "\n");
+        }
+
         bridge = new Bridge();
         boolean started = bridge.start(data -> {
             if (isDebugMode()) {
@@ -356,6 +372,14 @@ public class ClaudeCodeView extends ViewPart {
                 Display.getDefault().asyncExec(() -> appendLog("[BRIDGE] " + msg));
             }
         });
+
+        // [DIAG] Did the relay survive start()? Ports here are what Java will actually dial.
+        if (isDebugMode()) {
+            appendLog("[DIAG] after start(): started=" + started
+                    + " portA=" + bridge.getPortA()
+                    + " portB=" + bridge.getPortB()
+                    + " relayRunning=" + safeRelayRunning() + "\n");
+        }
 
         if (started) {
             if (isDebugMode()) {
@@ -366,6 +390,10 @@ public class ClaudeCodeView extends ViewPart {
                 if (connected) {
                     appendLog("Rust connected to Bridge.\n\n");
                 } else {
+                    // [DIAG] Separates "portA was already gone" from "connect failed for
+                    // another reason" — relayRunning=false means the relay died first.
+                    appendLog("[DIAG] after failed connect: relayRunning=" + safeRelayRunning()
+                            + " bridgeIsConnected=" + safeBridgeConnected() + "\n");
                     appendLog("[WARN] Rust failed to connect to Bridge.\n\n");
                 }
             }
