@@ -670,6 +670,10 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         scrollLockAction.setToolTipText("Scroll Lock");
         scrollLockAction.setImageDescriptor(Activator.getImageDescriptor(
                 com.anthropic.claudecode.eclipse.Constants.IMG_SCROLL_LOCK));
+        // A configured default for a newly created view instance (Preferences > Claude
+        // Code), not a remembered last state — every new view starts from this setting.
+        scrollLockAction.setChecked(Activator.getDefault().getPreferenceStore()
+                .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SCROLL_LOCK_DEFAULT));
         toolBar.add(scrollLockAction);
     }
 

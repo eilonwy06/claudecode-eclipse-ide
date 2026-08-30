@@ -26,6 +26,10 @@ public final class Constants {
     public static final String PREF_TERMINAL_POSITION = "terminalPosition";
     public static final String PREF_DEBUG_MODE = "debugMode";
 
+    /** Initial state of the Claude Code (GUI) view's Scroll Lock toolbar toggle for a
+     *  newly created view instance — a configured default, not a remembered last state. */
+    public static final String PREF_SCROLL_LOCK_DEFAULT = "scrollLockDefault";
+
     /** Set once the user dismisses the Ctrl+Click hint bar in the Claude Terminal view (per-workspace). */
     public static final String PREF_CLI_CTRLCLICK_HINT_DISMISSED = "cliCtrlClickHintDismissed";
 

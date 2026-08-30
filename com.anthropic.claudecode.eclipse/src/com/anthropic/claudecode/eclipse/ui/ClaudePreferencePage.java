@@ -152,6 +152,11 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 "Debug mode",
                 getFieldEditorParent()));
 
+        addField(new BooleanFieldEditor(
+                Constants.PREF_SCROLL_LOCK_DEFAULT,
+                "Scroll Lock enabled by default in the Claude Code view",
+                getFieldEditorParent()));
+
         Label statusSeparator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);
         statusSeparator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
 
