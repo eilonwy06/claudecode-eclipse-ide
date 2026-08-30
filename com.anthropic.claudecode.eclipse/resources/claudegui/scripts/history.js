@@ -69,6 +69,36 @@ window.onHistoryLoaded = function(json) {
   histLoaded = true; setHistoryLoading(false); renderHistoryList();
   clampOpenMenu();   // the list may be a different width than "Loading…" — re-pin so it isn't cut off
 };
+// True while the history panel is open FOR /resume specifically — picking an item
+// then loads it into the CURRENT tab (in place) instead of opening a new one. Set ONLY
+// on openHistoryPanel's success path (never on the "already open → just close" path,
+// where no panel ends up open at all) and consumed exactly once by loadHistory(),
+// which resets it immediately — so it can never outlive a single open→pick cycle or
+// leak into some later, unrelated opening of the same panel.
+let historyResumeInPlace = false;
+
+/* Shared panel-opening logic for both entry points below. Toggles: calling this while
+ * already open just closes the panel (matches both callers' own "click it again to
+ * close" expectations) rather than reopening/repositioning it.
+ * @param {boolean} resumeInPlace this opening's historyResumeInPlace value — only takes
+ *   effect if a panel actually ends up open (see historyResumeInPlace's own comment). */
+function openHistoryPanel(resumeInPlace) {
+  const panel = document.getElementById('history-panel');
+  const wasOpen = panel.classList.contains('open');
+  closeMenus();
+  if (wasOpen) return false;
+  historyResumeInPlace = resumeInPlace;
+  histTab('local');
+  const s = document.getElementById('hist-search'); if (s) s.value = '';
+  // Open the panel immediately; show cached results if we have them, otherwise a
+  // "Loading…" state — and (re)load in the background either way.
+  renderHistoryList();
+  loadHistoryAsync();
+  panel.classList.add('open');
+  if (s) setTimeout(() => s.focus(), 0);
+  return true;
+}
+
 /* Called from the native Eclipse view toolbar's "Session history" Action
  * (ClaudeGuiView#createToolBar → pushToolbarAction) — that button lives outside the
  * webview entirely, so there's no in-page anchor element to glue the panel to the
@@ -80,22 +110,39 @@ window.onHistoryLoaded = function(json) {
  * ENTIRE reaction to that click, so wasOpen faithfully reflects the panel's state
  * from just before this call, with no risk of that other listener having already
  * closed it first.
+ *
+ * Picking an item here opens a NEW tab — matches the Claude Terminal view's own
+ * Session History button, which always opens a new tab too (--resume is a launch
+ * flag, its only option). See openHistoryForResume for the other entry point.
  */
 window.openHistoryFromToolbar = function() {
   const panel = document.getElementById('history-panel');
-  const wasOpen = panel.classList.contains('open');
-  closeMenus();
-  if (wasOpen) return;
-  histTab('local');
-  const s = document.getElementById('hist-search'); if (s) s.value = '';
-  // Open the panel immediately; show cached results if we have them, otherwise a
-  // "Loading…" state — and (re)load in the background either way.
-  renderHistoryList();
-  loadHistoryAsync();
-  panel.classList.add('open');
+  if (!openHistoryPanel(false)) return;
   positionMenuFixed(panel);
   openMenuEl = panel;   // openAnchor stays null — nothing in-page to re-anchor to
-  if (s) setTimeout(() => s.focus(), 0);
+};
+
+/* Called from the /resume composer slash command (slash.js) — this one deliberately
+ * behaves like the CLI's OWN /resume typed at an existing Claude Terminal prompt:
+ * picking a session swaps the CURRENT tab's conversation in place, not a new tab.
+ * /resume is something you type INTO a specific conversation ("change what THIS is"),
+ * unlike the toolbar button's generic "browse history" with no current-tab context —
+ * the two are allowed to differ on purpose; see loadHistory's historyResumeInPlace
+ * branch for where this actually takes effect.
+ *
+ * Positioned the SAME way as the toolbar's own opening (positionMenuFixed, top-right
+ * of the viewport) rather than anchored to #slash-btn: that button sits in the
+ * composer at the BOTTOM of the view, and positionMenu's below/right rules (hardcoded
+ * per menu id, see its own comment) drop history-panel BELOW its anchor — for a
+ * bottom-of-page trigger that means off the bottom edge, clamped back up into
+ * overlapping the composer instead of rising above it like #modes-menu does. Where
+ * the panel appears from doesn't need to encode which entry point opened it.
+ */
+window.openHistoryForResume = function() {
+  const panel = document.getElementById('history-panel');
+  if (!openHistoryPanel(true)) return;
+  positionMenuFixed(panel);
+  openMenuEl = panel;   // openAnchor stays null — nothing in-page to re-anchor to
 };
 function histTab(which) {
   const local = which === 'local';
@@ -206,34 +253,53 @@ function appendTextStatic(turn, text) {
 }
 function loadHistory(id, title) {
   closeMenus();
+  // Read-and-reset IMMEDIATELY: historyResumeInPlace must never outlive this one
+  // open→pick cycle. Past this line the module flag is back to its default, so any
+  // later, unrelated opening/pick of this same panel can't be affected by whichever
+  // entry point was used here.
+  const resumeInPlace = historyResumeInPlace;
+  historyResumeInPlace = false;
   // Already open in ANOTHER tab → don't open a second instance of the same
   // conversation; just switch to that tab. (Re-opening it in its OWN tab still
-  // reloads as before.)
+  // reloads as before.) Applies to BOTH entry points below — never worth a duplicate
+  // tab, in place or not.
   const already = tabs.find(tb => tb.sessionId === id && tb.id !== activeId);
   if (already) { switchTab(already.id); return; }
   let items = [];
   try { items = JSON.parse(window._loadSession(id) || '[]'); } catch (e) {}
-  // Opens the session in a NEW tab (matching the Claude Terminal view's Session
-  // History button, which always spawns a new tab too) rather than replacing
-  // whatever the current tab was doing — the old "replace the current tab" behavior
-  // (VSCode's own) silently discarded an in-progress conversation on that tab with
-  // no undo. createTab() makes the new tab active on its own (via switchTab()), so
-  // everything below this still operates on "the now-active tab" exactly as before.
+
+  // Two entry points, two behaviors (resumeInPlace, read above from historyResumeInPlace
+  // — set by whichever openHistory* function opened the panel, see window.openHistory*):
   //
-  // The old code's "if (t.streaming) doCancel(); hideWorking(); curTurn = null; …"
-  // is gone on purpose, not by oversight: those existed ONLY because the old design
-  // overwrote the PREVIOUSLY active tab's own pane/session in place, so an in-flight
-  // stream on that same tab had to be stopped before its output kept landing
-  // somewhere that no longer represented that conversation. Here the previously
-  // active tab is untouched — background tabs are allowed to keep streaming
-  // (loadRender's context-switch exists precisely so they don't block each other) —
-  // and t is a brand-new tab straight out of createTab(), which starts with no
-  // streaming, no render state, and its own fresh (empty) pane, so there is nothing
-  // on THIS tab that curTurn/curBody/etc. or doCancel() would ever need to clear.
-  const t = createTab({ sessionId: id, titled: true });
-  loadRender(t);                        // operate on THIS tab's render state
+  //  - Toolbar's Session History button → opens a NEW tab, matching the Claude
+  //    Terminal view's own History button (--resume is a launch flag, its only
+  //    option there). Avoids the old "replace the current tab" behavior's real cost:
+  //    it silently discarded an in-progress conversation on that tab, no undo.
+  //
+  //  - /resume typed in the composer → loads IN PLACE on the CURRENT tab, matching
+  //    the CLI's own /resume typed at an existing Claude Terminal prompt: it swaps
+  //    THAT session in place too, no new tab. /resume is something you type INTO a
+  //    specific conversation ("change what THIS is"), unlike the toolbar's generic
+  //    "browse history" with no such context — the two are allowed to differ.
+  let t;
+  if (resumeInPlace) {
+    t = activeTab(); if (!t) return;
+    loadRender(t);                        // operate on THIS tab's render state
+    // An in-flight stream on the tab being overwritten must stop NOW, or its output
+    // keeps landing in a pane that no longer represents that conversation — unlike
+    // the new-tab path, this tab is NOT untouched, its live content is about to be
+    // replaced out from under it.
+    if (t.streaming) doCancel();
+    hideWorking();
+    curTurn = null; curBody = null; curText = ''; curThink = null; curThinkText = '';
+  } else {
+    t = createTab({ sessionId: id, titled: true });
+    loadRender(t);                        // operate on THIS tab's render state
+    // t is brand new (no stream, no render state) — nothing here to cancel or clear.
+  }
   const pane = t.pane;
-  pane.innerHTML = '';                  // clear createTab()'s WELCOME_HTML placeholder
+  pane.innerHTML = '';                  // clear old content (or createTab()'s WELCOME_HTML)
+  t.sessionId = id;                     // continuing this tab resumes the session
   setTabTitle(t, title);
   if (!items.length) { addSystem('This conversation is empty or could not be loaded.'); }
 

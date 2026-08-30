@@ -103,6 +103,26 @@ document.addEventListener('click', (e) => {
   if (slashState.open && !e.target.closest('#slash-menu,#input,#slash-btn')) closeSlash();
 });
 
+// Escape closes whichever .menu is open (history panel, modes/actions/plus menus, …) —
+// these only had click-outside to dismiss them before, unlike every CARD/dialog in the
+// app (cards.js, advisor.js, rewind.js, models.js, images.js, tabs.js), which each
+// already handle Escape themselves via their own document-level capture-phase listener.
+// No target/field check needed: none of the inputs living inside these menus (e.g.
+// #hist-search) have their own Escape handling to preserve, so closing the menu out
+// from under a focused search box is exactly the wanted behavior, not a conflict.
+//
+// Bails when activeCardCancel (carddock.js) is set — a card/overlay is up. This is
+// NOT just about listener ordering: e.preventDefault() (what every card's own Escape
+// handler calls) does not stop propagation or other listeners, only stopPropagation
+// does, and no card ever calls that. So without this check, Escape meant to dismiss a
+// card that happened to appear while a menu was ALSO left open (the two systems don't
+// coordinate — a background tab's approval card can appear at any time, regardless of
+// what the foreground tab has open) would incorrectly close the menu too, alongside
+// whatever the card's own handler does.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && openMenuEl && !activeCardCancel) { e.preventDefault(); closeMenus(); }
+});
+
 // Re-pin the open menu/panel so it stays on-screen — snaps its right edge near the
 // viewport edge, only sliding left (and letting the far side clip) once the viewport
 // is narrower than the menu itself. Used on resize AND after async content changes
