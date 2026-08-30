@@ -43,6 +43,7 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_COST, false);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_SESSION_5H, true);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_WEEKLY, true);
+        store.setDefault(Constants.PREF_STATUSLINE_SHOW_RESETS, true);
         store.setDefault(Constants.PREF_STATUSLINE_REFRESH_SECONDS, 60);
 
         // Claude Code view spinner verbs — the three that were already in rotation

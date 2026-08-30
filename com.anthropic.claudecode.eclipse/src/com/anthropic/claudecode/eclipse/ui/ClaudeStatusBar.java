@@ -172,18 +172,20 @@ public final class ClaudeStatusBar extends Canvas {
 
         // Pick the widest form that fits: long → short → short with trailing groups dropped.
         //
-        // The long↔short decision is measured with reset text ALWAYS reserved
-        // (RESERVE_RESET_WIDTH), even when this particular status carries none, so the
-        // labels flip at the SAME window width in both views. Without that reservation
-        // the Claude Code view — whose /usage probe supplies percentages but no reset
-        // epochs — measures narrower and keeps "Context/Session/Weekly" at widths where
-        // the Terminal, carrying "(resets in 2h 23m)", has already dropped to "C/S/W";
-        // switching views then flips the labels back and forth for no visible reason.
-        // Rendering still uses the real data, so the reserved space simply goes unused
-        // when there is no reset time to draw.
+        // The long↔short decision is measured with reset text reserved (RESERVE_RESET_WIDTH,
+        // gated on the preference), even when a given status carries none, so the labels flip
+        // at the SAME window width in both views. Without that reservation a status lacking
+        // reset epochs measures narrower and keeps "Context/Session/Weekly" at widths where a
+        // status carrying "(resets in 2h 23m)" has already dropped to "C/S/W"; switching
+        // views/tabs then flips the labels back and forth for no visible reason. Rendering
+        // still uses the real data, so the reserved space simply goes unused when there is no
+        // reset time to draw. When the preference is off, no width is reserved either — resets
+        // never draw, so reserving space for them would just leave a permanent gap.
+        boolean showResets = Activator.getDefault().getPreferenceStore()
+                .getBoolean(Constants.PREF_STATUSLINE_SHOW_RESETS);
         boolean compact =
-                totalWidth(buildSegments(gc, false, true, RESERVE_RESET_WIDTH)) > area.width;
-        SegLayout layout = buildSegments(gc, compact, true, MEASURE_ACTUAL);
+                totalWidth(buildSegments(gc, false, showResets, showResets && RESERVE_RESET_WIDTH)) > area.width;
+        SegLayout layout = buildSegments(gc, compact, showResets, MEASURE_ACTUAL);
         if (totalWidth(layout) > area.width) {
             layout = buildSegments(gc, compact, false, MEASURE_ACTUAL);
             dropToFit(layout, area.width);

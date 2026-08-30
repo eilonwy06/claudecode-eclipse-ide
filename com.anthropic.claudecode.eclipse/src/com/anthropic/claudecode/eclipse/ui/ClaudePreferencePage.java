@@ -200,6 +200,11 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 "Show weekly (7-day) usage limit",
                 getFieldEditorParent()));
 
+        addStatuslineDependent(new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_SHOW_RESETS,
+                "Show reset time for usage limits",
+                getFieldEditorParent()));
+
         IntegerFieldEditor refreshSeconds = new IntegerFieldEditor(
                 Constants.PREF_STATUSLINE_REFRESH_SECONDS,
                 "Status refresh interval (seconds; Terminal applies on next launch):",

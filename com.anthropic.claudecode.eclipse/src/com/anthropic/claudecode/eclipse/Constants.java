@@ -67,6 +67,10 @@ public final class Constants {
     public static final String PREF_STATUSLINE_SHOW_COST = "statuslineShowCost";
     public static final String PREF_STATUSLINE_SHOW_SESSION_5H = "statuslineShowSession5h";
     public static final String PREF_STATUSLINE_SHOW_WEEKLY = "statuslineShowWeekly";
+    /** Show "(resets in ...)" next to the Session/Weekly meters, in both views —
+     *  the reset epoch lands in the same process-wide {@code ClaudeStatusStore}
+     *  regardless of which view's data channel supplied it. */
+    public static final String PREF_STATUSLINE_SHOW_RESETS = "statuslineShowResets";
     /** Claude's idle re-run timer for the statusLine command, in seconds. */
     public static final String PREF_STATUSLINE_REFRESH_SECONDS = "statuslineRefreshSeconds";
 
