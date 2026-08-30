@@ -213,15 +213,27 @@ function loadHistory(id, title) {
   if (already) { switchTab(already.id); return; }
   let items = [];
   try { items = JSON.parse(window._loadSession(id) || '[]'); } catch (e) {}
-  // Replace the CURRENT tab's content with the selected session (VSCode behaviour).
-  const t = activeTab(); if (!t) return;
+  // Opens the session in a NEW tab (matching the Claude Terminal view's Session
+  // History button, which always spawns a new tab too) rather than replacing
+  // whatever the current tab was doing — the old "replace the current tab" behavior
+  // (VSCode's own) silently discarded an in-progress conversation on that tab with
+  // no undo. createTab() makes the new tab active on its own (via switchTab()), so
+  // everything below this still operates on "the now-active tab" exactly as before.
+  //
+  // The old code's "if (t.streaming) doCancel(); hideWorking(); curTurn = null; …"
+  // is gone on purpose, not by oversight: those existed ONLY because the old design
+  // overwrote the PREVIOUSLY active tab's own pane/session in place, so an in-flight
+  // stream on that same tab had to be stopped before its output kept landing
+  // somewhere that no longer represented that conversation. Here the previously
+  // active tab is untouched — background tabs are allowed to keep streaming
+  // (loadRender's context-switch exists precisely so they don't block each other) —
+  // and t is a brand-new tab straight out of createTab(), which starts with no
+  // streaming, no render state, and its own fresh (empty) pane, so there is nothing
+  // on THIS tab that curTurn/curBody/etc. or doCancel() would ever need to clear.
+  const t = createTab({ sessionId: id, titled: true });
   loadRender(t);                        // operate on THIS tab's render state
-  if (t.streaming) doCancel();
-  hideWorking();
-  curTurn = null; curBody = null; curText = ''; curThink = null; curThinkText = '';
   const pane = t.pane;
-  pane.innerHTML = '';
-  t.sessionId = id;                                   // continuing this tab resumes the session
+  pane.innerHTML = '';                  // clear createTab()'s WELCOME_HTML placeholder
   setTabTitle(t, title);
   if (!items.length) { addSystem('This conversation is empty or could not be loaded.'); }
 
