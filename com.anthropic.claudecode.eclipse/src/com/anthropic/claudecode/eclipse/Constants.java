@@ -29,6 +29,10 @@ public final class Constants {
     /** Set once the user dismisses the Ctrl+Click hint bar in the Claude Terminal view (per-workspace). */
     public static final String PREF_CLI_CTRLCLICK_HINT_DISMISSED = "cliCtrlClickHintDismissed";
 
+    /** Set once the one-time "this sends /rename to the prompt" tooltip has been shown for
+     *  double-click tab renaming in the Claude Terminal view (per-workspace). */
+    public static final String PREF_CLI_RENAME_HINT_SHOWN = "cliRenameHintShown";
+
     public static final String PREF_HTTP_PROXY = "httpProxy";
     public static final String PREF_HTTPS_PROXY = "httpsProxy";
     public static final String PREF_NO_PROXY = "noProxy";

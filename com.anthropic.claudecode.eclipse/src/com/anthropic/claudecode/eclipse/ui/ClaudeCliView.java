@@ -38,10 +38,17 @@ import org.eclipse.swt.custom.CTabFolder;
 import org.eclipse.swt.custom.CTabFolder2Adapter;
 import org.eclipse.swt.custom.CTabFolderEvent;
 import org.eclipse.swt.custom.CTabItem;
+import org.eclipse.swt.events.FocusListener;
+import org.eclipse.swt.events.KeyListener;
+import org.eclipse.swt.events.MouseAdapter;
+import org.eclipse.swt.events.MouseEvent;
 import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.FontData;
+import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.graphics.RGB;
+import org.eclipse.swt.graphics.Rectangle;
+import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
@@ -49,8 +56,11 @@ import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Listener;
+import org.eclipse.swt.widgets.Shell;
+import org.eclipse.swt.widgets.Text;
 import org.eclipse.swt.widgets.ToolBar;
 import org.eclipse.swt.widgets.ToolItem;
+import org.eclipse.swt.widgets.ToolTip;
 import org.eclipse.ui.ISharedImages;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.part.IShowInTarget;
@@ -198,6 +208,25 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             }
         }));
 
+        // Double-click a tab's title to rename its session via /rename — mirrors the Claude
+        // Code (GUI) view's own double-click-to-rename on its tab strip. Unlike the GUI
+        // view, there is no out-of-band control channel here: renaming actually pastes
+        // "/rename <title>" into the terminal's own prompt and submits it (see
+        // TerminalSession#sendCommand), same as if the user had typed it. The visible tab
+        // label updates on its own afterward via the EXISTING setTerminalTitle callback
+        // below (the CLI already pushes its title, /rename included, over the terminal's
+        // OSC title sequence) — nothing here sets the tab text directly.
+        tabFolder.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseDoubleClick(MouseEvent e) {
+                CTabItem item = tabFolder.getItem(new Point(e.x, e.y));
+                if (item == null) return;
+                TerminalSession session = (TerminalSession) item.getData();
+                if (session == null) return;
+                openRenameEditor(item, session);
+            }
+        });
+
         fontChangeListener = event -> {
             if (FONT_ID.equals(event.getProperty())) {
                 display.asyncExec(() -> {
@@ -335,6 +364,142 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         if (n == 1) return items.get(0);
         if (n == 2) return items.get(0) + " or " + items.get(1);
         return String.join(", ", items.subList(0, n - 1)) + ", or " + items.get(n - 1);
+    }
+
+    /**
+     * Opens an in-place editor over {@code item}'s label (double-click target) so the user
+     * can type a new title without leaving the tab strip. On Enter with non-blank text,
+     * sends {@code /rename <title>} to {@code session}'s own prompt and submits it — see
+     * {@link TerminalSession#sendCommand}. The visible tab label is NOT set here; it
+     * updates on its own once the CLI's OSC title update round-trips through the existing
+     * {@code setTerminalTitle} callback, same as any other terminal title change.
+     *
+     * <p>CTabFolder lays out its children as tab CONTENT below the strip, clipped to that
+     * area — a Text parented to the folder (or the view's own container) would be clipped
+     * or have its bounds overwritten by the next layout pass. Instead this uses a borderless,
+     * always-on-top Shell positioned over the tab's own screen bounds, exactly the standard
+     * SWT pattern for editing something a widget doesn't natively support inline. Rather than
+     * tracking the tab folder through scrolling/resizing, the editor just disposes itself on
+     * any event that would invalidate its position (folder resize, tab scroll, selection
+     * change, or losing focus) — it reappears on the next double-click, which is simpler and
+     * safer than re-anchoring a live overlay.
+     */
+    /** The tab-title glyphs the CLI itself pushes over the terminal's OSC title sequence
+     *  while a turn is in flight (REPL.tsx's TITLE_ANIMATION_FRAMES) or idle
+     *  (TITLE_STATIC_PREFIX), each followed by a space before the actual title. */
+    private static final String[] CLI_TITLE_PREFIXES = {"⠂ ", "⠐ ", "✳ "};
+
+    /** Strips what the CLI itself may have decorated the live tab text with, so the rename
+     *  editor seeds from the actual session title rather than round-tripping a stray prefix
+     *  or the terminated-tab suffix back into a NEW /rename command — e.g. without this, a
+     *  user who double-clicks and hits Enter without editing anything would rename the
+     *  session to "✳ my-session" or "my-session (terminated)" instead of leaving it alone. */
+    private static String sanitizeTabTitleForEdit(String tabText) {
+        String s = tabText;
+        if (s.endsWith(TERMINATED_TAB_SUFFIX)) {
+            s = s.substring(0, s.length() - TERMINATED_TAB_SUFFIX.length());
+        }
+        for (String prefix : CLI_TITLE_PREFIXES) {
+            if (s.startsWith(prefix)) { s = s.substring(prefix.length()); break; }
+        }
+        return s;
+    }
+
+    private void openRenameEditor(CTabItem item, TerminalSession session) {
+        // A terminated (but not yet disposed) session's PTY is dead — sendCommand's paste
+        // would "succeed" (the control isn't disposed) into a process that can never act on
+        // it, so the rename silently does nothing. Simplest to just not offer it.
+        if (session.disposed || session.terminatedShown) return;
+
+        Rectangle bounds = item.getBounds();
+        // Empty when the item is scrolled out of view (CTabFolder returns a zero rect rather
+        // than null) — nowhere sane to draw the editor, so just don't.
+        if (bounds.isEmpty()) return;
+
+        Shell editorShell = new Shell(getSite().getShell(), SWT.NO_TRIM | SWT.ON_TOP);
+        editorShell.setLayout(new FillLayout());
+        Text editor = new Text(editorShell, SWT.BORDER);
+        editor.setFont(item.getFont() != null ? item.getFont() : tabFolder.getFont());
+        editor.setText(sanitizeTabTitleForEdit(item.getText()));
+
+        Point topLeft = tabFolder.toDisplay(bounds.x, bounds.y);
+        editorShell.setBounds(topLeft.x, topLeft.y, bounds.width, bounds.height);
+
+        // Registered on tabFolder itself (not the short-lived editorShell), so they MUST be
+        // removed explicitly when the editor closes — otherwise every rename leaves a dead
+        // listener behind, growing unbounded over the life of the view. Declared via a
+        // one-element holder so the teardown closure below can reference (and remove) the
+        // exact listener instances created after it, in the single place both need them.
+        final Listener[] resizeListener = new Listener[1];
+        final SelectionListener[] selectionListener = new SelectionListener[1];
+        final boolean[] closed = {false};
+        // Tears the editor down exactly once, however it ends (Enter, Escape, focus loss,
+        // or the tab strip changing under it) — callers decide separately whether to also
+        // send the rename command, always AFTER this has run.
+        Runnable close = () -> {
+            if (closed[0]) return; closed[0] = true;
+            tabFolder.removeListener(SWT.Resize, resizeListener[0]);
+            tabFolder.removeSelectionListener(selectionListener[0]);
+            if (!editorShell.isDisposed()) editorShell.dispose();
+        };
+        editor.addKeyListener(KeyListener.keyPressedAdapter(e -> {
+            if (e.keyCode == SWT.CR || e.keyCode == SWT.KEYPAD_CR) {
+                String title = editor.getText().trim();
+                close.run();
+                if (title.isEmpty()) return;   // empty → cancel, NOT a bare "/rename " (that
+                                                // asks the CLI to invent a name instead)
+                session.sendCommand("/rename " + title);
+            } else if (e.keyCode == SWT.ESC) {
+                close.run();
+            }
+        }));
+        // Losing focus (click elsewhere, Alt-Tab, …) cancels rather than commits — matches
+        // Escape, not Enter: an accidental focus loss mid-edit shouldn't fire a rename the
+        // user never confirmed.
+        editor.addFocusListener(FocusListener.focusLostAdapter(e -> close.run()));
+        // Any of these invalidate the editor's screen position — see the method doc.
+        resizeListener[0] = e -> close.run();
+        selectionListener[0] = SelectionListener.widgetSelectedAdapter(e -> close.run());
+        tabFolder.addListener(SWT.Resize, resizeListener[0]);
+        tabFolder.addSelectionListener(selectionListener[0]);
+
+        editorShell.open();
+        editor.selectAll();
+        editor.setFocus();
+        // GTK can realize a brand-new Shell's window-manager focus grab a beat after this
+        // call returns (a window-level race distinct from ordinary same-shell widget focus
+        // moves, which are synchronous) — reassert once more after the current dispatch so
+        // the editor doesn't lose focus to whatever the tab click focused a moment earlier.
+        editorShell.getDisplay().asyncExec(() -> {
+            if (!editor.isDisposed()) editor.setFocus();
+        });
+
+        showRenameHintOnce(editorShell.getBounds());
+    }
+
+    /** Shows the one-time "this sends /rename to the prompt" tooltip just under a just-opened
+     *  rename editor's screen position — see {@link Constants#PREF_CLI_RENAME_HINT_SHOWN}.
+     *  Parented to the VIEW's own shell, not the short-lived editor shell: the editor is
+     *  disposed as soon as the user presses Enter (often within the tooltip's own display
+     *  window on a fast first rename), and a ToolTip is a child Widget of its parent Shell —
+     *  parenting it to the editor would cascade-dispose the tooltip right along with it,
+     *  which is exactly the one time this hint (skipping idle detection entirely) most needs
+     *  to actually be seen. Auto-dismisses like any native tooltip; never shown again after
+     *  this either way. */
+    private void showRenameHintOnce(Rectangle editorBounds) {
+        IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
+        if (prefs.getBoolean(Constants.PREF_CLI_RENAME_HINT_SHOWN)) return;
+        prefs.setValue(Constants.PREF_CLI_RENAME_HINT_SHOWN, true);
+
+        ToolTip tip = new ToolTip(getSite().getShell(), SWT.BALLOON | SWT.ICON_INFORMATION);
+        tip.setText("Renaming");
+        tip.setMessage("Sends \"/rename <title>\" to the prompt below — works best when "
+                + "Claude is idle and the prompt is empty.");
+        tip.setAutoHide(true);
+        // ToolTip doesn't self-position — anchor it just under where the editor appeared
+        // rather than defaulting to (0,0).
+        tip.setLocation(editorBounds.x, editorBounds.y + editorBounds.height);
+        tip.setVisible(true);
     }
 
     private void configureActionBars() {
@@ -801,6 +966,19 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             if (disposed || termControl == null || termControl.isDisposed()) return false;
             termControl.pasteString(text);
             focus();
+            return true;
+        }
+
+        /** Like {@link #sendText}, but also submits it with a real Enter (bare CR) — unlike
+         *  a plain paste, which deliberately lands at the prompt for the user to review/edit/
+         *  send themselves (see sendTextToActiveSession's callers). Used for double-click tab
+         *  rename ({@link #renameFromTabDoubleClick}), where the whole point is a fire-and-
+         *  forget slash command, not something left sitting in the prompt. Whatever else was
+         *  at the prompt when this runs gets submitted right along with it — same as a user
+         *  manually pasting a slash command over unrelated text, not a new risk this adds. */
+        boolean sendCommand(String text) {
+            if (!sendText(text)) return false;
+            termControl.sendKey('\r');
             return true;
         }
 

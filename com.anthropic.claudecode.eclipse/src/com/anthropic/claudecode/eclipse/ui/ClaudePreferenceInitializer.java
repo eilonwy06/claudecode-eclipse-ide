@@ -22,6 +22,7 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         store.setDefault(Constants.PREF_TERMINAL_POSITION, "bottom");
         store.setDefault(Constants.PREF_DEBUG_MODE, false);
         store.setDefault(Constants.PREF_CLI_CTRLCLICK_HINT_DISMISSED, false);
+        store.setDefault(Constants.PREF_CLI_RENAME_HINT_SHOWN, false);
 
         store.setDefault(Constants.PREF_HTTP_PROXY, "");
         store.setDefault(Constants.PREF_HTTPS_PROXY, "");
