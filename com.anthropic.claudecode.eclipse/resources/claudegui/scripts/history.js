@@ -163,7 +163,7 @@ function startHistoryRename(itemEl, session) {
       titleEl.textContent = newTitle;
       if (window._renameSession) window._renameSession(session.sessionId, newTitle);
       const t = tabs.find(tab => tab.sessionId === session.sessionId);
-      if (t) { t.title = newTitle; if (t.id === activeId) document.getElementById('convo-title').textContent = newTitle; renderTabs(); }
+      if (t) { t.title = newTitle; renderTabs(); }
     }
   }
   inp.onblur = () => finish(true);

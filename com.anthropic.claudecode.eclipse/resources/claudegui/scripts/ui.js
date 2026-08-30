@@ -50,14 +50,16 @@ function positionMenuFixed(menu, rightGap) {
   const mw = menu.offsetWidth;
   const left = Math.max(8, window.innerWidth - mw - (rightGap != null ? rightGap : 8));
   // Below whichever header row is actually the last one visible — #update-banner
-  // sits right after #convo-header in the DOM and shows only when the installed CLI
-  // is outdated, so anchoring to #convo-header alone would put the panel under the
-  // banner instead of below it on those days. Read live, not hardcoded, so a taller
-  // header (a longer title) or the banner appearing/disappearing still clears
-  // correctly. +6 gap matches positionMenu's own below-anchor case.
+  // sits right after #toolbar in the DOM and shows only when the installed CLI is
+  // outdated, so anchoring to #toolbar alone would put the panel under the banner
+  // instead of below it on those days. Read live, not hardcoded, so the banner
+  // appearing/disappearing still clears correctly. +6 gap matches positionMenu's
+  // own below-anchor case. (#convo-header is gone — titles are edited in place on
+  // each tab now, see tabs.js's startTitleEdit — so #toolbar is the last header-ish
+  // row left when the banner is hidden.)
   const banner = document.getElementById('update-banner');
   const bannerShown = banner && banner.classList.contains('show');
-  const header = document.getElementById(bannerShown ? 'update-banner' : 'convo-header');
+  const header = document.getElementById(bannerShown ? 'update-banner' : 'toolbar');
   const top = header ? header.getBoundingClientRect().bottom + 6 : 8;
   menu.style.left = left + 'px'; menu.style.top = top + 'px';
 }

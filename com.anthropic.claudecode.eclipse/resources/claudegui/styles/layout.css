@@ -51,6 +51,14 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
   color: var(--fg-dim); cursor: pointer; border-radius: 3px; flex-shrink: 0; visibility: hidden; }
 .tab.active .tab-close, .tab:hover .tab-close { visibility: visible; }
 .tab .tab-close:hover, .stab .stab-close:hover { background: var(--bg-hover); color: var(--fg); }
+/* Double-click a tab's title (tabs.js: startTitleEdit) to rename in place — this
+   replaces the old separate #convo-header row entirely. Widened past the normal
+   200px cap so a rename isn't typed through a keyhole; #tabs already scrolls
+   horizontally, so one wider tab during an edit doesn't crowd the others out. */
+.tab.editing { max-width: 340px; }
+.tab .title-input { width: 100%; height: 20px; box-sizing: border-box;
+  background: var(--bg-code); border: 1px solid var(--accent); border-radius: 4px;
+  padding: 0 4px; color: var(--fg); font-size: 12.5px; font-weight: inherit; outline: none; }
 .pane > .turn:first-child { margin-top: 0; }
 #toolbar .spacer { flex: 1; }
 #toolbar .tools { display: flex; align-items: center; gap: 2px; padding-right: 8px; }
@@ -109,12 +117,6 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 #cwd-row .ci { display: inline-flex; flex-shrink: 0; color: var(--accent); }
 #cwd-row .ct { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
-/* ── Conversation header ─────────────────────────────────── */
-/* Only child now (New Session / Session history moved to the native toolbar) —
-   no justify-content needed to keep the title pinned to the left edge. */
-#convo-header { display: flex; align-items: center;
-  padding: 9px 14px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
-
 /* ---- CLI update banner ----
    Shown only when the installed Claude Code is behind the published release, so
    the model chooser (built from the ACCOUNT's models) can't silently offer models
@@ -132,20 +134,6 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 #update-banner .ub-x { flex-shrink: 0; cursor: pointer; color: var(--warn-fg); opacity: .7;
   display: inline-flex; border-radius: 3px; }
 #update-banner .ub-x:hover { opacity: 1; background: var(--bg-hover); }
-/* The pill (.title-wrap) is the outer container at a fixed 32px height. The input sits
-   INSIDE it at its own smaller natural size, so the pill encompasses the input. Only the
-   pill's height is set here — the input is never forced to the pill's height. */
-#convo-header .title-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 340px;
-  height: 32px; box-sizing: border-box; padding: 0 6px; border-radius: 8px; margin: -1px -6px; cursor: pointer; }
-#convo-header .title-wrap:hover { background: var(--bg-hover); }
-#convo-header .title { font-weight: 600; font-size: 13px; color: var(--fg); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-#convo-header .title-edit { color: var(--fg-faint); display: none; flex-shrink: 0; }
-#convo-header .title-wrap:hover .title-edit { display: inline-flex; }
-#convo-header .title-input { max-width: 340px; box-sizing: border-box;
-  background: var(--bg-code); border: 1px solid var(--accent); border-radius: 5px;
-  padding: 3px 6px; color: var(--fg); font-size: 13px; font-weight: 600; outline: none; }
-
 
 /* ── Composer ────────────────────────────────────────────── */
 /* position: relative so #jump-to-latest (chat.css) can anchor to this element's
