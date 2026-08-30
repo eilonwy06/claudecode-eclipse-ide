@@ -172,22 +172,22 @@ public final class ClaudeStatusBar extends Canvas {
 
         // Pick the widest form that fits: long → short → short with trailing groups dropped.
         //
-        // The long↔short decision is measured with reset text reserved (RESERVE_RESET_WIDTH,
-        // gated on the preference), even when a given status carries none, so the labels flip
-        // at the SAME window width in both views. Without that reservation a status lacking
-        // reset epochs measures narrower and keeps "Context/Session/Weekly" at widths where a
-        // status carrying "(resets in 2h 23m)" has already dropped to "C/S/W"; switching
-        // views/tabs then flips the labels back and forth for no visible reason. Rendering
-        // still uses the real data, so the reserved space simply goes unused when there is no
-        // reset time to draw. When the preference is off, no width is reserved either — resets
-        // never draw, so reserving space for them would just leave a permanent gap.
-        boolean showResets = Activator.getDefault().getPreferenceStore()
-                .getBoolean(Constants.PREF_STATUSLINE_SHOW_RESETS);
-        boolean compact =
-                totalWidth(buildSegments(gc, false, showResets, showResets && RESERVE_RESET_WIDTH)) > area.width;
-        SegLayout layout = buildSegments(gc, compact, showResets, MEASURE_ACTUAL);
+        // The long↔short decision is measured with reset text reserved per-meter
+        // (RESERVE_RESET_WIDTH, gated on that meter's own reset preference), even when a
+        // given status carries none, so the labels flip at the SAME window width in both
+        // views. Without that reservation a status lacking reset epochs measures narrower
+        // and keeps "Context/Session/Weekly" at widths where a status carrying "(resets in
+        // 2h 23m)" has already dropped to "C/S/W"; switching views/tabs then flips the
+        // labels back and forth for no visible reason. Rendering still uses the real data,
+        // so the reserved space simply goes unused when there is no reset time to draw.
+        // When a meter's own reset preference is off, no width is reserved for it either —
+        // its reset never draws, so reserving space for it would just leave a permanent gap.
+        boolean compact = totalWidth(buildSegments(gc, false, RESERVE_RESET_WIDTH, false)) > area.width;
+        SegLayout layout = buildSegments(gc, compact, MEASURE_ACTUAL, false);
         if (totalWidth(layout) > area.width) {
-            layout = buildSegments(gc, compact, false, MEASURE_ACTUAL);
+            // Still too wide: drop reset text (if any was showing) before dropping whole
+            // segments below — a meter with its percentage but no reset beats no meter.
+            layout = buildSegments(gc, compact, MEASURE_ACTUAL, true);
             dropToFit(layout, area.width);
         }
         draw(gc, layout, area.width, midY);
@@ -268,8 +268,8 @@ public final class ClaudeStatusBar extends Canvas {
     private static final String RESET_SAMPLE_LONG = "(resets in 23h 59m)";
     private static final String RESET_SAMPLE_SHORT = "(23h 59m)";
 
-    private SegLayout buildSegments(GC gc, boolean compact, boolean withResets,
-                                    boolean reserveResets) {
+    private SegLayout buildSegments(GC gc, boolean compact, boolean reserveResets,
+                                    boolean forceNoResets) {
         IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
         ClaudeStatus s = lastStatus;
         List<Seg> left = new ArrayList<>();
@@ -282,7 +282,7 @@ public final class ClaudeStatusBar extends Canvas {
             // Context never carries a reset time, so it never reserves width for one.
             left.add(buildMeter(gc, compact ? "C" : "Context",
                     s.contextUsedPercentage().orElse(0.0), true,
-                    OptionalLong.empty(), compact, withResets, false,
+                    OptionalLong.empty(), compact, false, false,
                     buildContextTooltip(s)));
         }
 
@@ -293,9 +293,11 @@ public final class ClaudeStatusBar extends Canvas {
         var five = s.fiveHour();
         if (prefs.getBoolean(Constants.PREF_STATUSLINE_SHOW_SESSION_5H)
                 && five.isPresent() && five.get().usedPercentage().isPresent()) {
+            boolean showReset = !forceNoResets
+                    && prefs.getBoolean(Constants.PREF_STATUSLINE_SHOW_SESSION_5H_RESET);
             right.add(buildMeter(gc, compact ? "S" : "Session",
                     five.get().usedPercentage().getAsDouble(), false,
-                    five.get().resetsAt(), compact, withResets, reserveResets,
+                    five.get().resetsAt(), compact, showReset, showReset && reserveResets,
                     buildLimitTooltip("5-hour session usage limit",
                             five.get().usedPercentage().getAsDouble(), five.get().resetsAt())));
         }
@@ -303,9 +305,11 @@ public final class ClaudeStatusBar extends Canvas {
         var seven = s.sevenDay();
         if (prefs.getBoolean(Constants.PREF_STATUSLINE_SHOW_WEEKLY)
                 && seven.isPresent() && seven.get().usedPercentage().isPresent()) {
+            boolean showReset = !forceNoResets
+                    && prefs.getBoolean(Constants.PREF_STATUSLINE_SHOW_WEEKLY_RESET);
             right.add(buildMeter(gc, compact ? "W" : "Weekly",
                     seven.get().usedPercentage().getAsDouble(), false,
-                    seven.get().resetsAt(), compact, withResets, reserveResets,
+                    seven.get().resetsAt(), compact, showReset, showReset && reserveResets,
                     buildLimitTooltip("Weekly usage limit",
                             seven.get().usedPercentage().getAsDouble(), seven.get().resetsAt())));
         }
