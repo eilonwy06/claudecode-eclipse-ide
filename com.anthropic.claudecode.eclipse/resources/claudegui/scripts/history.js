@@ -96,7 +96,29 @@ function openHistoryPanel(resumeInPlace) {
   loadHistoryAsync();
   panel.classList.add('open');
   if (s) setTimeout(() => s.focus(), 0);
+  // Same mechanism the advisor card / rewind dialog / model picker / lightbox use:
+  // without this, the Java-side cancel-key context (Esc, or Ctrl+G under Emacs — see
+  // plugin.xml's dismissCard binding) never activates for this panel, because nothing
+  // on the Java side raised it. closeHistoryPanel is registered (not the generic
+  // closeMenus) so ui.js's closeMenus() can tell, via identity, whether ITS registration
+  // is still the live one before unregistering — a later overlay (e.g. an in-transcript
+  // image's lightbox) can register after this panel closed-then-reopened in the same
+  // event's bubble phase, and closeMenus() must not clobber that newer registration.
+  registerOverlayCancel(closeHistoryPanel, false);
   return true;
+}
+
+/* The ONE place that closes history-panel specifically — every other close path (click
+ * outside, opening a different menu, picking a session, the Java-bound cancel key) routes
+ * through here or through closeMenus() (ui.js), which defers to this when it detects the
+ * panel was open. Kept as its own function (not inlined into closeMenus) so that deferral
+ * can check identity: activeCardCancel === closeHistoryPanel is how closeMenus knows the
+ * registration it might unregister is still this panel's, not some other overlay's. */
+function closeHistoryPanel() {
+  const panel = document.getElementById('history-panel');
+  if (panel) panel.classList.remove('open');
+  if (openMenuEl === panel) { openMenuEl = null; openAnchor = null; }
+  unregisterOverlayCancel();
 }
 
 /* Called from the native Eclipse view toolbar's "Session history" Action

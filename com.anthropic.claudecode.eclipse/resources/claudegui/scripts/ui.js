@@ -3,11 +3,26 @@
 
 /* ---- front-end-only interactions ---- */
 let openMenuEl = null, openAnchor = null;   // openAnchor = the trigger element the menu is glued to
-function closeMenus() { document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+function closeMenus() {
+  // history-panel is the one .menu that also needs the Java-side cancel-key context
+  // (see registerOverlayCancel in history.js) — every OTHER close path for it funnels
+  // through here (click-outside, opening a different menu, …), so this is the one
+  // place that can defer to closeHistoryPanel's own unregister when it was open.
+  //
+  // Guarded by identity, not just "was it open": activeCardCancel is ONE global slot,
+  // and a later overlay (e.g. an in-transcript image's lightbox, registered during the
+  // click's target phase) can install ITS OWN cancel before this listener runs in the
+  // bubble phase — unregistering unconditionally here would wipe that newer
+  // registration and tell Java the wrong overlay just closed.
+  const hist = document.getElementById('history-panel');
+  const histWasOpen = hist && hist.classList.contains('open');
+  document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
   document.querySelectorAll('.tbtn.active-tmp').forEach(b=>b.classList.remove('active-tmp'));
   // per-message badges are pinned visible while their menu is up — unpin them
   document.querySelectorAll('.msg-actions.open').forEach(w => w.classList.remove('open'));
-  openMenuEl = null; openAnchor = null; }
+  openMenuEl = null; openAnchor = null;
+  if (histWasOpen && activeCardCancel === closeHistoryPanel) unregisterOverlayCancel();
+}
 
 /* Position a menu relative to its trigger button, so it stays glued to that element
    (in X and Y) when the view is resized — its reference is the element behind it.
