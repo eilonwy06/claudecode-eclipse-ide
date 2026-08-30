@@ -40,27 +40,29 @@ function toggleMenu(id, anchor) {
    button — for a trigger that lives OUTSIDE the webview entirely (a native Eclipse
    toolbar Action has no DOM element of its own to hand positionMenu/getBoundingClientRect).
    The Eclipse view toolbar sits directly above the browser viewport with its actions
-   right-aligned, so this corner is the closest approximation to "under those buttons"
-   available without Java pushing the toolbar's actual screen coordinates across the
-   bridge — not true anchoring, just a fixed spot that reads as coming from up there.
+   right-aligned, so pinning to the page's own top edge (see the `top` calculation
+   below) is the closest approximation to "under those buttons" available without Java
+   pushing the toolbar's actual screen coordinates across the bridge — not true
+   anchoring, just a fixed spot that reads as coming from up there.
    No openAnchor is set (there's nothing to re-anchor to): clampOpenMenu's anchorless
    branch already keeps a fixed-position menu on-screen through a resize on its own. */
 function positionMenuFixed(menu, rightGap) {
   if (!menu) return;
   const mw = menu.offsetWidth;
   const left = Math.max(8, window.innerWidth - mw - (rightGap != null ? rightGap : 8));
-  // Below whichever header row is actually the last one visible — #update-banner
-  // sits right after #toolbar in the DOM and shows only when the installed CLI is
-  // outdated, so anchoring to #toolbar alone would put the panel under the banner
-  // instead of below it on those days. Read live, not hardcoded, so the banner
-  // appearing/disappearing still clears correctly. +6 gap matches positionMenu's
-  // own below-anchor case. (#convo-header is gone — titles are edited in place on
-  // each tab now, see tabs.js's startTitleEdit — so #toolbar is the last header-ish
-  // row left when the banner is hidden.)
+  // The native toolbar button that opens this (Eclipse view toolbar's "Session
+  // history") sits directly above the webview, at the SAME screen level as #toolbar
+  // (the tab strip) — not above it. So the panel drops from #toolbar's TOP edge,
+  // reading as "right below the button", rather than clearing the tab strip's own
+  // 35px height first. #update-banner sits below #toolbar and only shows when the
+  // installed CLI is outdated; on those days the panel would otherwise land on top
+  // of it, so it takes over as the anchor while shown. Read live, not hardcoded, so
+  // the banner appearing/disappearing still clears correctly.
   const banner = document.getElementById('update-banner');
   const bannerShown = banner && banner.classList.contains('show');
-  const header = document.getElementById(bannerShown ? 'update-banner' : 'toolbar');
-  const top = header ? header.getBoundingClientRect().bottom + 6 : 8;
+  const toolbar = document.getElementById('toolbar');
+  const top = bannerShown ? banner.getBoundingClientRect().bottom + 6
+    : (toolbar ? toolbar.getBoundingClientRect().top : 8);
   menu.style.left = left + 'px'; menu.style.top = top + 'px';
 }
 
