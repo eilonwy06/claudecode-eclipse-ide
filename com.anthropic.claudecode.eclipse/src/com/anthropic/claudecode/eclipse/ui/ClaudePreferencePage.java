@@ -157,6 +157,13 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 "Scroll Lock enabled by default in the Claude Code view",
                 getFieldEditorParent()));
 
+        addField(new BooleanFieldEditor(
+                Constants.PREF_SMART_SCROLL_LOCK,
+                "Smart Scroll Lock: in the Claude Code view, still jump to the bottom for "
+                        + "your own actions (sending a message, answering a card) even while "
+                        + "Scroll Lock is on",
+                getFieldEditorParent()));
+
         Label statusSeparator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);
         statusSeparator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
 

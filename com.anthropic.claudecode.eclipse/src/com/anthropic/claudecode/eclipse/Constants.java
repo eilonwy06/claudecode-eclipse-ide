@@ -30,6 +30,14 @@ public final class Constants {
      *  newly created view instance — a configured default, not a remembered last state. */
     public static final String PREF_SCROLL_LOCK_DEFAULT = "scrollLockDefault";
 
+    /** In the Claude Code (GUI) view, while Scroll Lock is armed, still jump to the bottom
+     *  for the user's OWN deliberate actions (sending a message, answering an approval or
+     *  question card) and when Claude raises a NEW approval or question card, rather than
+     *  holding through those too. A card timing out on its own is NOT one of these — that
+     *  was never forced even before Scroll Lock existed. Off matches the plugin's current
+     *  upstream behavior. Terminal view has no equivalent. */
+    public static final String PREF_SMART_SCROLL_LOCK = "smartScrollLock";
+
     /** Set once the user dismisses the Ctrl+Click hint bar in the Claude Terminal view (per-workspace). */
     public static final String PREF_CLI_CTRLCLICK_HINT_DISMISSED = "cliCtrlClickHintDismissed";
 

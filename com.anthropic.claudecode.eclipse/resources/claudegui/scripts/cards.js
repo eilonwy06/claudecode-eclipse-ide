@@ -176,7 +176,9 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
       finalizeThink(); curBody = null; curText = '';
       showWorking();
     }
-    scrollBottom();   // obeys Scroll Lock — answering must not move them either
+    // force only with Smart Scroll Lock on — see its comment in chat.js. By default
+    // this obeys Scroll Lock: answering must not move them either.
+    scrollBottom(smartScrollLock);
   }
 
   // Middle "remember" option is contextual: its label comes from the CLI's own
@@ -266,6 +268,8 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   });
 
   showBottomCard(card, owner);
+  // force only with Smart Scroll Lock on — see its comment in chat.js.
+  scrollBottom(smartScrollLock);
 };
 
 /* ---- AskUserQuestion card (single/multi question, options + Other) ---- */
@@ -328,7 +332,8 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     if (window._answerQuestion) window._answerQuestion(reqId, JSON.stringify(answers));
     clearBottomCard(owner);
     const summary = answers.map(a => questions.length > 1 ? (a.header + ': ' + a.answer) : a.answer).join('\n');
-    addAnswered(summary, pane); startFreshTurn(); scrollBottom();   // obeys Scroll Lock
+    // force only with Smart Scroll Lock on — see its comment in chat.js.
+    addAnswered(summary, pane); startFreshTurn(); scrollBottom(smartScrollLock);
   }
   function cancel() {
     if (resolved) return; resolved = true;
@@ -337,7 +342,8 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     document.removeEventListener('keydown', onKey, true);
     resolveDot(true);
     if (window._answerQuestion) window._answerQuestion(reqId, '[]');
-    clearBottomCard(owner); scrollBottom();   // obeys Scroll Lock
+    // force only with Smart Scroll Lock on — see its comment in chat.js.
+    clearBottomCard(owner); scrollBottom(smartScrollLock);
   }
 
   function render() {
@@ -464,5 +470,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   });
 
   render(); showBottomCard(card, owner);
+  // force only with Smart Scroll Lock on — see its comment in chat.js.
+  scrollBottom(smartScrollLock);
 };
 

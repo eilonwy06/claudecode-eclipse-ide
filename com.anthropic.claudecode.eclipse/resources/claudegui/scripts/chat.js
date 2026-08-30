@@ -13,7 +13,12 @@ function clearWelcome(pane) { if (!pane) return; const w = pane.querySelector('.
      off  → the transcript always scrolls to the bottom on every render (the original
             behavior, untouched).
      on   → it scrolls only while you are already at the bottom. Scroll up to read and
-            it holds; scroll back down and it resumes on its own.
+            it holds; scroll back down and it resumes on its own. Exception: with Smart
+            Scroll Lock also on (a separate preference, see smartScrollLock below), your
+            OWN deliberate actions — sending a message, answering an approval or question
+            card — still jump you to the bottom, and so does Claude raising a NEW
+            approval or question card (the session is blocked until it's answered); a
+            card timing out on its own does not.
 
    View-wide, not per-tab: #messages is a single scroll container shared by every tab's
    pane (chat.css), so one toggle governs every conversation in the view. Java owns the
@@ -25,6 +30,14 @@ window.onScrollLock = function(locked) {
   // Both edges: unlocking has to retire the button now, not at the next render.
   updateJumpToLatest();
 };
+// Smart Scroll Lock (Preferences > Claude Code): while the lock is armed, still jump to
+// the bottom for the user's OWN deliberate actions (sending a message, answering a card)
+// AND when Claude raises a new approval/question card, instead of holding through those
+// too — see scrollBottom's `force` param and its call sites in cards.js/chat.js. A card
+// timing out on its own is excluded, matching the plugin's pre-Scroll-Lock behavior. Off
+// matches the plugin's current upstream behavior (the lock holds through everything).
+let smartScrollLock = false;
+window.onSmartScrollLock = function(smart) { smartScrollLock = !!smart; };
 // How far from the true bottom still counts as "at the bottom" for the purpose of
 // (re-)arming followTail — has to clear the viewport settling on first render
 // (scrollHeight starts equal to clientHeight before any content), not a streamed
@@ -155,11 +168,13 @@ function addUserMessage(text, ctx, images, id, ts) {
     box.appendChild(body);
   }
   turn.appendChild(box); pane.appendChild(turn);
-  // NOT scrollBottom(true): with the lock armed, sending must not move the view either.
-  // The lock means "leave my scroll position alone" without exception — being thrown to
-  // the bottom by your own message is the same interruption as being thrown there by a
-  // streamed chunk. Unlocked, this still jumps to the bottom as it always did.
-  scrollBottom();
+  // force only with Smart Scroll Lock on: by default, with the lock armed, sending must
+  // not move the view either — the lock means "leave my scroll position alone" without
+  // exception, being thrown to the bottom by your own message is the same interruption
+  // as being thrown there by a streamed chunk. Smart Scroll Lock opts into the opposite
+  // read: your OWN deliberate action is expected to land you at the bottom. Unlocked,
+  // this jumps to the bottom either way, as it always did.
+  scrollBottom(smartScrollLock);
 }
 // Lazily create the assistant turn — only when real content (text or a tool)
 // arrives. While Claude is just "thinking", nothing but the working sunburst shows.

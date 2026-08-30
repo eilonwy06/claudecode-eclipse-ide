@@ -91,7 +91,8 @@ function openAdvisorCard(echoText) {
     if (echoText) addUserMessage(echoText, null, null, null, nowIso());
     // Target the active tab: addSystem() would follow the render tab instead.
     addSystemTo(activeTab(), value ? 'Advisor set to ' + label + '.' : 'Advisor disabled.');
-    scrollBottom();
+    // force only with Smart Scroll Lock on — see its comment in chat.js.
+    scrollBottom(smartScrollLock);
   }
   function paint() {
     card.querySelectorAll('.dec-opt').forEach((el, j) => el.classList.toggle('sel', j === sel));
