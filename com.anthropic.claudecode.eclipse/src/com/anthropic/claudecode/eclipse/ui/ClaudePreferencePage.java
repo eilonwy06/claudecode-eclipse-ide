@@ -154,7 +154,7 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
 
         addField(new BooleanFieldEditor(
                 Constants.PREF_SCROLL_LOCK_DEFAULT,
-                "Scroll Lock enabled by default in the Claude Code view",
+                "Scroll Lock enabled by default (Claude Code and Claude Terminal views)",
                 getFieldEditorParent()));
 
         addField(new BooleanFieldEditor(
