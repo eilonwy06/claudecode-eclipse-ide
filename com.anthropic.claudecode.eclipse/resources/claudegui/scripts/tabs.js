@@ -333,6 +333,24 @@ function startTitleEdit(tabId) {
 /* New conversation in the ACTIVE root — a new FOLDER is newRootDirectory(). */
 function newSession() { closeMenus(); createTab({ rootId: activeRootId }); input.focus(); }
 
+/* True when t has no conversation AND nothing typed/attached that a reuse would lose —
+ * checked before silently repurposing a tab instead of opening a new one (see
+ * loadHistory's toolbar branch in history.js). Active-tab only: reads the composer live
+ * from #input rather than t.draft, which is only synced on switchTab (see its own
+ * comment) and so can be stale for the tab currently on screen.
+ *
+ * t.sessionId === '' alone is NOT enough — /help echoes a user bubble + a system message
+ * without ever sending anything to the CLI (slash.js), and /clear echoes its own command
+ * bubble back into an emptied pane, so both leave a sessionId-less tab with real content
+ * on screen. addUserMessage()/addSystem() both append into t.pane, and createTab() seeds
+ * it with WELCOME_HTML's placeholder and nothing else — so the pane itself, not sessionId,
+ * is what actually answers "is there something here a reuse would silently discard". */
+function isTabEmpty(t) {
+  return !!t && t === activeTab() && !t.sessionId && !t.streaming && !t.pendingCard
+      && !(t.images && t.images.length) && !input.value.trim()
+      && !t.pane.querySelector('.turn');
+}
+
 /* /clear — start a fresh conversation IN PLACE. VSCode stays on the tab the
    command was invoked from rather than opening another one, so the tab, its
    position and its composer settings (model/effort/thinking/mode) all survive;

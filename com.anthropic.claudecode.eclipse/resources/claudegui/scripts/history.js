@@ -297,20 +297,27 @@ function loadHistory(id, title) {
   //    Terminal view's own History button (--resume is a launch flag, its only
   //    option there). Avoids the old "replace the current tab" behavior's real cost:
   //    it silently discarded an in-progress conversation on that tab, no undo.
+  //    EXCEPTION: if the current tab is already empty (isTabEmpty — no session, no
+  //    stream, nothing typed or attached), there is nothing an "in-progress
+  //    conversation" cost could apply to, so reuse it instead of leaving a blank tab
+  //    behind — same reuse the resumeInPlace branch below does, just reached by a
+  //    different condition.
   //
   //  - /resume typed in the composer → loads IN PLACE on the CURRENT tab, matching
   //    the CLI's own /resume typed at an existing Claude Terminal prompt: it swaps
   //    THAT session in place too, no new tab. /resume is something you type INTO a
   //    specific conversation ("change what THIS is"), unlike the toolbar's generic
   //    "browse history" with no such context — the two are allowed to differ.
+  const reuseCurrent = resumeInPlace || isTabEmpty(activeTab());
   let t;
-  if (resumeInPlace) {
+  if (reuseCurrent) {
     t = activeTab(); if (!t) return;
     loadRender(t);                        // operate on THIS tab's render state
     // An in-flight stream on the tab being overwritten must stop NOW, or its output
     // keeps landing in a pane that no longer represents that conversation — unlike
     // the new-tab path, this tab is NOT untouched, its live content is about to be
-    // replaced out from under it.
+    // replaced out from under it. (No-op for the isTabEmpty case: that condition
+    // already excludes a streaming tab.)
     if (t.streaming) doCancel();
     hideWorking();
     curTurn = null; curBody = null; curText = ''; curThink = null; curThinkText = '';
