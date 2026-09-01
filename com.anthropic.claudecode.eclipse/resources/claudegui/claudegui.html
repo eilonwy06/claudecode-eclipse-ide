@@ -19,12 +19,29 @@
        OUTSIDE this wrapper so they stay natural-size and reachable at any zoom. -->
   <div id="zoom-root">
 
+  <!-- Root ("supertab") row — the working folder each conversation below runs in.
+       Same 35px as the tab strip. The row can be hidden; its toggle then moves to
+       the toolbar below, since a control that hides its own row would otherwise
+       take the only way back with it. -->
+  <div id="supertab-row">
+    <div id="supertabs"></div>
+    <div class="spacer"></div>
+    <div class="tools">
+      <div class="tbtn" title="New Claude root directory" onclick="newRootDirectory()">__SUNBURST__</div>
+      <div class="tbtn" id="supertab-toggle" title="Hide root directories" onclick="toggleSupertabs()">__CHEVDOWN__</div>
+    </div>
+  </div>
+
+  <!-- Standing in for the root row while it is collapsed: which folder am I in? -->
+  <div id="cwd-row"><span class="ci">__FOLDER__</span><span class="ct"></span></div>
+
   <!-- Top toolbar -->
   <div id="toolbar">
     <div id="tabs"></div>
     <div class="spacer"></div>
     <div class="tools">
-      <div class="tbtn" title="New session" onclick="newSession()">__SUNBURST__</div>
+      <!-- The root row's toggle in its collapsed home; shown only while that row is hidden. -->
+      <div class="tbtn" id="supertab-toggle-collapsed" title="Show root directories" style="display:none" onclick="toggleSupertabs()">__CHEVUP__</div>
       <!-- split / lock / more-actions hidden: not wired yet -->
       <div class="tbtn" title="Split editor" style="display:none">__SPLIT__</div>
       <div class="tbtn" title="Lock" style="display:none">__LOCK__</div>
@@ -134,6 +151,10 @@
   <!-- account & usage window -->
   <div id="account-overlay"><div id="account-win"></div></div>
 
+  <!-- trust window (same chrome as account & usage, with decision buttons): asked
+       before claude is first run in a folder we have no answer for. -->
+  <div id="trust-overlay"><div id="trust-win"></div></div>
+
   <!-- rewind dialog (Rewind to… / Fork and rewind) -->
   <div id="rewind-overlay"><div id="rewind-win"></div></div>
 
@@ -166,6 +187,7 @@
 <script src="scripts/icons.js"></script>
 <script src="scripts/ui.js"></script>
 <script src="scripts/tabs.js"></script>
+<script src="scripts/supertabs.js"></script>
 <script src="scripts/chat.js"></script>
 <script src="scripts/stream.js"></script>
 <script src="scripts/carddock.js"></script>

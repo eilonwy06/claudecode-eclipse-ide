@@ -335,141 +335,222 @@
       <!-- Java -->
       <perspectiveExtension targetID="org.eclipse.jdt.ui.JavaPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.jdt.ui.JavaBrowsingPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.jdt.ui.JavaHierarchyPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Java EE / Jakarta EE -->
       <perspectiveExtension targetID="org.eclipse.jst.j2ee.J2EEPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.jst.jee.ui.J2EEPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.wst.web.ui.J2EEPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Resource -->
       <perspectiveExtension targetID="org.eclipse.ui.resourcePerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.rse.ui.view.SystemPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Debug -->
       <perspectiveExtension targetID="org.eclipse.debug.ui.DebugPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Plug-in Development -->
       <perspectiveExtension targetID="org.eclipse.pde.ui.PDEPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Team / Git -->
       <perspectiveExtension targetID="org.eclipse.team.ui.TeamSynchronizingPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.egit.ui.GitRepositoryExploring">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- C/C++ -->
       <perspectiveExtension targetID="org.eclipse.cdt.ui.CPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Web / JavaScript / TypeScript -->
       <perspectiveExtension targetID="org.eclipse.wst.jsdt.ui.JavaScriptPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.wst.web.ui.webDevPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.wst.xml.ui.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.wildwebdeveloper.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.wildwebdeveloper.web">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Node.js / Nodeclipse / Enide -->
       <perspectiveExtension targetID="org.nodeclipse.ui.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.nodeclipse.enide.studio.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.nodeclipse.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- PHP -->
       <perspectiveExtension targetID="org.eclipse.php.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Python -->
       <perspectiveExtension targetID="org.python.pydev.ui.PythonPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.python.pydev.debug.ui.DebugPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Database / SQL -->
       <perspectiveExtension targetID="org.eclipse.datatools.sqltools.sqleditor.perspectives.EditorPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.eclipse.datatools.connectivity.DataSourceExplorerNavigator">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Spring -->
       <perspectiveExtension targetID="com.springsource.sts.ide.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="org.springframework.ide.eclipse.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Groovy / Grails -->
       <perspectiveExtension targetID="org.codehaus.groovy.eclipse.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <perspectiveExtension targetID="com.springsource.sts.grails.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Scala -->
       <perspectiveExtension targetID="org.scala-ide.sdt.core.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Kotlin -->
       <perspectiveExtension targetID="org.jetbrains.kotlin.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Ruby -->
       <perspectiveExtension targetID="org.eclipse.dltk.ruby.ui.RubyPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Rust -->
       <perspectiveExtension targetID="org.eclipse.corrosion.perspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
       <!-- Go -->
       <perspectiveExtension targetID="com.googlecode.goclipse.perspectives.GoPerspective">
          <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeCliView"/>
+         <showInPart id="com.anthropic.claudecode.eclipse.ui.ClaudeGuiView"/>
       </perspectiveExtension>
    </extension>
 
-   <!-- Open Claude Terminal Here - context menu for navigators -->
-   <extension point="org.eclipse.ui.popupMenus">
-      <objectContribution
-            id="com.anthropic.claudecode.eclipse.openCliHere"
-            objectClass="org.eclipse.core.resources.IResource"
-            adaptable="true">
-         <action
-               id="com.anthropic.claudecode.eclipse.actions.openCliHere"
-               label="Open Claude Terminal Here"
-               icon="icons/claude-16.png"
-               class="com.anthropic.claudecode.eclipse.ui.actions.OpenCliHereAction"/>
-      </objectContribution>
+   <!-- "Open Claude Here" - context menu for navigators. One top-level entry that
+        opens a submenu with both targets, so the GUI and the terminal each get a
+        first-class item without two separate entries in every navigator's menu.
+
+        org.eclipse.ui.menus rather than the older popupMenus/objectContribution: only
+        this extension point lets the SUBMENU itself carry an icon (a <menu> under
+        popupMenus has no icon attribute - none of Eclipse's own popupMenus
+        contributions declares one). The commands deliberately carry NO icon, so the
+        Claude mark appears once, on the parent. -->
+   <extension point="org.eclipse.ui.commands">
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.openCodeHere"
+            name="Open Claude Code Here"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.openTerminalHere"
+            name="Open Claude Terminal Here"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+   </extension>
+
+   <extension point="org.eclipse.ui.handlers">
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.openCodeHere"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.OpenCodeHereHandler"/>
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.openTerminalHere"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.OpenTerminalHereHandler"/>
+   </extension>
+
+   <extension point="org.eclipse.ui.menus">
+      <menuContribution locationURI="popup:org.eclipse.ui.popup.any?after=additions">
+         <menu
+               id="com.anthropic.claudecode.eclipse.menus.openClaudeHere"
+               label="Open Claude Here"
+               icon="icons/claude-16.png">
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.openCodeHere"
+                  id="com.anthropic.claudecode.eclipse.menus.openCodeHere"
+                  label="Claude Code"
+                  style="push"/>
+            <command
+                  commandId="com.anthropic.claudecode.eclipse.commands.openTerminalHere"
+                  id="com.anthropic.claudecode.eclipse.menus.openTerminalHere"
+                  label="Claude Terminal"
+                  style="push"/>
+            <!-- adapt, not instanceof: the Package Explorer hands over Java-model
+                 nodes (IJavaProject, IPackageFragment), not IResource. This is the
+                 equivalent of the old contribution's adaptable="true", and casting
+                 instead would silently drop the menu on exactly those nodes. -->
+            <visibleWhen checkEnabled="false">
+               <with variable="selection">
+                  <iterate ifEmpty="false" operator="and">
+                     <adapt type="org.eclipse.core.resources.IResource"/>
+                  </iterate>
+               </with>
+            </visibleWhen>
+         </menu>
+      </menuContribution>
    </extension>
 
 </plugin>

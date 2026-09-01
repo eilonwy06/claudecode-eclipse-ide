@@ -106,6 +106,22 @@ public class ChatProcessManager {
         NativeCore.chatSetPersistent(handle, persistent);
     }
 
+    /**
+     * Overrides the directory claude is spawned in — the GUI's per-conversation
+     * working root ("supertab"). Empty or null keeps the Eclipse workspace root.
+     *
+     * <p>Costs nothing below Java: the root has always been a parameter of
+     * {@code chatSendMessage}, and the core does {@code cmd.current_dir(workspace_root)}
+     * with whatever it is handed, so a per-tab root is just a different string.
+     */
+    public void setRoot(String root) {
+        this.rootOverride = (root == null) ? "" : root.trim();
+    }
+
+    /** @see #setRoot(String) — empty until a caller sets one. */
+    private volatile String rootOverride = "";
+
+
     // ── Operations ────────────────────────────────────────────────────────────
 
     public void sendMessage(String message) {
@@ -132,8 +148,9 @@ public class ChatProcessManager {
         String claudeCmd = prefs.getString(Constants.PREF_CLAUDE_CMD);
         if (claudeCmd == null || claudeCmd.isBlank()) claudeCmd = Constants.DEFAULT_CLAUDE_CMD;
 
-        String workspaceRoot = org.eclipse.core.resources.ResourcesPlugin
-                .getWorkspace().getRoot().getLocation().toOSString();
+        String workspaceRoot = rootOverride.isEmpty()
+                ? org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getLocation().toOSString()
+                : rootOverride;
 
         int mcpPort = 0;
         String mcpAuthToken = "";

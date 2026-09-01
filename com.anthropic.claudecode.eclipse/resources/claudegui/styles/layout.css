@@ -41,10 +41,16 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 .tab .ti { color: var(--accent); display: inline-flex; flex-shrink: 0; }
 .tab .tt { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 /* The close (x) shows only on the ACTIVE tab or while hovering a tab; hidden (but
-   still occupying its slot, so tabs don't shift) on unfocused tabs. */
-.tab .tab-close { color: var(--fg-dim); margin-left: 2px; cursor: pointer; border-radius: 3px; padding: 1px 3px; flex-shrink: 0; visibility: hidden; }
+   still occupying its slot, so tabs don't shift) on unfocused tabs.
+   A fixed square with the glyph flex-centred: as an inline box the 13px SVG sat on
+   the text baseline, which left the descender gap below it and pushed both the glyph
+   and its hover fill visibly above centre. */
+.tab .tab-close, .stab .stab-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0; margin-left: 2px;
+  color: var(--fg-dim); cursor: pointer; border-radius: 3px; flex-shrink: 0; visibility: hidden; }
 .tab.active .tab-close, .tab:hover .tab-close { visibility: visible; }
-.tab .tab-close:hover { background: var(--bg-hover); color: var(--fg); }
+.tab .tab-close:hover, .stab .stab-close:hover { background: var(--bg-hover); color: var(--fg); }
 .pane > .turn:first-child { margin-top: 0; }
 #toolbar .spacer { flex: 1; }
 #toolbar .tools { display: flex; align-items: center; gap: 2px; padding-right: 8px; }
@@ -52,6 +58,56 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
   border-radius: 5px; color: var(--fg-dim); cursor: pointer; }
 .tbtn:hover { background: var(--bg-hover); color: var(--fg); }
 .tbtn.active { background: var(--tbtn-active); color: var(--fg); }
+
+/* ── Root ("supertab") row ────────────────────────────────
+   The folder each conversation runs in. Same 35px as the tab strip below it, and
+   the same internal-scroll rule (min-width:0 + overflow-x) so a long list of roots
+   scrolls inside the row instead of pushing its buttons off a narrow view. A
+   slightly recessed background separates the two rows without a second border. */
+#supertab-row { display: flex; align-items: stretch; height: 35px; flex-shrink: 0;
+  background: var(--bg-soft); border-bottom: 1px solid var(--border-soft); }
+#supertabs { display: flex; align-items: stretch; height: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+#supertabs::-webkit-scrollbar { height: 4px; }
+#supertabs::-webkit-scrollbar-track { background: transparent; }
+#supertabs::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+#supertabs.sb-show::-webkit-scrollbar-thumb { background: var(--scrollbar-track); }
+#supertab-row .spacer { flex: 1; }
+#supertab-row .tools { display: flex; align-items: center; gap: 2px; padding-right: 8px; }
+/* Root chip. The accent bar sits ABOVE the label, same edge as .tab's — an accent
+   on the BOTTOM edge lands directly against the active tab's own top accent below it
+   and the two read as one thick doubled line. The active root is further marked by
+   accent-coloured text; inactive roots stay at the normal foreground. */
+.stab { display: flex; align-items: center; gap: 7px; padding: 0 10px; height: 100%; cursor: pointer;
+  background: transparent; border-right: 1px solid var(--border-soft); border-top: 2px solid transparent;
+  font-size: 12.5px; color: var(--fg); max-width: 200px; flex-shrink: 0; }
+.stab:hover { background: var(--bg); }
+/* After :hover, and repeated for the hovered case — equal specificity means source
+   order decides, and the active root must stay accent-coloured under the cursor. */
+.stab.active, .stab.active:hover { background: var(--bg); border-top-color: var(--accent); color: var(--accent); }
+.stab.dragging { opacity: .4; }
+.stab.drop-before { box-shadow: inset 2px 0 0 0 var(--accent); }
+.stab.drop-after { box-shadow: inset -2px 0 0 0 var(--accent); }
+/* No colour of its own — the SVG strokes currentColor, so the glyph turns accent
+   with the label on the active root and stays foreground on the others. */
+.stab .si { display: inline-flex; flex-shrink: 0; }
+/* .stt, not .st — chat.css styles .st as the STRING token for syntax highlighting
+   (color: var(--str), a coral). A rule that sets colour directly on the element beats
+   a colour inherited from .stab no matter how specific the .stab selector is, so every
+   root label rendered in string-coral. Keep tab-strip class names out of the
+   highlighter's single-purpose namespace. */
+.stab .stt { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.stab.active .stab-close, .stab:hover .stab-close { visibility: visible; }
+
+/* ── Working-folder strip ─────────────────────────────────
+   Stands in for the root row while it is collapsed, so hiding the roots never leaves
+   the user unsure which folder the conversations below belong to. Shorter and quieter
+   than a real row, sharing the root row's background, and left-aligned on the same
+   10px the tab labels use so the three rows read as one column. */
+#cwd-row { display: none; align-items: center; gap: 6px; height: 22px; flex-shrink: 0;
+  padding: 0 10px; background: var(--bg-soft); border-bottom: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--fg-dim); }
+#cwd-row .ci { display: inline-flex; flex-shrink: 0; color: var(--accent); }
+#cwd-row .ct { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 /* ── Conversation header ─────────────────────────────────── */
 #convo-header { display: flex; align-items: center; justify-content: space-between;

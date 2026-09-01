@@ -17,7 +17,14 @@ import java.util.concurrent.TimeoutException;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
+import org.eclipse.core.resources.IContainer;
+import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.IAdaptable;
+import org.eclipse.jface.dialogs.MessageDialog;
+import org.eclipse.jface.viewers.ISelection;
+import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.core.runtime.FileLocator;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.IToolBarManager;
@@ -33,7 +40,10 @@ import org.eclipse.swt.dnd.Transfer;
 import org.eclipse.swt.graphics.ImageData;
 import org.eclipse.swt.graphics.ImageLoader;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.DirectoryDialog;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.ui.part.IShowInTarget;
+import org.eclipse.ui.part.ShowInContext;
 import org.eclipse.ui.part.ViewPart;
 
 import com.anthropic.claudecode.eclipse.Activator;
@@ -51,7 +61,7 @@ import com.anthropic.claudecode.eclipse.chat.ChatProcessManager;
  * uses the native {@code /stt/stream} relay. JS↔Java is bridged with
  * {@link BrowserFunction}s; Java→JS uses {@code browser.execute}.
  */
-public class ClaudeGuiView extends ViewPart {
+public class ClaudeGuiView extends ViewPart implements IShowInTarget {
 
     public static final String VIEW_ID = "com.anthropic.claudecode.eclipse.ui.ClaudeGuiView";
 
@@ -67,6 +77,16 @@ public class ClaudeGuiView extends ViewPart {
     // Which tab is active (for gating the shared status bar) + its last status JSON.
     private volatile String activeTabId = "";
     private final java.util.Map<String, String> statusByTab = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The ACTIVE conversation's working root ("supertab") — the folder its claude runs
+     * in. Session history, rewind and the per-session sidecars are all keyed by
+     * directory, so they must follow the conversation's own root rather than the
+     * workspace root. Pushed by {@code _activeTab}; empty means the workspace root.
+     */
+    private volatile String activeRootPath = "";
+    /** A folder to open as a root once the page is up (an "Open Claude Code Here"
+     *  that arrived while the view was still loading). */
+    private volatile String pendingRootPath = null;
 
     // Strong references — prevent GC from unregistering the BrowserFunctions.
     @SuppressWarnings("unused") private BrowserFunction sendFn;
@@ -85,6 +105,11 @@ public class ClaudeGuiView extends ViewPart {
     @SuppressWarnings("unused") private BrowserFunction overlayOpenFn;
     @SuppressWarnings("unused") private BrowserFunction modelConfigFn;
     @SuppressWarnings("unused") private BrowserFunction accountInfoFn;
+    @SuppressWarnings("unused") private BrowserFunction defaultRootFn;
+    @SuppressWarnings("unused") private BrowserFunction pickDirectoryFn;
+    @SuppressWarnings("unused") private BrowserFunction folderInfoFn;
+    @SuppressWarnings("unused") private BrowserFunction trustFolderFn;
+    @SuppressWarnings("unused") private BrowserFunction confirmCloseViewFn;
     @SuppressWarnings("unused") private BrowserFunction saveSessionPrefsFn;
     @SuppressWarnings("unused") private BrowserFunction loadSessionPrefsFn;
     @SuppressWarnings("unused") private BrowserFunction setPermissionModeFn;
@@ -229,11 +254,16 @@ public class ClaudeGuiView extends ViewPart {
                 // Pasted images: JSON array of {media_type,data} (base64), built by the
                 // webview from clipboard-image paste. "" when none.
                 String imagesJson = (a.length > 8 && a[8] instanceof String ij) ? ij : "";
+                // This conversation's working root — its claude's cwd. Empty (an older
+                // page, or the workspace root itself) leaves the manager on the default.
+                String root     = (a.length > 9 && a[9] instanceof String rp) ? rp : "";
                 // Capture effort/thinking for the status bar (the stream reports
                 // model + context + cost, but not these launch-time choices).
                 this.lastEffort = effort;
                 this.lastThinking = !"0".equals(thinking);
-                managerFor(tabId).sendMessage(withCtx ? buildContextPreamble() + s : s, resumeId, permMode, effort, model, thinking, imagesJson);
+                ChatProcessManager mgr = managerFor(tabId);
+                mgr.setRoot(root);
+                mgr.sendMessage(withCtx ? buildContextPreamble() + s : s, resumeId, permMode, effort, model, thinking, imagesJson);
             }
             return null;
         });
@@ -249,6 +279,9 @@ public class ClaudeGuiView extends ViewPart {
         // A tab became active → point the shared status bar at its last status.
         activeTabFn    = new SimpleFunction(browser, "_activeTab", a -> {
             if (a.length > 0 && a[0] instanceof String ti) { activeTabId = ti; lastRustStatusJson = statusByTab.get(ti); refreshStatusBar(); }
+            // Second arg is that tab's working root, so everything below keyed by
+            // directory (history, rewind, the title sidecar) follows the conversation.
+            if (a.length > 1 && a[1] instanceof String rp) activeRootPath = rp == null ? "" : rp;
             return null;
         });
         newSessionFn   = new SimpleFunction(browser, "_newSession", a -> null);   // new tab = new manager (JS creates the tab)
@@ -258,8 +291,11 @@ public class ClaudeGuiView extends ViewPart {
         // button click from freezing the UI.
         listSessionsAsyncFn = new SimpleFunction(browser, "_listSessionsAsync", a -> {
             final Browser b = browser;
+            // Captured HERE, on the UI thread: a tab switch during the scan would
+            // otherwise move activeRootPath and hand back another folder's sessions.
+            final String root = activeRoot();
             new Thread(() -> {
-                String json = safeSessionList();
+                String json = safeSessionList(root);
                 Display.getDefault().asyncExec(() -> {
                     if (b != null && !b.isDisposed() && pageLoaded) {
                         b.execute("window.onHistoryLoaded && window.onHistoryLoaded('" + esc(json) + "')");
@@ -277,6 +313,63 @@ public class ClaudeGuiView extends ViewPart {
         renameSessionFn = new SimpleFunction(browser, "_renameSession", a -> {
             if (a.length > 1 && a[0] instanceof String id && a[1] instanceof String newTitle)
                 renameSessionFile(id, newTitle);
+            return null;
+        });
+        // ── Working roots ("supertabs") ────────────────────────────────────────
+        defaultRootFn  = new SimpleFunction(browser, "_defaultRoot", a -> workspaceRoot());
+        // The folder picker is ASYNC on purpose: opening a modal SWT dialog while
+        // WebView2 is still inside the JS call that triggered it deadlocks on Windows.
+        // Java answers by calling window.onDirectoryPicked once the dialog closes.
+        pickDirectoryFn = new SimpleFunction(browser, "_pickDirectory", a -> {
+            Display.getDefault().asyncExec(() -> {
+                if (browser == null || browser.isDisposed()) return;
+                DirectoryDialog dlg = new DirectoryDialog(browser.getShell());
+                dlg.setText("New Claude root directory");
+                dlg.setMessage("Select the folder Claude Code should run in.");
+                dlg.setFilterPath(workspaceRoot());
+                String picked = dlg.open();
+                final String path = picked == null ? "" : picked;
+                // Pushed from a SECOND asyncExec so the browser is never re-entered
+                // from inside the modal's own dispatch.
+                Display.getDefault().asyncExec(() ->
+                    executeJS("window.onDirectoryPicked && window.onDirectoryPicked('" + esc(path) + "')"));
+            });
+            return null;
+        });
+        folderInfoFn   = new SimpleFunction(browser, "_folderInfo", a ->
+            folderInfoJson(a.length > 0 && a[0] instanceof String p ? p : ""));
+        trustFolderFn  = new SimpleFunction(browser, "_trustFolder", a -> {
+            if (a.length > 0 && a[0] instanceof String p) TrustStore.trust(p);
+            return null;
+        });
+        // Closing the last working root closes the view — there is no folder left to
+        // run in. The question is asked HERE rather than in the page: this panel is
+        // routinely docked narrower than an in-page modal can lay itself out in, and a
+        // real dialog also gets the platform's own button order and Esc handling.
+        //
+        // asyncExec is not optional. Both the modal and the hideView that follows would
+        // otherwise run inside a call this Browser is still executing — the first
+        // deadlocks WebView2, the second disposes the widget out from under it.
+        confirmCloseViewFn = new SimpleFunction(browser, "_confirmCloseView", a -> {
+            Display.getDefault().asyncExec(() -> {
+                try {
+                    if (browser == null || browser.isDisposed()) return;
+                    // Constructed rather than MessageDialog.open(...): the varargs
+                    // overload that takes custom button labels returns the button INDEX,
+                    // not a boolean. Index 0 is the first label; dismissing the dialog
+                    // returns -1, which reads as cancel like every other non-zero answer.
+                    MessageDialog dlg = new MessageDialog(browser.getShell(),
+                            "Close the last directory?", null,
+                            "You are about to close the last directory tab, this action will "
+                                    + "close the Claude Code view. Do you wish to proceed?",
+                            MessageDialog.CONFIRM, new String[] { "Close the view", "Cancel" }, 1);
+                    if (dlg.open() != 0) return;
+                    org.eclipse.ui.IWorkbenchPartSite site = getSite();
+                    if (site != null && site.getPage() != null) site.getPage().hideView(ClaudeGuiView.this);
+                } catch (Exception e) {
+                    Activator.logError("Failed to close the Claude Code view", e);
+                }
+            });
             return null;
         });
         currentContextFn = new SimpleFunction(browser, "_currentContext", a -> currentContextJson());
@@ -332,21 +425,21 @@ public class ClaudeGuiView extends ViewPart {
         // preview the file restore, then restore + fork into a new session.
         rewindListFn = new SimpleFunction(browser, "_rewindList", a ->
             (a.length > 0 && a[0] instanceof String sid)
-                ? com.anthropic.claudecode.eclipse.chat.RewindService.list(workspaceRoot(), sid) : "[]");
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.list(activeRoot(), sid) : "[]");
         rewindPreviewFn = new SimpleFunction(browser, "_rewindPreview", a ->
             (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
-                ? com.anthropic.claudecode.eclipse.chat.RewindService.preview(workspaceRoot(), sid, mid) : "{}");
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.preview(activeRoot(), sid, mid) : "{}");
         rewindApplyFn = new SimpleFunction(browser, "_rewindApply", a ->
             (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
-                ? com.anthropic.claudecode.eclipse.chat.RewindService.apply(workspaceRoot(), sid, mid) : "{}");
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.apply(activeRoot(), sid, mid) : "{}");
         // The per-message menu (joebiden8) offers the two halves separately as well:
         // fork without touching the files, or restore the files in place.
         rewindForkOnlyFn = new SimpleFunction(browser, "_rewindForkOnly", a ->
             (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
-                ? com.anthropic.claudecode.eclipse.chat.RewindService.forkOnly(workspaceRoot(), sid, mid) : "{}");
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.forkOnly(activeRoot(), sid, mid) : "{}");
         rewindCodeOnlyFn = new SimpleFunction(browser, "_rewindCodeOnly", a ->
             (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
-                ? com.anthropic.claudecode.eclipse.chat.RewindService.restoreOnly(workspaceRoot(), sid, mid) : "{}");
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.restoreOnly(activeRoot(), sid, mid) : "{}");
         // Message ids for a session, in render order — lets a bubble sent THIS run
         // (which has no id until the CLI has written it) find the line it owns.
         messageIdsFn = new SimpleFunction(browser, "_messageIds", a ->
@@ -478,6 +571,9 @@ public class ClaudeGuiView extends ViewPart {
             pushCliModels();         // ditto for the installed binary's model support
             pushEditKeyHints();      // label the right-click menu with the user's real keys
             pushDebugMode();         // let the page report its keys while Debug mode is on
+            // An "Open Claude Code Here" that arrived while the view was still loading.
+            String queuedRoot = pendingRootPath;
+            if (queuedRoot != null) { pendingRootPath = null; openRootDirectory(queuedRoot); }
             pushScrollLock();        // the toolbar toggle outlives the page — re-apply it
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
@@ -1508,20 +1604,129 @@ public class ClaudeGuiView extends ViewPart {
         return ResourcesPlugin.getWorkspace().getRoot().getLocation().toOSString();
     }
 
-    // History is served by the Rust core (session.rs), which reads the CLI's
-    // per-project jsonl logs directly.
-    private String safeSessionList() {
-        String json = "[]";
-        try { json = NativeCore.sessionList(workspaceRoot()); } catch (Throwable t) {}
-        return mergeCustomTitles(json);
+    /**
+     * The directory the ACTIVE conversation runs in — its working root ("supertab"),
+     * falling back to the workspace root.
+     *
+     * <p>Everything the CLI keys by directory has to use this rather than
+     * {@link #workspaceRoot()}: sessions live in {@code ~/.claude/projects/<hash of
+     * root>/}, so listing, loading, deleting, renaming or rewinding against the
+     * workspace root while the user is in a module-rooted tab would read one folder's
+     * history and resume it in another.
+     */
+    private String activeRoot() {
+        String r = activeRootPath;
+        return (r == null || r.isBlank()) ? workspaceRoot() : r;
     }
 
-    private String mergeCustomTitles(String sessionsJson) {
+    /**
+     * What the trust window needs to describe a folder before Claude is first run in
+     * it: {@code {path,name,exists,trusted,hasClaudeMd,inWorkspace}}. {@code path} is
+     * echoed back canonicalised, so the root the page stores and the cwd we later hand
+     * the CLI are the same string.
+     */
+    private String folderInfoJson(String raw) {
+        Map<String, Object> out = new HashMap<>();
+        String path = raw == null ? "" : raw.trim();
+        out.put("path", path);
+        out.put("name", path);
+        out.put("exists", false);
+        out.put("trusted", false);
+        out.put("hasClaudeMd", false);
+        out.put("inWorkspace", false);
+        if (path.isEmpty()) return new Gson().toJson(out);
+        try {
+            Path dir = Paths.get(path).toAbsolutePath().normalize();
+            String canonical = dir.toString();
+            out.put("path", canonical);
+            out.put("name", dir.getFileName() == null ? canonical : dir.getFileName().toString());
+            out.put("exists", Files.isDirectory(dir));
+            out.put("trusted", TrustStore.isTrusted(canonical));
+            out.put("hasClaudeMd", hasClaudeMd(dir));
+            String ws = TrustStore.normalize(workspaceRoot());
+            String me = TrustStore.normalize(canonical);
+            out.put("inWorkspace", me.equals(ws) || me.startsWith(ws + "/"));
+        } catch (Exception ignored) {
+            // A malformed path stays "doesn't exist, not trusted" — the window then
+            // asks, which is the safe direction to fail in.
+        }
+        return new Gson().toJson(out);
+    }
+
+    /** Whether a CLAUDE.md is in effect for this folder — here or anywhere above it,
+     *  which is how the CLI resolves its config chain. */
+    private static boolean hasClaudeMd(Path dir) {
+        for (Path p = dir; p != null; p = p.getParent()) {
+            try { if (Files.isRegularFile(p.resolve("CLAUDE.md"))) return true; }
+            catch (Exception ignored) {}
+        }
+        return false;
+    }
+
+    /**
+     * Opens {@code path} as a working root in the GUI — the "Open Claude Code Here"
+     * entry point. Selects the root if it already exists, otherwise the page creates
+     * it (asking for trust first when the folder is new to us) along with a
+     * conversation under it. Queued when the webview is still loading.
+     */
+    public void openRootDirectory(String path) {
+        if (path == null || path.isBlank()) return;
+        if (!pageLoaded) { pendingRootPath = path; return; }
+        executeJS("window.openRootDirectory && window.openRootDirectory('" + esc(path) + "')");
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public <T> T getAdapter(Class<T> adapter) {
+        if (adapter == IShowInTarget.class) return (T) this;
+        return super.getAdapter(adapter);
+    }
+
+    /**
+     * Show In ▸ Claude Code — same outcome as "Open Claude Here ▸ Claude Code": the
+     * selected folder (a file's parent) becomes a working root, with a conversation in
+     * it. Show In opens this view if it was closed, so the page may still be loading;
+     * {@link #openRootDirectory} queues the folder for the load to flush.
+     */
+    @Override
+    public boolean show(ShowInContext context) {
+        if (context == null) return false;
+        ISelection selection = context.getSelection();
+        if (!(selection instanceof IStructuredSelection structured)) return false;
+        Object element = structured.getFirstElement();
+        IResource resource = null;
+        if (element instanceof IResource r) {
+            resource = r;
+        } else if (element instanceof IAdaptable adaptable) {
+            resource = adaptable.getAdapter(IResource.class);
+        }
+        IResource target = (resource instanceof IFile) ? resource.getParent()
+                         : (resource instanceof IContainer) ? resource : null;
+        if (target == null || target.getLocation() == null) return false;
+        openRootDirectory(target.getLocation().toOSString());
+        return true;
+    }
+
+    // History is served by the Rust core (session.rs), which reads the CLI's
+    // per-project jsonl logs directly.
+    private String safeSessionList() { return safeSessionList(activeRoot()); }
+
+    /** @param root the working root to list — captured by the caller, since the
+     *  async path scans off the UI thread while the user may switch tabs. */
+    private String safeSessionList(String root) {
+        String json = "[]";
+        try { json = NativeCore.sessionList(root); } catch (Throwable t) {}
+        return mergeCustomTitles(json, root);
+    }
+
+    /** @param root the working root whose title sidecar to merge — passed in for the
+     *  same reason as {@link #safeSessionList(String)}: the scan is off the UI thread. */
+    private String mergeCustomTitles(String sessionsJson, String root) {
         try {
             String home = Activator.isWindows() ? System.getenv("USERPROFILE") : System.getenv("HOME");
             if (home == null || home.isEmpty()) home = System.getProperty("user.home");
             if (home == null) return sessionsJson;
-            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(workspaceRoot()), "session-titles.json");
+            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(root), "session-titles.json");
             if (!Files.exists(titlesPath)) return sessionsJson;
             Map<String, String> titles = new Gson().fromJson(Files.readString(titlesPath), new TypeToken<Map<String, String>>(){}.getType());
             if (titles == null || titles.isEmpty()) return sessionsJson;
@@ -1536,27 +1741,27 @@ public class ClaudeGuiView extends ViewPart {
     }
 
     private String safeSessionLoad(String id) {
-        try { return NativeCore.sessionLoad(workspaceRoot(), id); }
+        try { return NativeCore.sessionLoad(activeRoot(), id); }
         catch (Throwable t) { return "[]"; }
     }
 
     /** Message ids in render order. An older DLL has no such symbol → "[]", which
      *  the GUI reads as "no per-message actions here" rather than failing a click. */
     private String safeMessageIds(String id) {
-        try { return NativeCore.sessionMessageIds(workspaceRoot(), id); }
+        try { return NativeCore.sessionMessageIds(activeRoot(), id); }
         catch (Throwable t) { return "[]"; }
     }
 
     /** Permanent per-message delete, guarded the same way (an older DLL reports an
      *  error the dialog can show instead of throwing into the browser callback). */
     private String safeDeleteMessage(String sessionId, String messageId) {
-        try { return NativeCore.sessionDeleteMessage(workspaceRoot(), sessionId, messageId); }
+        try { return NativeCore.sessionDeleteMessage(activeRoot(), sessionId, messageId); }
         catch (Throwable t) { return "{\"error\":\"This build's native core has no message delete.\"}"; }
     }
 
     /** Delete one local session file (Rust core; Java file-delete as fallback). */
     private void deleteSessionFile(String id) {
-        try { if (NativeCore.sessionDelete(workspaceRoot(), id)) return; }
+        try { if (NativeCore.sessionDelete(activeRoot(), id)) return; }
         catch (Throwable ignored) {}
         try {
             if (id == null || id.isEmpty() || id.contains("/") || id.contains("\\") || id.contains("..")) return;
@@ -1564,7 +1769,7 @@ public class ClaudeGuiView extends ViewPart {
             if (home == null || home.isEmpty()) home = System.getProperty("user.home");
             if (home == null) return;
             java.nio.file.Path p = java.nio.file.Paths.get(
-                    home, ".claude", "projects", projectHash(workspaceRoot()), id + ".jsonl");
+                    home, ".claude", "projects", projectHash(activeRoot()), id + ".jsonl");
             java.nio.file.Files.deleteIfExists(p);
         } catch (Exception ignored) {}
     }
@@ -1607,7 +1812,7 @@ public class ClaudeGuiView extends ViewPart {
                             .getString(com.anthropic.claudecode.eclipse.Constants.PREF_CLAUDE_CMD);
                     if (claudeCmd == null || claudeCmd.isBlank())
                         claudeCmd = com.anthropic.claudecode.eclipse.Constants.DEFAULT_CLAUDE_CMD;
-                    ok = NativeCore.sessionRename(claudeCmd, workspaceRoot(), id, title);
+                    ok = NativeCore.sessionRename(claudeCmd, activeRoot(), id, title);
                 } catch (Throwable ignored) {} // old DLL: sessionRename missing
             }
             if (ok) removeSidecarTitle(id);
@@ -1621,7 +1826,7 @@ public class ClaudeGuiView extends ViewPart {
             String home = Activator.isWindows() ? System.getenv("USERPROFILE") : System.getenv("HOME");
             if (home == null || home.isEmpty()) home = System.getProperty("user.home");
             if (home == null) return;
-            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(workspaceRoot()), "session-titles.json");
+            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(activeRoot()), "session-titles.json");
             Map<String, String> titles = new HashMap<>();
             if (Files.exists(titlesPath)) {
                 try { titles = new Gson().fromJson(Files.readString(titlesPath), new TypeToken<Map<String, String>>(){}.getType()); }
@@ -1644,7 +1849,7 @@ public class ClaudeGuiView extends ViewPart {
             String home = Activator.isWindows() ? System.getenv("USERPROFILE") : System.getenv("HOME");
             if (home == null || home.isEmpty()) home = System.getProperty("user.home");
             if (home == null) return;
-            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(workspaceRoot()), "session-titles.json");
+            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(activeRoot()), "session-titles.json");
             if (!Files.exists(titlesPath)) return;
             Map<String, String> titles = new Gson().fromJson(Files.readString(titlesPath), new TypeToken<Map<String, String>>(){}.getType());
             if (titles == null || titles.remove(id) == null) return;

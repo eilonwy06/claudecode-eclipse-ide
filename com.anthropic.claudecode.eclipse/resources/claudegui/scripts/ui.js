@@ -87,10 +87,11 @@ function clampOpenMenu() {
 }
 window.addEventListener('resize', clampOpenMenu);
 
-/* Tab strip: vertical mouse-wheel scrolls horizontally, and the scrollbar thumb is
-   shown only while hovering or actively scrolling (then auto-hides). */
-(function () {
-  const tabsEl = document.getElementById('tabs');
+/* Tab strips: vertical mouse-wheel scrolls horizontally, and the scrollbar thumb is
+   shown only while hovering or actively scrolling (then auto-hides). Applied to both
+   rows — the root row scrolls the same way and shares the same CSS. */
+['tabs', 'supertabs'].forEach(function (stripId) {
+  const tabsEl = document.getElementById(stripId);
   if (!tabsEl) return;
   let sbTimer = null;
   function flashScrollbar() {
@@ -107,7 +108,7 @@ window.addEventListener('resize', clampOpenMenu);
     flashScrollbar();
   }, { passive: false });
   tabsEl.addEventListener('scroll', flashScrollbar);
-})();
+});
 
 /* textarea auto-grow + focus border + send/stop + Enter-to-send */
 const input = document.getElementById('input');

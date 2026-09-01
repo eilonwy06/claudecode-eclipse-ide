@@ -433,7 +433,9 @@ function doSend() {
   if (typeof clearPendingImages === 'function') clearPendingImages(t);   // consumed → clear the strip
   if (!queueing) { setStreaming(true); showWorking(); }
   else if (!workingEl) showWorking();
-  if (window._sendToJava) window._sendToJava(text, withCtx, t.sessionId || '', t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', t.id, imagesJson);
+  // Last arg is this conversation's working root — claude is spawned with it as its
+  // cwd, so two tabs under different supertabs run in different folders.
+  if (window._sendToJava) window._sendToJava(text, withCtx, t.sessionId || '', t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', t.id, imagesJson, rootPathOf(t));
   persistTabPrefs(t);   // resumed tab already has a sessionId; new ones persist on onSessionId
 }
 function doCancel() {

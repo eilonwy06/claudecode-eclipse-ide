@@ -110,6 +110,28 @@
 #account-win .aw-note { color: var(--fg-faint); font-size: 11px; line-height: 1.45; margin-top: 6px; }
 #account-win a { color: var(--link); text-decoration: none; font-size: 12px; }
 
+/* trust window — the account & usage chrome, reused, plus decision buttons */
+#trust-overlay { position: absolute; inset: 0; z-index: 60; background: var(--overlay-scrim);
+  display: none; align-items: center; justify-content: center; }
+#trust-overlay.open { display: flex; }
+#trust-win { width: 380px; max-width: 92%; max-height: 86%; overflow-y: auto;
+  background: var(--menu-bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 40px var(--shadow); padding: 16px 18px; }
+#trust-win .aw-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+#trust-win .aw-head .t { font-size: 14px; font-weight: 600; color: var(--fg); }
+#trust-win .aw-head .x { color: var(--fg-dim); cursor: pointer; padding: 3px; border-radius: 4px; }
+#trust-win .aw-head .x:hover { background: var(--bg-hover); color: var(--fg); }
+#trust-win .aw-sec { color: var(--fg-faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 6px; }
+#trust-win .aw-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 12.5px; }
+#trust-win .aw-row .k { color: var(--fg-dim); flex-shrink: 0; }
+#trust-win .aw-row .v { color: var(--fg); text-align: right; word-break: break-all; }
+#trust-win .aw-note { color: var(--fg-faint); font-size: 11px; line-height: 1.45; margin-top: 6px; }
+#trust-win .aw-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+#trust-win .aw-btn { padding: 5px 12px; border-radius: 6px; font-size: 12.5px; cursor: pointer;
+  border: 1px solid var(--border); color: var(--fg-dim); }
+#trust-win .aw-btn:hover { background: var(--bg-hover); color: var(--fg); }
+#trust-win .aw-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+#trust-win .aw-btn.primary:hover { filter: brightness(1.08); color: var(--on-accent, #fff); }
+
 /* rewind dialog ("Rewind to…" → "Fork and rewind", the VSCode modal flow) */
 #rewind-overlay { position: absolute; inset: 0; z-index: 60; background: var(--overlay-scrim-soft);
   display: none; align-items: flex-start; justify-content: center; }

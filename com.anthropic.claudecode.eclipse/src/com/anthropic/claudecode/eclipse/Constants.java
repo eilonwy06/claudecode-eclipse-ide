@@ -102,5 +102,17 @@ public final class Constants {
         return DEFAULT_DECISION_TIMEOUT_SECONDS;   // TIMEOUT_MODE_DEFAULT, or unrecognized/unset
     }
 
+    // ── Claude Code (GUI) working roots ─────────────────────────────────────
+    /**
+     * Folders the user has agreed to let Claude Code run in, from the GUI's trust
+     * window. Stored as a newline-separated list of absolute paths.
+     *
+     * <p>The plugin's own record. The grant is ALSO mirrored into the CLI's
+     * {@code ~/.claude.json} so the Claude Terminal doesn't ask again, but that mirror
+     * is best effort — this preference is what the GUI actually honours, and it works
+     * whether or not the CLI has ever run. See {@code TrustStore}.
+     */
+    public static final String PREF_TRUSTED_ROOTS = "trustedRoots";
+
     private Constants() {}
 }
