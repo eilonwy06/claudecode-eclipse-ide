@@ -4,7 +4,21 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.15] — 2026-08-30 *(current)*
+## [3.1.16] — 2026-09-01 *(current)*
+
+### Added
+- **Conversations can run in any folder, not just the workspace root.** A row of directory tabs sits above the conversation tabs — one per folder, each with its own conversations and its own session history. Add a folder from that row or from a project's context menu; Claude asks before it runs in one for the first time ([#93](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/93)).
+- **Show In ▸ Claude Code**, next to the Terminal's, opening the selected folder as a directory tab.
+
+### Changed
+- **The navigator's two Claude entries are grouped under one "Open Claude Here" menu**, holding Claude Code and Claude Terminal.
+
+### Fixed
+- Minor UI improvements for Claude Code view.
+
+---
+
+## [3.1.15] — 2026-08-30
 
 ### Added
 - **Scroll Lock in the Claude Code view.** A toolbar toggle, the same one the Terminal has. With it on, reading back through a conversation no longer drags you to the bottom every time Claude writes a line, a tool finishes, or a card appears — and sending a message leaves you where you are. A **Jump to latest** button shows while you're held back; turning the lock off, or switching tabs, follows along again. It applies to every tab, is off by default, and changes nothing while off ([@jmoraleda](https://github.com/jmoraleda), PR #101).
