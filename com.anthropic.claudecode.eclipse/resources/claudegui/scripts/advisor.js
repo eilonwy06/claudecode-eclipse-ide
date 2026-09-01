@@ -67,6 +67,7 @@ function openAdvisorCard(echoText) {
   function done() {
     resolved = true;
     document.removeEventListener('keydown', onKey, true);
+    unregisterOverlayCancel();
     clearBottomCard();
   }
   function cancel() { if (!resolved) done(); }
@@ -114,9 +115,15 @@ function openAdvisorCard(echoText) {
   // every link to the system browser instead.
   learn.innerHTML = 'Learn more: <a href="https://claude.com/blog/the-advisor-strategy">https://claude.com/blog/the-advisor-strategy</a>';
   card.appendChild(learn);
+  // Cancel half is the live Eclipse binding (Esc, or Ctrl+G under Emacs, where Esc is a
+  // multi-stroke prefix that never reaches the page); dropped entirely when unbound. The
+  // "Enter to confirm" half is ours and always stands, so only the suffix moves.
   const esc = document.createElement('div'); esc.className = 'dec-esc';
-  esc.textContent = 'Enter to confirm · Esc to cancel';
   card.appendChild(esc);
+  registerHintPainter(esc, () => {
+    const cancelPart = cancelHintText();
+    esc.textContent = 'Enter to confirm' + (cancelPart ? ' · ' + cancelPart : '');
+  });
 
   function onKey(e) {
     if (resolved) return;
@@ -130,6 +137,7 @@ function openAdvisorCard(echoText) {
     if (n >= 1 && n <= OPTS.length) { e.preventDefault(); confirm(n - 1); }
   }
   document.addEventListener('keydown', onKey, true);
+  registerOverlayCancel(cancel, true);   // bottom card → tab-visibility guard applies
 
   showBottomCard(card);
   // This card belongs to the tab it was opened from — never a background stream tab

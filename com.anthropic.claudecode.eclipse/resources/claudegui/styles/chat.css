@@ -3,10 +3,41 @@
    markdown body. */
 
 /* ── Messages ────────────────────────────────────────────── */
-#messages { flex: 1; overflow-y: auto; padding: 4px 14px 16px; }
+/* overflow-wrap is set HERE, on the scroller itself, because the property
+   inherits — every descendant (bubble bodies, markdown prose, inline code
+   chips, tool sub-lines, system lines, permission/question cards) is covered by
+   this one declaration instead of a per-selector patch that the next new
+   element silently misses.
+   Why it matters: `overflow-y: auto` forces the computed `overflow-x` to `auto`
+   too (CSS Overflow §3 — `visible` is not combinable with a scrolling value),
+   so #messages IS a horizontal scroll container and anything wider than it
+   raises a horizontal scrollbar plus the unstyled white scrollbar corner. The
+   fix is to leave nothing wider, NOT to clip the axis: `overflow-x: hidden`
+   would swallow the code blocks' own sideways scroll along with the bug.
+   `anywhere` rather than `break-word` so a long unbreakable token (a Windows
+   path, a long URL) also shrinks the element's MIN-CONTENT width — otherwise a
+   flex/table ancestor still sizes itself to the unbroken token and overflows
+   even though the text now wraps. Normal break opportunities are still
+   preferred; mid-token breaks only happen when the token cannot fit alone. */
+#messages { flex: 1; overflow-y: auto; padding: 4px 14px 16px; overflow-wrap: anywhere; }
 #messages::-webkit-scrollbar { width: 9px; }
 #messages::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; border: 2px solid var(--bg); }
 #messages::-webkit-scrollbar-track { background: transparent; }
+
+/* Floats just above #composer's top edge, shown only while streamed content is
+   arriving below the user's scroll position (see updateJumpToLatest in chat.js).
+   Lives inside #composer (layout.css gives it position: relative) rather than
+   #messages, which is the scroll container — an absolutely-positioned child of
+   THAT would scroll away with the transcript instead of staying put over it.
+   Anchored to the composer's top rather than a fixed screen position so it tracks
+   correctly as the composer grows (textarea auto-grow, pending-image strip). */
+#jump-to-latest { display: none; position: absolute; left: 50%; top: 0; z-index: 5;
+  transform: translate(-50%, calc(-100% - 8px)); width: 30px; height: 30px; border-radius: 50%;
+  align-items: center; justify-content: center; cursor: pointer;
+  background: var(--menu-bg); color: var(--fg-soft); border: 1px solid var(--border);
+  box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+#jump-to-latest.show { display: flex; }
+#jump-to-latest:hover { color: var(--fg); border-color: var(--accent-dim); }
 
 .turn { position: relative; margin: 10px 0; }
 /* First bubble in a conversation gets breathing room below the title header. */
@@ -167,7 +198,7 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
    FULL horizontal scroll width, not just the visible width — otherwise the red/green
    highlight cuts off once a long line is scrolled right. */
 .code-block .ln { display: block; box-sizing: border-box; width: max-content; min-width: 100%;
-  padding: 0 12px; white-space: pre; color: var(--fg-soft); }
+  padding: 0 12px; white-space: pre; color: var(--fg-soft); overflow-wrap: normal; }
 .code-block .ln.add { background: var(--green-bg); box-shadow: inset 2px 0 0 var(--green); }
 .code-block .ln.del { background: var(--red-bg); box-shadow: inset 2px 0 0 var(--red); }
 .code-block .ln.hunk { color: var(--hunk); }
@@ -199,7 +230,12 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 /* working indicator (sunburst + gerund) shown while Claude is processing */
 .working { display: flex; align-items: center; gap: 9px; padding: 8px 0 8px 2px; color: var(--fg); font-weight: 600; }
 .working .sb { color: var(--accent); display: inline-flex; animation: spin 2.6s linear infinite; }
-.working .gerund { display: inline; white-space: pre; }
+/* pre-WRAP, not pre: the morph animation needs the literal spaces around the
+   cursor preserved, but the token/elapsed suffix ("· ↑ 1.2k tokens · esc to
+   interrupt") is long enough to run past a narrow panel, and plain `pre` would
+   push the transcript sideways rather than fold. pre-wrap keeps every space and
+   folds only when the line genuinely cannot fit. */
+.working .gerund { display: inline; white-space: pre-wrap; }
 /* Block-element glyph (U+258D) renders from Segoe UI / Consolas on Windows; the
    font-family fallback keeps it a solid bar and never a tofu box. */
 .working .gerund .cursor { font-family: Consolas, 'Segoe UI', monospace; color: var(--accent);
@@ -243,18 +279,32 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 .a-body h4 { font-size: 12.5px; } .a-body h5 { font-size: 12px; } .a-body h6 { font-size: 12px; color: var(--fg-dim); }
 .a-body a { color: var(--link); text-decoration: none; }
 .a-body a:hover { text-decoration: underline; }
+/* markdown.js turns ![alt](src) into a bare <img> — cap it to the column so a
+   large source image can't widen the transcript. */
+.a-body img { max-width: 100%; height: auto; }
 .a-body del { color: var(--fg-dim); }
 .a-body blockquote { margin: 6px 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--fg-dim); }
 .a-body hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
 .a-body li.task { list-style: none; margin-left: -18px; }
 .a-body li.task input { margin-right: 6px; vertical-align: -1px; }
-.a-body table { border-collapse: collapse; margin: 8px 0; font-size: 12px; display: block; overflow-x: auto; }
+/* Opted OUT of the inherited overflow-wrap:anywhere — `display:block` +
+   overflow-x already gives the table its own sideways scroller, so it is
+   contained without help, and breaking paths mid-token inside cells would
+   shred the columns for no containment gain. */
+.a-body table { border-collapse: collapse; margin: 8px 0; font-size: 12px; display: block;
+  overflow-x: auto; max-width: 100%; overflow-wrap: normal; }
 .a-body th, .a-body td { border: 1px solid var(--border); padding: 4px 9px; text-align: left; }
 .a-body th { background: var(--bg-chip); color: var(--fg); font-weight: 600; }
 .a-body td { color: var(--fg-soft); }
 .a-body pre { margin: 8px 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: var(--bg-code); }
 .a-body pre .cb-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: var(--cb-head-bg); font-size: 11px; color: var(--fg-dim); }
 .a-body pre .cb-head button { background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 11px; }
+/* Fenced code keeps `white-space: pre` and scrolls INSIDE itself — a long line
+   must never wrap here (it would corrupt the listing) and never widen the
+   transcript either. overflow-wrap:normal is stated explicitly: `pre` already
+   makes the inherited `anywhere` inert, so this is for the next reader, to say
+   the opt-out is deliberate rather than overlooked. */
 .a-body pre code { display: block; padding: 10px 12px; overflow-x: auto; white-space: pre; color: var(--fg-soft);
-  font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px; line-height: 1.5; }
+  font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px; line-height: 1.5;
+  overflow-wrap: normal; }
 

@@ -76,7 +76,7 @@ function toggleContext() {
 /* Collapse the composer bar progressively at narrow widths so nothing is ever
    pushed out of the input div (joebiden16). Strict priority order, each stage
    applied only if the bar still overflows after the previous one:
-     1. mode label ("Ask before edits", …) — hidden the moment it can't fit on
+     1. mode label ("Manual", …) — hidden the moment it can't fit on
         ONE line, so it never renders wrapped; it goes before the context label
      2. context filename — icon only
      3. send/stop button — minimized
@@ -113,7 +113,7 @@ window.addEventListener('resize', fitComposerBar);   // synchronous with the res
 new ResizeObserver(() => requestAnimationFrame(fitComposerBar))
   .observe(document.getElementById('input-wrap'));   // safety net (zoom changes, etc.)
 
-/* ---- permission mode (the "Ask before edits" dropdown) ----
+/* ---- permission mode (the "Manual" dropdown) ----
    PER-TAB, like model/effort/thinking: `permMode` mirrors the ACTIVE tab and is
    restored by applyTabSettings() on every tab switch. Switching mid-conversation
    is pushed live to that tab's process via a set_permission_mode control request,
@@ -145,6 +145,26 @@ function selectMode(el) {
   if (t && t.sessionId && window._setPermissionMode) {
     try { window._setPermissionMode(t.id, mode); } catch (e) {}
   }
+  persistTabPrefs(t);
+}
+/**
+ * Mirrors a mode change the CLI made on its OWN (the user picked "Yes, allow all
+ * edits …" on a decision card, which hands the CLI a setMode suggestion). Same
+ * state update as selectMode but WITHOUT the set_permission_mode push — the CLI
+ * is already in that mode, so pushing would be a redundant round-trip.
+ *
+ * Without this the indicator lies: the session accepts edits silently while the
+ * button still reads "Manual", and the only way back is to switch modes and
+ * switch again (which respawns the process and genuinely resets it).
+ * @param {Tab} t tab that owned the card (NOT necessarily the active one)
+ * @param {string} mode
+ */
+function adoptModeForTab(t, mode) {
+  if (!t || t.permMode === mode) return;
+  t.permMode = mode;
+  // Only repaint if this tab is on screen; a background tab picks it up from
+  // t.permMode via applyTabSettings() when the user switches to it.
+  if (t === activeTab()) { permMode = mode; applyModeUI(mode); }
   persistTabPrefs(t);
 }
 

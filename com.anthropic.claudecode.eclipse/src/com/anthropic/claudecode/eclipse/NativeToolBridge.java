@@ -28,8 +28,23 @@ public class NativeToolBridge implements NativeCore.ToolCallback {
      * @param argsJson  JSON object string of the arguments
      * @return          JSON string matching {@code McpToolResult.toJson()}
      */
+    /**
+     * Sentinel tool name Rust uses to fetch the live tool list for {@code tools/list},
+     * instead of the DLL carrying its own hardcoded copy of it. Registering a tool in
+     * {@link McpToolRegistry} is now all that is needed to advertise it — no native
+     * rebuild. Kept as a sentinel through the existing callback rather than a new
+     * interface method so the DLL and the plugin jar stay version-independent; the
+     * leading {@code $} cannot collide with a real {@link McpTool#toolName()}.
+     */
+    public static final String LIST_TOOLS_SENTINEL = "$listTools";
+
     @Override
     public String executeEclipseTool(String toolName, String argsJson) {
+        if (LIST_TOOLS_SENTINEL.equals(toolName)) {
+            return McpToolResult.success(toolRegistry.getToolDefinitions().toString())
+                    .toJson().toString();
+        }
+
         McpTool tool = toolRegistry.getTool(toolName);
         if (tool == null) {
             return McpToolResult.error("Unknown tool: " + toolName).toJson().toString();

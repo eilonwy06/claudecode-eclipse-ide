@@ -205,6 +205,31 @@ public final class NativeCore {
     public static native void chatDestroy(long handle);
 
     /**
+     * Runs the CLI's own {@code /usage} command and returns the account-global
+     * subscription limits as statusLine-schema JSON
+     * ({@code {"rate_limits":{"five_hour":{"used_percentage":44},…}}}), or an
+     * empty string when they can't be determined. Feed the result straight to
+     * {@code ClaudeStatusStore.acceptStatusLine}.
+     *
+     * <p><b>Blocking</b> — spawns a whole {@code claude} process, measured at
+     * <b>~7s</b>, so never call it on the UI thread. It costs the user's quota
+     * nothing: the CLI answers {@code /usage} locally with no API call
+     * ({@code <synthetic>} model, $0, zero tokens). It runs in an isolated temp
+     * directory whose transcripts are purged afterwards, and the session is
+     * stamped {@code sdk-cli}, so it reaches neither the plugin's session list
+     * nor the CLI's {@code /resume} picker.
+     *
+     * <p>{@code workspaceRoot} is accepted for signature symmetry with the other
+     * native calls but is deliberately unused — {@code /usage} is account-global,
+     * and running in the workspace is exactly what would pollute its sessions.
+     *
+     * <p>This is the Claude GUI's own source for the Session/Weekly segments —
+     * the CLI statusLine (the other producer, via {@code ClaudeStatusStore})
+     * only ever fires for Terminal tabs.
+     */
+    public static native String fetchUsage(String claudeCmd, String workspaceRoot);
+
+    /**
      * Renames the live conversation on this manager's persistent process via the
      * CLI's {@code rename_session} control request (writes a shared
      * {@code custom-title} event, same as VSCode). Returns false when the manager

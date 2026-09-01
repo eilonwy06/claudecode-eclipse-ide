@@ -7,7 +7,9 @@ import org.eclipse.core.runtime.Platform;
 
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.tools.AcceptDiffTool;
+import com.anthropic.claudecode.eclipse.tools.BuildTool;
 import com.anthropic.claudecode.eclipse.tools.CheckDocumentDirtyTool;
+import com.anthropic.claudecode.eclipse.tools.CleanTool;
 import com.anthropic.claudecode.eclipse.tools.CloseAllDiffTabsTool;
 import com.anthropic.claudecode.eclipse.tools.GetCurrentSelectionTool;
 import com.anthropic.claudecode.eclipse.tools.GetDiagnosticsTool;
@@ -16,7 +18,9 @@ import com.anthropic.claudecode.eclipse.tools.GetOpenEditorsTool;
 import com.anthropic.claudecode.eclipse.tools.GetWorkspaceFoldersTool;
 import com.anthropic.claudecode.eclipse.tools.OpenDiffTool;
 import com.anthropic.claudecode.eclipse.tools.OpenFileTool;
+import com.anthropic.claudecode.eclipse.tools.RefreshTool;
 import com.anthropic.claudecode.eclipse.tools.RejectDiffTool;
+import com.anthropic.claudecode.eclipse.tools.RunAsTool;
 import com.anthropic.claudecode.eclipse.tools.SaveDocumentTool;
 import com.anthropic.claudecode.eclipse.tools.jdt.FindReferencesTool;
 import com.anthropic.claudecode.eclipse.tools.jdt.GetSymbolInfoTool;
@@ -42,6 +46,15 @@ public class McpToolRegistry {
         register(new SaveDocumentTool());
         register(new GetDiagnosticsTool());
         register(new CloseAllDiffTabsTool());
+        // Unconditional: BuildTool needs only org.eclipse.core.resources and RunAsTool only
+        // org.eclipse.debug.{core,ui}, all of which are hard Require-Bundles. RunAsTool reaches
+        // the individual launchers (PDE's "Eclipse Application", JDT's "Java Application", …)
+        // through the extension registry, never an import, so a missing launcher is one absent
+        // list entry rather than a class-loading failure.
+        register(new RefreshTool());
+        register(new CleanTool());
+        register(new BuildTool());
+        register(new RunAsTool());
         register(new com.anthropic.claudecode.eclipse.tools.ApprovalPromptTool());
         register(new com.anthropic.claudecode.eclipse.tools.AskUserQuestionTool());
         registerJdtToolsIfAvailable();

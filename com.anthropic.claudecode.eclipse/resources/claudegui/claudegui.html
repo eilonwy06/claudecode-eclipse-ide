@@ -19,12 +19,29 @@
        OUTSIDE this wrapper so they stay natural-size and reachable at any zoom. -->
   <div id="zoom-root">
 
+  <!-- Root ("supertab") row — the working folder each conversation below runs in.
+       Same 35px as the tab strip. The row can be hidden; its toggle then moves to
+       the toolbar below, since a control that hides its own row would otherwise
+       take the only way back with it. -->
+  <div id="supertab-row">
+    <div id="supertabs"></div>
+    <div class="spacer"></div>
+    <div class="tools">
+      <div class="tbtn" title="New Claude root directory" onclick="newRootDirectory()">__SUNBURST__</div>
+      <div class="tbtn" id="supertab-toggle" title="Hide root directories" onclick="toggleSupertabs()">__CHEVDOWN__</div>
+    </div>
+  </div>
+
+  <!-- Standing in for the root row while it is collapsed: which folder am I in? -->
+  <div id="cwd-row"><span class="ci">__FOLDER__</span><span class="ct"></span></div>
+
   <!-- Top toolbar -->
   <div id="toolbar">
     <div id="tabs"></div>
     <div class="spacer"></div>
     <div class="tools">
-      <div class="tbtn" title="New session" onclick="newSession()">__SUNBURST__</div>
+      <!-- The root row's toggle in its collapsed home; shown only while that row is hidden. -->
+      <div class="tbtn" id="supertab-toggle-collapsed" title="Show root directories" style="display:none" onclick="toggleSupertabs()">__CHEVUP__</div>
       <!-- split / lock / more-actions hidden: not wired yet -->
       <div class="tbtn" title="Split editor" style="display:none">__SPLIT__</div>
       <div class="tbtn" title="Lock" style="display:none">__LOCK__</div>
@@ -57,6 +74,11 @@
 
   <!-- Composer -->
   <div id="composer">
+    <!-- Shown when new content streams in below while the user has scrolled up to read
+         older content — see updateJumpToLatest in chat.js. Lives here, not inside
+         #messages, so it floats above the composer's top edge rather than scrolling
+         away with the transcript it's meant to be seen over. -->
+    <div id="jump-to-latest" onclick="scrollBottom(true)" title="Jump to latest">__DOWN__</div>
     <div id="usage-warn"></div>
     <div id="input-wrap">
       <!-- Thumbnails of pasted images awaiting send (per active tab). -->
@@ -71,7 +93,7 @@
           <span class="file-chip empty" id="ctx-chip" title="Toggle file context" onclick="toggleContext()"><span id="ctx-ic">__FILEICON__</span> <span id="ctx-label">No file open</span></span>
         </div>
         <div class="cb-right">
-          <span class="modes-btn" id="modes-btn" onclick="toggleMenu('modes-menu', this)"><span id="modes-ic">__HAND__</span> <span id="modes-lbl">Ask before edits</span></span>
+          <span class="modes-btn" id="modes-btn" onclick="toggleMenu('modes-menu', this)"><span id="modes-ic">__HAND__</span> <span id="modes-lbl">Manual</span></span>
           <span id="send" class="disabled" title="Send">__SEND__</span>
         </div>
       </div>
@@ -94,10 +116,10 @@
   <!-- modes menu -->
   <div class="menu" id="modes-menu" style="min-width:280px">
     <div class="head"><span class="h">Modes</span></div>
-    <div class="item" data-mode="default" data-icon="HAND" onclick="selectMode(this)"><span class="ic">__HAND__</span><div class="txt"><span class="lbl">Ask before edits</span><span class="desc">Claude shows each edit in a diff to accept or reject</span></div><span class="check">__CHECK__</span></div>
+    <div class="item" data-mode="default" data-icon="HAND" onclick="selectMode(this)"><span class="ic">__HAND__</span><div class="txt"><span class="lbl">Manual</span><span class="desc">Claude shows each edit in a diff to accept or reject</span></div><span class="check">__CHECK__</span></div>
     <div class="item" data-mode="acceptEdits" data-icon="PENCIL" onclick="selectMode(this)"><span class="ic">__PENCIL__</span><div class="txt"><span class="lbl">Edit automatically</span><span class="desc">Claude applies edits without asking</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
-    <div class="item" data-mode="plan" data-icon="MAP" onclick="selectMode(this)"><span class="ic">__MAP__</span><div class="txt"><span class="lbl">Plan mode</span><span class="desc">Claude explores and presents a plan before editing</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
-    <div class="item" data-mode="bypassPermissions" data-icon="BOLT" onclick="selectMode(this)"><span class="ic">__BOLT__</span><div class="txt"><span class="lbl">Auto mode</span><span class="desc">Claude runs everything without asking (use with care)</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
+    <div class="item" data-mode="plan" data-icon="MAP" onclick="selectMode(this)"><span class="ic">__MAP__</span><div class="txt"><span class="lbl">Plan</span><span class="desc">Claude explores and presents a plan before editing</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
+    <div class="item" data-mode="bypassPermissions" data-icon="BOLT" onclick="selectMode(this)"><span class="ic">__BOLT__</span><div class="txt"><span class="lbl">Auto</span><span class="desc">Claude runs everything without asking (use with care)</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
     <div class="sep"></div>
     <div class="effort"><span class="lbl">__GAUGE__ Effort <span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span>
       <span class="slider eff-slider" title="Effort" onmousedown="effortDown(event)"><span class="track"></span><span class="fill eff-fill"></span><span class="knob eff-knob"></span></span></div>
@@ -129,11 +151,19 @@
   <!-- account & usage window -->
   <div id="account-overlay"><div id="account-win"></div></div>
 
+  <!-- trust window (same chrome as account & usage, with decision buttons): asked
+       before claude is first run in a folder we have no answer for. -->
+  <div id="trust-overlay"><div id="trust-win"></div></div>
+
   <!-- rewind dialog (Rewind to… / Fork and rewind) -->
   <div id="rewind-overlay"><div id="rewind-win"></div></div>
 
   <!-- image lightbox (click an image chip) -->
-  <div id="lightbox"><div class="lb-frame"><img alt=""><span class="lb-x" title="Close preview (Esc)">__X__</span></div></div>
+  <!-- No key named in the markup: openLightbox fills in whichever one Eclipse actually has
+       bound (Esc, or Ctrl+G under Emacs). Hardcoding "(Esc)" here would ship a wrong tooltip
+       to every Emacs user for the instant before the script runs, and a permanently wrong
+       one if the element is ever shown without going through openLightbox. -->
+  <div id="lightbox"><div class="lb-frame"><img alt=""><span class="lb-x" title="Close preview">__X__</span></div></div>
 
   <!-- slash command menu -->
   <div class="menu" id="slash-menu"></div>
@@ -157,6 +187,7 @@
 <script src="scripts/icons.js"></script>
 <script src="scripts/ui.js"></script>
 <script src="scripts/tabs.js"></script>
+<script src="scripts/supertabs.js"></script>
 <script src="scripts/chat.js"></script>
 <script src="scripts/stream.js"></script>
 <script src="scripts/carddock.js"></script>

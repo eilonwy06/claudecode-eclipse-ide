@@ -4,7 +4,69 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.11.exp] — 2026-08-03 *(current)*
+## [3.1.16.exp] — 2026-09-01 *(current)*
+
+### Added
+- **Conversations can run in any folder, not just the workspace root.** A row of directory tabs sits above the conversation tabs — one per folder, each with its own conversations and its own session history. Add a folder from that row or from a project's context menu; Claude asks before it runs in one for the first time ([#93](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/93)).
+- **Show In ▸ Claude Code**, next to the Terminal's, opening the selected folder as a directory tab.
+
+### Changed
+- **The navigator's two Claude entries are grouped under one "Open Claude Here" menu**, holding Claude Code and Claude Terminal.
+
+### Fixed
+- Minor UI improvements for Claude Code view.
+
+---
+
+## [3.1.15.exp] — 2026-08-30
+
+### Added
+- **Scroll Lock in the Claude Code view.** A toolbar toggle, the same one the Terminal has. With it on, reading back through a conversation no longer drags you to the bottom every time Claude writes a line, a tool finishes, or a card appears — and sending a message leaves you where you are. A **Jump to latest** button shows while you're held back; turning the lock off, or switching tabs, follows along again. It applies to every tab, is off by default, and changes nothing while off ([@jmoraleda](https://github.com/jmoraleda), PR #101).
+- **New MCP tools: `refresh`, `clean`, `build` and `runAs`.** Claude can refresh, clean and rebuild your projects or the whole workspace, and run a project the way Run As does.
+- **The permission, question and diff-review cards have configurable timeouts.** Default (30 minutes), Never, or a custom number of seconds, set independently for each ([@jmoraleda](https://github.com/jmoraleda), PR #102).
+
+### Fixed
+- **Session and weekly usage now show in the Claude Code view.** They stayed blank unless you also used the Terminal view, which was the only thing filling them in ([#99](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/99)).
+- **The "Other" box on a question card takes more than one line.** Shift+Enter inserts a newline, and Escape while typing no longer throws the answer away ([@jmoraleda](https://github.com/jmoraleda), PR #103).
+- **A card that times out now clears itself.** It used to sit on screen after Claude had already moved on ([@jmoraleda](https://github.com/jmoraleda), PR #102).
+
+---
+
+## [3.1.14.exp] — 2026-08-27
+
+### Fixed
+- **The prompt input's key bindings no longer misfire on Linux.** One press of Emacs's Ctrl+Y pasted two or three times, Ctrl+X H typed an "h" on top of selecting all, and Ctrl+V pasted the clipboard twice — GTK acting on a keystroke Eclipse had already taken. Any custom scheme shaped the same way is covered, not just Emacs. Windows and macOS were never affected ([@jmoraleda](https://github.com/jmoraleda), PR #100, [#97](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/97))
+
+---
+
+## [3.1.13.exp] — 2026-08-08
+
+### Changed
+- **Pasting with Ctrl+V in the prompt input should no longer insert the text twice on Linux.** GTK gives no way to call off the webview's own paste, so the second one is dropped — unconfirmed on GTK ([#97](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/97)).
+- **Debug mode logs the keys the prompt input sees**, and stamps each editing command with the time of the press behind it, so one press reported twice reads differently from a key repeating.
+
+### Fixed
+- **Long paths and URLs no longer push the conversation sideways.** They wrap inside the message now instead of raising a horizontal scrollbar with a white square in its corner. Code blocks, tables and diffs still scroll within themselves.
+
+---
+
+## [3.1.12.exp] — 2026-08-05
+
+### Added
+- **Approving a plan asks how you want to continue.** Leaving plan mode now has its own card: apply edits automatically, keep being asked before each one, or stay in plan mode. The conversation ends up in the mode you picked instead of the one it started in.
+
+### Changed
+- **The permission modes are named Manual, Edit automatically, Plan and Auto.**
+- **The editing commands no longer wait for the page to report in while it loads.** Possibly why the key bindings have never worked on Linux ([#97](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/97)) — unconfirmed; Debug mode logs the handshake.
+
+### Fixed
+- **The permission mode button shows the mode you are actually in.** "Yes, allow all edits this session" switched the conversation without moving the button.
+- **Rejecting a plan no longer tells Claude a file edit was skipped.**
+- **The right-click menu picks up a key binding change straight away.**
+
+---
+
+## [3.1.11.exp] — 2026-08-03
 
 ### Added
 - **The Claude Code view honours your Eclipse key bindings.** Cut, Copy, Paste, Select All and Delete in the prompt input follow whatever is set under **Window → Preferences → General → Keys** — the Emacs scheme's Alt+W / Ctrl+W / Ctrl+Y, your own customizations, multi-keystroke sequences and all. The right-click menu shows those keys too. Previously only Ctrl+X / Ctrl+C / Ctrl+V / Ctrl+A worked, and they still do on the default scheme.

@@ -112,7 +112,11 @@ function showWorking() {
   workingEl = document.createElement('div'); workingEl.className = 'turn';
   workingEl.innerHTML = '<div class="working"><span class="sb">' + ICONS.SUNBURST + '</span><span class="gerund"></span></div>';
   pane.appendChild(workingEl);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  // Through autoScroll (chat.js), not a raw write: showWorking runs again after every
+  // tool result, not just at turn start, so an ungated write here would re-pin the view
+  // mid-turn and the lock would only appear to work on answers that never call a tool.
+  // Not scrollBottom() — that reparents workingEl, which we have just appended.
+  autoScroll();
   const el = workingEl.querySelector('.gerund');
   gerundHold = GERUND_HOLD_START;
   morphGerund('', workingGerund, el, compacting ? null : () => { scheduleGerund(); });

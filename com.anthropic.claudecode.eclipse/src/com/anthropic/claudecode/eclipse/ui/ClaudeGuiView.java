@@ -12,12 +12,22 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
+import org.eclipse.core.resources.IContainer;
+import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.IAdaptable;
+import org.eclipse.jface.dialogs.MessageDialog;
+import org.eclipse.jface.viewers.ISelection;
+import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.core.runtime.FileLocator;
+import org.eclipse.jface.action.Action;
+import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.browser.Browser;
 import org.eclipse.swt.browser.BrowserFunction;
@@ -30,7 +40,10 @@ import org.eclipse.swt.dnd.Transfer;
 import org.eclipse.swt.graphics.ImageData;
 import org.eclipse.swt.graphics.ImageLoader;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.DirectoryDialog;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.ui.part.IShowInTarget;
+import org.eclipse.ui.part.ShowInContext;
 import org.eclipse.ui.part.ViewPart;
 
 import com.anthropic.claudecode.eclipse.Activator;
@@ -49,7 +62,7 @@ import com.anthropic.claudecode.eclipse.chat.ChatProcessManager;
  * uses the native {@code /stt/stream} relay. JS↔Java is bridged with
  * {@link BrowserFunction}s; Java→JS uses {@code browser.execute}.
  */
-public class ClaudeGuiView extends ViewPart {
+public class ClaudeGuiView extends ViewPart implements IShowInTarget {
 
     public static final String VIEW_ID = "com.anthropic.claudecode.eclipse.ui.ClaudeGuiView";
 
@@ -57,12 +70,24 @@ public class ClaudeGuiView extends ViewPart {
     private Composite root;   // the view's root composite — its themed background drives light/dark detection
     private long browserHwnd = 0;
     private boolean pageLoaded = false;
+    /** View-toolbar Scroll Lock toggle; see {@link #createToolBar()}. */
+    private Action scrollLockAction;
 
     // One claude process per conversation/tab, so tabs never block each other.
     private final java.util.Map<String, ChatProcessManager> managers = new java.util.concurrent.ConcurrentHashMap<>();
     // Which tab is active (for gating the shared status bar) + its last status JSON.
     private volatile String activeTabId = "";
     private final java.util.Map<String, String> statusByTab = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The ACTIVE conversation's working root ("supertab") — the folder its claude runs
+     * in. Session history, rewind and the per-session sidecars are all keyed by
+     * directory, so they must follow the conversation's own root rather than the
+     * workspace root. Pushed by {@code _activeTab}; empty means the workspace root.
+     */
+    private volatile String activeRootPath = "";
+    /** A folder to open as a root once the page is up (an "Open Claude Code Here"
+     *  that arrived while the view was still loading). */
+    private volatile String pendingRootPath = null;
 
     // Strong references — prevent GC from unregistering the BrowserFunctions.
     @SuppressWarnings("unused") private BrowserFunction sendFn;
@@ -78,8 +103,14 @@ public class ClaudeGuiView extends ViewPart {
     @SuppressWarnings("unused") private BrowserFunction currentContextFn;
     @SuppressWarnings("unused") private BrowserFunction decideFn;
     @SuppressWarnings("unused") private BrowserFunction answerQuestionFn;
+    @SuppressWarnings("unused") private BrowserFunction overlayOpenFn;
     @SuppressWarnings("unused") private BrowserFunction modelConfigFn;
     @SuppressWarnings("unused") private BrowserFunction accountInfoFn;
+    @SuppressWarnings("unused") private BrowserFunction defaultRootFn;
+    @SuppressWarnings("unused") private BrowserFunction pickDirectoryFn;
+    @SuppressWarnings("unused") private BrowserFunction folderInfoFn;
+    @SuppressWarnings("unused") private BrowserFunction trustFolderFn;
+    @SuppressWarnings("unused") private BrowserFunction confirmCloseViewFn;
     @SuppressWarnings("unused") private BrowserFunction saveSessionPrefsFn;
     @SuppressWarnings("unused") private BrowserFunction loadSessionPrefsFn;
     @SuppressWarnings("unused") private BrowserFunction setPermissionModeFn;
@@ -102,6 +133,7 @@ public class ClaudeGuiView extends ViewPart {
     private final java.util.concurrent.ConcurrentLinkedQueue<Map<String, String>> fetchedImages =
             new java.util.concurrent.ConcurrentLinkedQueue<>();
     @SuppressWarnings("unused") private BrowserFunction editOpsReadyFn;
+    @SuppressWarnings("unused") private BrowserFunction debugLogFn;
     /** Set by the page once the __cc* editing entry points exist — see registerEditHandlers. */
     private volatile boolean editOpsReady = false;
 
@@ -109,17 +141,36 @@ public class ClaudeGuiView extends ViewPart {
     private final java.util.List<org.eclipse.ui.handlers.IHandlerActivation> editHandlers =
             new java.util.ArrayList<>();
 
+    // The (time, keyCode, stateMask) of the last SWT.KeyDown an edit handler acted on — see
+    // activateEditHandler. On GTK the same physical keystroke can reach Eclipse's key-binding
+    // dispatcher more than once (issue #97: Alt-combos deliver the character KeyDown three
+    // times, same timestamp each time); this collapses those repeats into one execution.
+    private String lastHandledKeyEvent = null;
+
     // Status bar (the shared SWT ClaudeStatusBar widget, reused from the CLI view).
     private ClaudeStatusBar statusBar;
     // Live-applies PREF_STATUSLINE_* changes (enable/toggles/refresh) without a restart.
     private org.eclipse.jface.util.IPropertyChangeListener statusPrefListener;
     // Re-pushes light/dark to the webview when the Eclipse workbench theme changes.
     private org.eclipse.jface.util.IPropertyChangeListener themeChangeListener;
+    // Re-pushes the right-click menu's key hints when the user's bindings change.
+    private org.eclipse.jface.bindings.IBindingManagerListener bindingChangeListener;
     @SuppressWarnings("unused") private BrowserFunction statusSelectionFn;
     private volatile String availableModelsJson;   // curated model list from /v1/models, pushed to the webview
     private volatile String cliVersionJson;        // {installed,latest,updateAvailable} for the update banner
     private volatile String cliModelsJson;         // newest model per family the INSTALLED binary can run
     private volatile String lastRustStatusJson;   // latest onStatus payload (context %, cost, tokens)
+
+    // --- account-global usage probe (see fetchUsageAsync) ---------------------
+    /** Floor between {@code /usage} probes — the windows are 5-hour/7-day. */
+    private static final long USAGE_FETCH_MIN_INTERVAL_MS = 60_000L;
+    /** One probe in flight at a time. */
+    private final java.util.concurrent.atomic.AtomicBoolean usageFetchInFlight =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    /** Epoch ms of the last completed probe; throttles {@link #fetchUsageAsync()}. */
+    private volatile long lastUsageFetchMs;
+    /** Set when the native lib has no {@code fetchUsage} export — stop probing. */
+    private volatile boolean usageProbeUnavailable;
     private volatile String displayModel = "";     // shown model — live GUI selection OR last actual (whichever changed last)
     private volatile String lastEffort = "";       // current GUI selection
     private volatile boolean lastThinking = true;
@@ -166,9 +217,14 @@ public class ClaudeGuiView extends ViewPart {
         statusBar.setLayoutData(new org.eclipse.swt.layout.GridData(SWT.FILL, SWT.CENTER, true, false));
         applyStatusBarEnabled();
         startStatusTimer();
+        // Seed the Session/Weekly percentages now, so a user who only ever opens
+        // this view sees them without having to send a turn first (issue #99).
+        fetchUsageAsync();
         registerStatusPrefListener();
         registerThemeListener();
+        registerBindingListener();
         registerEditHandlers();
+        createToolBar();
 
         active = this;
         // Persistent protocol, ONE manager per tab (created on first send) so
@@ -199,11 +255,16 @@ public class ClaudeGuiView extends ViewPart {
                 // Pasted images: JSON array of {media_type,data} (base64), built by the
                 // webview from clipboard-image paste. "" when none.
                 String imagesJson = (a.length > 8 && a[8] instanceof String ij) ? ij : "";
+                // This conversation's working root — its claude's cwd. Empty (an older
+                // page, or the workspace root itself) leaves the manager on the default.
+                String root     = (a.length > 9 && a[9] instanceof String rp) ? rp : "";
                 // Capture effort/thinking for the status bar (the stream reports
                 // model + context + cost, but not these launch-time choices).
                 this.lastEffort = effort;
                 this.lastThinking = !"0".equals(thinking);
-                managerFor(tabId).sendMessage(withCtx ? buildContextPreamble() + s : s, resumeId, permMode, effort, model, thinking, imagesJson);
+                ChatProcessManager mgr = managerFor(tabId);
+                mgr.setRoot(root);
+                mgr.sendMessage(withCtx ? buildContextPreamble() + s : s, resumeId, permMode, effort, model, thinking, imagesJson);
             }
             return null;
         });
@@ -219,6 +280,9 @@ public class ClaudeGuiView extends ViewPart {
         // A tab became active → point the shared status bar at its last status.
         activeTabFn    = new SimpleFunction(browser, "_activeTab", a -> {
             if (a.length > 0 && a[0] instanceof String ti) { activeTabId = ti; lastRustStatusJson = statusByTab.get(ti); refreshStatusBar(); }
+            // Second arg is that tab's working root, so everything below keyed by
+            // directory (history, rewind, the title sidecar) follows the conversation.
+            if (a.length > 1 && a[1] instanceof String rp) activeRootPath = rp == null ? "" : rp;
             return null;
         });
         newSessionFn   = new SimpleFunction(browser, "_newSession", a -> null);   // new tab = new manager (JS creates the tab)
@@ -228,8 +292,11 @@ public class ClaudeGuiView extends ViewPart {
         // button click from freezing the UI.
         listSessionsAsyncFn = new SimpleFunction(browser, "_listSessionsAsync", a -> {
             final Browser b = browser;
+            // Captured HERE, on the UI thread: a tab switch during the scan would
+            // otherwise move activeRootPath and hand back another folder's sessions.
+            final String root = activeRoot();
             new Thread(() -> {
-                String json = safeSessionList();
+                String json = safeSessionList(root);
                 Display.getDefault().asyncExec(() -> {
                     if (b != null && !b.isDisposed() && pageLoaded) {
                         b.execute("window.onHistoryLoaded && window.onHistoryLoaded('" + esc(json) + "')");
@@ -247,6 +314,63 @@ public class ClaudeGuiView extends ViewPart {
         renameSessionFn = new SimpleFunction(browser, "_renameSession", a -> {
             if (a.length > 1 && a[0] instanceof String id && a[1] instanceof String newTitle)
                 renameSessionFile(id, newTitle);
+            return null;
+        });
+        // ── Working roots ("supertabs") ────────────────────────────────────────
+        defaultRootFn  = new SimpleFunction(browser, "_defaultRoot", a -> workspaceRoot());
+        // The folder picker is ASYNC on purpose: opening a modal SWT dialog while
+        // WebView2 is still inside the JS call that triggered it deadlocks on Windows.
+        // Java answers by calling window.onDirectoryPicked once the dialog closes.
+        pickDirectoryFn = new SimpleFunction(browser, "_pickDirectory", a -> {
+            Display.getDefault().asyncExec(() -> {
+                if (browser == null || browser.isDisposed()) return;
+                DirectoryDialog dlg = new DirectoryDialog(browser.getShell());
+                dlg.setText("New Claude root directory");
+                dlg.setMessage("Select the folder Claude Code should run in.");
+                dlg.setFilterPath(workspaceRoot());
+                String picked = dlg.open();
+                final String path = picked == null ? "" : picked;
+                // Pushed from a SECOND asyncExec so the browser is never re-entered
+                // from inside the modal's own dispatch.
+                Display.getDefault().asyncExec(() ->
+                    executeJS("window.onDirectoryPicked && window.onDirectoryPicked('" + esc(path) + "')"));
+            });
+            return null;
+        });
+        folderInfoFn   = new SimpleFunction(browser, "_folderInfo", a ->
+            folderInfoJson(a.length > 0 && a[0] instanceof String p ? p : ""));
+        trustFolderFn  = new SimpleFunction(browser, "_trustFolder", a -> {
+            if (a.length > 0 && a[0] instanceof String p) TrustStore.trust(p);
+            return null;
+        });
+        // Closing the last working root closes the view — there is no folder left to
+        // run in. The question is asked HERE rather than in the page: this panel is
+        // routinely docked narrower than an in-page modal can lay itself out in, and a
+        // real dialog also gets the platform's own button order and Esc handling.
+        //
+        // asyncExec is not optional. Both the modal and the hideView that follows would
+        // otherwise run inside a call this Browser is still executing — the first
+        // deadlocks WebView2, the second disposes the widget out from under it.
+        confirmCloseViewFn = new SimpleFunction(browser, "_confirmCloseView", a -> {
+            Display.getDefault().asyncExec(() -> {
+                try {
+                    if (browser == null || browser.isDisposed()) return;
+                    // Constructed rather than MessageDialog.open(...): the varargs
+                    // overload that takes custom button labels returns the button INDEX,
+                    // not a boolean. Index 0 is the first label; dismissing the dialog
+                    // returns -1, which reads as cancel like every other non-zero answer.
+                    MessageDialog dlg = new MessageDialog(browser.getShell(),
+                            "Close the last directory?", null,
+                            "You are about to close the last directory tab, this action will "
+                                    + "close the Claude Code view. Do you wish to proceed?",
+                            MessageDialog.CONFIRM, new String[] { "Close the view", "Cancel" }, 1);
+                    if (dlg.open() != 0) return;
+                    org.eclipse.ui.IWorkbenchPartSite site = getSite();
+                    if (site != null && site.getPage() != null) site.getPage().hideView(ClaudeGuiView.this);
+                } catch (Exception e) {
+                    Activator.logError("Failed to close the Claude Code view", e);
+                }
+            });
             return null;
         });
         currentContextFn = new SimpleFunction(browser, "_currentContext", a -> currentContextJson());
@@ -302,21 +426,21 @@ public class ClaudeGuiView extends ViewPart {
         // preview the file restore, then restore + fork into a new session.
         rewindListFn = new SimpleFunction(browser, "_rewindList", a ->
             (a.length > 0 && a[0] instanceof String sid)
-                ? com.anthropic.claudecode.eclipse.chat.RewindService.list(workspaceRoot(), sid) : "[]");
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.list(activeRoot(), sid) : "[]");
         rewindPreviewFn = new SimpleFunction(browser, "_rewindPreview", a ->
             (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
-                ? com.anthropic.claudecode.eclipse.chat.RewindService.preview(workspaceRoot(), sid, mid) : "{}");
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.preview(activeRoot(), sid, mid) : "{}");
         rewindApplyFn = new SimpleFunction(browser, "_rewindApply", a ->
             (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
-                ? com.anthropic.claudecode.eclipse.chat.RewindService.apply(workspaceRoot(), sid, mid) : "{}");
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.apply(activeRoot(), sid, mid) : "{}");
         // The per-message menu (joebiden8) offers the two halves separately as well:
         // fork without touching the files, or restore the files in place.
         rewindForkOnlyFn = new SimpleFunction(browser, "_rewindForkOnly", a ->
             (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
-                ? com.anthropic.claudecode.eclipse.chat.RewindService.forkOnly(workspaceRoot(), sid, mid) : "{}");
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.forkOnly(activeRoot(), sid, mid) : "{}");
         rewindCodeOnlyFn = new SimpleFunction(browser, "_rewindCodeOnly", a ->
             (a.length > 1 && a[0] instanceof String sid && a[1] instanceof String mid)
-                ? com.anthropic.claudecode.eclipse.chat.RewindService.restoreOnly(workspaceRoot(), sid, mid) : "{}");
+                ? com.anthropic.claudecode.eclipse.chat.RewindService.restoreOnly(activeRoot(), sid, mid) : "{}");
         // Message ids for a session, in render order — lets a bubble sent THIS run
         // (which has no id until the CLI has written it) find the line it owns.
         messageIdsFn = new SimpleFunction(browser, "_messageIds", a ->
@@ -371,6 +495,13 @@ public class ClaudeGuiView extends ViewPart {
             }
             return null;
         });
+        // Page-local overlays (advisor card, rewind picker, lightbox) announcing themselves,
+        // so the dismiss-key context can be activated for them too — Java raises none of them
+        // and would otherwise never know they are up. See overlaySetOpen.
+        overlayOpenFn = new SimpleFunction(browser, "_overlayOpen", a -> {
+            if (a.length >= 1 && a[0] instanceof Boolean open) overlaySetOpen(open);
+            return null;
+        });
 
         // A link in a response must not replace the conversation: this webview has no
         // back button, so navigating away loses the chat until the view is closed and
@@ -401,6 +532,14 @@ public class ClaudeGuiView extends ViewPart {
         // rather than making copy/paste do nothing at all.
         editOpsReadyFn = new SimpleFunction(browser, "_editOpsReady", a -> {
             editOpsReady = true;
+            ClaudeCodeView.debug("[EDIT] _editOpsReady() from page");
+            return null;
+        });
+        // What the page makes of a keystroke, logged next to the [EDIT] lines so the two
+        // can be read in order. The page only calls this while Debug mode is on — see
+        // pushDebugMode.
+        debugLogFn = new SimpleFunction(browser, "_debugLog", a -> {
+            if (a.length > 0 && a[0] instanceof String s) ClaudeCodeView.debug(s);
             return null;
         });
 
@@ -426,15 +565,23 @@ public class ClaudeGuiView extends ViewPart {
             disableDevTools();
             disableZoom();
             pushTheme();             // apply the current Eclipse light/dark theme
+            pushCancelHint(this);    // …and the current dismiss key, before any card exists
+            hookBindingChanges();    // keep it live if the user switches scheme later
             pushAvailableModels();   // in case the model list arrived before the page loaded
             pushCliVersion();        // ditto for the CLI update banner
             pushCliModels();         // ditto for the installed binary's model support
             pushEditKeyHints();      // label the right-click menu with the user's real keys
+            pushDebugMode();         // let the page report its keys while Debug mode is on
+            // An "Open Claude Code Here" that arrived while the view was still loading.
+            String queuedRoot = pendingRootPath;
+            if (queuedRoot != null) { pendingRootPath = null; openRootDirectory(queuedRoot); }
+            pushScrollLock();        // the toolbar toggle outlives the page — re-apply it
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
                 // Re-push the theme too: the root composite's CSS-themed background may not
                 // be resolved at the instant `completed` fires, so settle it a few times.
                 Display.getCurrent().timerExec(ms, this::pushTheme);
+                Display.getCurrent().timerExec(ms, this::verifyEditOps);
             }
         }));
 
@@ -489,6 +636,45 @@ public class ClaudeGuiView extends ViewPart {
     private void pushCliModels() {
         if (cliModelsJson == null || browser == null || browser.isDisposed() || !pageLoaded) return;
         browser.execute("window.onCliModels && window.onCliModels('" + esc(cliModelsJson) + "')");
+    }
+
+    /**
+     * Builds the view toolbar. Scroll Lock is deliberately the same {@code AS_CHECK_BOX}
+     * action the Claude Terminal carries (see {@code ClaudeCliView#createToolBar}), down
+     * to the shared {@link com.anthropic.claudecode.eclipse.Constants#IMG_SCROLL_LOCK}
+     * icon.
+     *
+     * <p>Where the Terminal's freezes the viewport outright, this one <em>arms</em> the
+     * webview's follow-tail behavior (see {@code scrollLocked} in {@code chat.js}):
+     * checked, the transcript scrolls only while the user is already at the bottom and
+     * holds still the moment they scroll up to read; unchecked, it follows every render
+     * unconditionally, exactly as it did before the toggle existed.
+     *
+     * <p>View-wide rather than per-tab: the webview keeps a single scroll container
+     * shared by every tab's pane, so one toggle governs every conversation in the view.
+     */
+    private void createToolBar() {
+        IToolBarManager toolBar = getViewSite().getActionBars().getToolBarManager();
+        scrollLockAction = new Action("Scroll Lock", Action.AS_CHECK_BOX) {
+            @Override
+            public void run() { pushScrollLock(); }
+        };
+        scrollLockAction.setToolTipText("Scroll Lock");
+        scrollLockAction.setImageDescriptor(Activator.getImageDescriptor(
+                com.anthropic.claudecode.eclipse.Constants.IMG_SCROLL_LOCK));
+        toolBar.add(scrollLockAction);
+    }
+
+    /**
+     * Pushes the toolbar's Scroll Lock state into the webview. Called on every toggle
+     * AND on every page load: the checkbox lives in Java and survives a reload, the
+     * page's own {@code scrollLocked} does not, so without the reload re-push the
+     * toolbar would read "locked" while the transcript happily scrolled.
+     */
+    private void pushScrollLock() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        boolean locked = scrollLockAction != null && scrollLockAction.isChecked();
+        browser.execute("window.onScrollLock && window.onScrollLock(" + locked + ")");
     }
 
     /** Resolves installed-vs-latest CLI versions and pushes the result to the webview. */
@@ -782,6 +968,24 @@ public class ClaudeGuiView extends ViewPart {
         org.eclipse.jface.resource.JFaceResources.getColorRegistry().addListener(themeChangeListener);
     }
 
+    /**
+     * Live key-hint refresh, for the same reason as the theme listener above: the menu has
+     * to name the keys the user has NOW. {@code setFocus()} re-pushes them, but it only runs
+     * on part activation, and Preferences is a dialog rather than a part — switching scheme
+     * leaves this view active throughout, so nothing re-pushed until the user happened to
+     * activate another part and come back. The binding manager tells us directly instead.
+     */
+    private void registerBindingListener() {
+        org.eclipse.ui.keys.IBindingService bs =
+                getSite().getService(org.eclipse.ui.keys.IBindingService.class);
+        if (bs == null) return;
+        bindingChangeListener = event -> {
+            if (!event.isActiveSchemeChanged() && !event.isActiveBindingsChanged()) return;
+            Display.getDefault().asyncExec(this::pushEditKeyHints);
+        };
+        bs.addBindingManagerListener(bindingChangeListener);
+    }
+
     // --- editing commands (copy/cut/paste/select-all) -------------------------
 
     /**
@@ -792,14 +996,29 @@ public class ClaudeGuiView extends ViewPart {
      * own dispatcher does the matching, including multi-stroke chords and per-platform
      * modifiers.
      *
-     * <p>This works because SWT forwards key presses made inside the {@link Browser} into
-     * the SWT event stream, where Eclipse's key-binding dispatcher (a {@code Display}
-     * filter) sees them — on Windows via WebView2's {@code AcceleratorKeyPressed}, on
-     * Linux/GTK via the WebKit DOM key proc. The dispatcher consumes a keystroke only when
-     * it finds a handler that reports itself handled; consuming clears {@code event.doit},
-     * which SWT reports back to the browser as "handled" so the page never sees the key.
-     * With no handler the command isn't consumed and the key falls through to the webview,
-     * which is exactly why these keys did nothing in here before.
+     * <p>This works only where SWT forwards key presses made inside the {@link Browser} into
+     * the SWT event stream, where Eclipse's key-binding dispatcher (a {@code Display} filter)
+     * sees them. The dispatcher consumes a keystroke only when it finds a handler that
+     * reports itself handled; consuming clears {@code event.doit}, which SWT reports back to
+     * the browser as "handled" so the page never sees the key. With no handler the command
+     * isn't consumed and the key falls through to the webview, which is exactly why these
+     * keys did nothing in here before.
+     *
+     * <p>That forwarding is per-platform, and only Windows is confirmed:
+     * <ul>
+     * <li><b>Windows</b> — verified. {@code Edge.handleAcceleratorKeyPressed} fires for
+     *     anything held with Ctrl or Alt and calls {@code sendKeyEvent}.</li>
+     * <li><b>Linux/GTK</b> — reported not working (issue #97). Note SWT's WebKit hooks
+     *     {@code key_press_event} only under {@code if (!GTK.GTK4)}, with no GTK4
+     *     replacement, so on GTK4 the webview emits no SWT key events at all; on GTK3 the
+     *     GDK event is re-dispatched to {@code browser.handle} and should arrive. Which of
+     *     the two applies is still unconfirmed.</li>
+     * <li><b>macOS</b> — untested.</li>
+     * </ul>
+     * Plain DEL is Windows-only by construction: JFace's bug-54654 branch exempts a
+     * {@code Browser} when {@code event.character == SWT.DEL}, and only the WebView2 path
+     * leaves {@code character} unset, so elsewhere the exemption applies and DEL keeps the
+     * webview's own behaviour.
      *
      * <p>Activation is on the view's <em>site</em>, so the handlers exist only while this
      * view is the active part and every other part keeps its own copy/paste. Text moves
@@ -831,7 +1050,51 @@ public class ClaudeGuiView extends ViewPart {
                 return browser != null && !browser.isDisposed() && pageLoaded && editOpsReady;
             }
             @Override public Object execute(org.eclipse.core.commands.ExecutionEvent event) {
-                if (isHandled()) op.run();
+                // The keystroke's own timestamp, straight off the SWT event the dispatcher
+                // matched. Two runs of one command carrying the SAME timestamp are one
+                // press reported twice; auto-repeat carries a different one each time.
+                Object trigger = event.getTrigger();
+                org.eclipse.swt.widgets.Event swtEvent =
+                        trigger instanceof org.eclipse.swt.widgets.Event e ? e : null;
+                String when = swtEvent != null ? Integer.toString(swtEvent.time) : "n/a";
+                // A right-click menu invocation carries no SWT Event trigger at all, so it
+                // always runs. A key-binding invocation is deduped against the last one this
+                // view acted on: same keyCode/stateMask/time is the SAME physical keystroke
+                // delivered again, not a fresh press (see lastHandledKeyEvent, issue #97 —
+                // GTK can hand Eclipse's dispatcher one Alt-combo keystroke three times).
+                // Checked before logging so the log itself says which of several same-
+                // timestamp dispatches actually ran, instead of showing "execute" three
+                // times over with nothing to tell them apart.
+                String key = swtEvent != null
+                        ? swtEvent.keyCode + "/" + swtEvent.stateMask + "/" + swtEvent.time : null;
+                boolean deduped = isHandled() && key != null && key.equals(lastHandledKeyEvent);
+                ClaudeCodeView.debug("[EDIT] execute " + commandId + " (handled=" + isHandled()
+                        + ", pageLoaded=" + pageLoaded + ", editOpsReady=" + editOpsReady
+                        + ", time=" + when + (deduped ? ", deduped" : "") + ")");
+                if (!isHandled() || deduped) return null;
+                if (swtEvent != null) {
+                    lastHandledKeyEvent = key;
+                    // On GTK only, consuming this keystroke (doit=false, set by the
+                    // dispatcher once isHandled() claimed it) doesn't stop WebKit from also
+                    // inserting it as text -- confirmed for the plain, unmodified key that
+                    // completes an Emacs chord (Ctrl+X H selects all AND types "h", issue
+                    // #97). Windows/macOS honor the consume (see registerEditHandlers'
+                    // per-platform notes above), so arming there could only ever eat a
+                    // later, unrelated keystroke that happens to match -- gate on GTK.
+                    // Guard only a trigger that could actually produce that stray insert:
+                    // no Ctrl/Alt/Command, and a printable character (not e.g. plain DEL,
+                    // which is 0x7F and inserts nothing -- arming for it would leave the
+                    // guard armed for the NEXT keystroke instead, silently eating the
+                    // following typed letter). The armed value is the character itself, so
+                    // the page only drops an insert that actually matches this keystroke.
+                    char ch = swtEvent.character;
+                    if ("gtk".equals(SWT.getPlatform())
+                            && (swtEvent.stateMask & (SWT.CTRL | SWT.ALT | SWT.COMMAND)) == 0
+                            && ch >= 0x20 && ch != 0x7F) {
+                        executeJS("window.__ccArmKeyGuard && __ccArmKeyGuard(" + (int) ch + ")");
+                    }
+                }
+                op.run();
                 return null;
             }
         }));
@@ -1021,6 +1284,16 @@ public class ClaudeGuiView extends ViewPart {
      * so the old hints named a keystroke that does something else. Re-pushed on focus,
      * so switching scheme takes effect without a restart.
      */
+    /**
+     * Tells the page whether Debug mode is on, which is the only thing that makes it report
+     * the keys it sees. Re-pushed on activation, so ticking the box in Preferences takes
+     * effect as soon as the user clicks back into the view rather than on the next reopen.
+     */
+    private void pushDebugMode() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        browser.execute("window.__ccDebug = " + DebugModeUi.isDebugEnabled() + ";");
+    }
+
     private void pushEditKeyHints() {
         if (browser == null || browser.isDisposed() || !pageLoaded) return;
         org.eclipse.ui.keys.IBindingService bs =
@@ -1198,12 +1471,75 @@ public class ClaudeGuiView extends ViewPart {
         final String resolvedId = actualId;
         final boolean isActive = tabId.equals(activeTabId);
         if (isActive) { lastRustStatusJson = json; if (!resolvedId.isEmpty()) displayModel = prettyModel(resolvedId); }
+        // A turn just finished, so the subscription windows have actually moved —
+        // this is the one moment worth paying for a refresh (see fetchUsageAsync).
+        fetchUsageAsync();
         Display.getDefault().asyncExec(() -> {
             if (isActive) refreshStatusBar();
             if (!resolvedId.isEmpty() && browser != null && !browser.isDisposed() && pageLoaded) {
                 browser.execute("window.onResolvedModel && window.onResolvedModel('" + esc(tabId) + "','" + esc(resolvedId) + "')");
             }
         });
+    }
+
+    /**
+     * Refreshes the account-global Session/Weekly percentages by asking the CLI's
+     * own {@code /usage} command, then feeds the result into the shared
+     * {@link ClaudeStatusStore} so {@link #buildStatus()} picks it up on the next
+     * render — the same store the Terminal's statusLine writes to.
+     *
+     * <p>This exists because the CLI statusLine, the store's only other producer,
+     * <b>never fires for this view</b>: it is injected by {@code ClaudeCliView}
+     * and print mode ({@code -p}) does not run a status line at all. Without this,
+     * a user who only ever opens Claude Code sees those two segments stay empty
+     * forever (issue #99).
+     *
+     * <p><b>Threading and cost.</b> The probe spawns a whole {@code claude}
+     * process, measured at <b>~7s</b> wall time, so it runs on a plain daemon
+     * thread and never the UI thread; only the repaint hops back via
+     * {@code asyncExec}. It costs the user's quota nothing (the CLI answers
+     * {@code /usage} locally, with no API call), but 7s of process is not free,
+     * so it is throttled to at most once a minute and to one probe in flight —
+     * the percentages are of 5-hour / 7-day windows and cannot move meaningfully
+     * faster than that. It runs in an isolated temp directory whose transcripts
+     * are purged afterwards, so it neither pollutes the session list nor loads
+     * the workspace's {@code CLAUDE.md}/hooks.
+     */
+    private void fetchUsageAsync() {
+        if (usageProbeUnavailable) return;
+        // Nothing renders these numbers while the bar is switched off — don't pay
+        // for a process spawn (refreshStatusBar reads the same preference).
+        try {
+            if (!Activator.getDefault().getPreferenceStore()
+                    .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_STATUSLINE_ENABLED)) return;
+        } catch (Throwable ignored) {}
+
+        long now = System.currentTimeMillis();
+        if (now - lastUsageFetchMs < USAGE_FETCH_MIN_INTERVAL_MS) return;
+        if (!usageFetchInFlight.compareAndSet(false, true)) return;
+        Thread t = new Thread(() -> {
+            try {
+                String cmd = Activator.getDefault().getPreferenceStore()
+                        .getString(com.anthropic.claudecode.eclipse.Constants.PREF_CLAUDE_CMD);
+                if (cmd == null || cmd.isBlank()) cmd = "claude";
+                String json = NativeCore.fetchUsage(cmd, workspaceRoot());
+                if (json != null && !json.isEmpty()) {
+                    ClaudeStatusStore.acceptStatusLine(json);
+                    Display.getDefault().asyncExec(this::refreshStatusBar);
+                }
+            } catch (UnsatisfiedLinkError e) {
+                // Native lib predates fetchUsage (a platform still pending its
+                // rebuild) — degrade to "no percentages", exactly as the status
+                // callback registration does in HttpSseServer.
+                usageProbeUnavailable = true;
+            } catch (Throwable ignored) {
+            } finally {
+                lastUsageFetchMs = System.currentTimeMillis();
+                usageFetchInFlight.set(false);
+            }
+        }, "claude-usage-probe");
+        t.setDaemon(true);
+        t.start();
     }
 
     private void loadPage() {
@@ -1269,24 +1605,133 @@ public class ClaudeGuiView extends ViewPart {
         return ResourcesPlugin.getWorkspace().getRoot().getLocation().toOSString();
     }
 
-    // History is served by the bundled PHP (scripts/history.php) so it can be
-    // iterated without a native rebuild; the Rust core stays as a fallback.
-    private String safeSessionList() {
-        String json = "[]";
-        try { String r = PhpHistory.run("list", workspaceRoot(), ""); if (r != null && !r.isBlank()) json = r; }
-        catch (Throwable ignored) {}
-        if ("[]".equals(json)) {
-            try { json = NativeCore.sessionList(workspaceRoot()); } catch (Throwable t) {}
-        }
-        return mergeCustomTitles(json);
+    /**
+     * The directory the ACTIVE conversation runs in — its working root ("supertab"),
+     * falling back to the workspace root.
+     *
+     * <p>Everything the CLI keys by directory has to use this rather than
+     * {@link #workspaceRoot()}: sessions live in {@code ~/.claude/projects/<hash of
+     * root>/}, so listing, loading, deleting, renaming or rewinding against the
+     * workspace root while the user is in a module-rooted tab would read one folder's
+     * history and resume it in another.
+     */
+    private String activeRoot() {
+        String r = activeRootPath;
+        return (r == null || r.isBlank()) ? workspaceRoot() : r;
     }
 
-    private String mergeCustomTitles(String sessionsJson) {
+    /**
+     * What the trust window needs to describe a folder before Claude is first run in
+     * it: {@code {path,name,exists,trusted,hasClaudeMd,inWorkspace}}. {@code path} is
+     * echoed back canonicalised, so the root the page stores and the cwd we later hand
+     * the CLI are the same string.
+     */
+    private String folderInfoJson(String raw) {
+        Map<String, Object> out = new HashMap<>();
+        String path = raw == null ? "" : raw.trim();
+        out.put("path", path);
+        out.put("name", path);
+        out.put("exists", false);
+        out.put("trusted", false);
+        out.put("hasClaudeMd", false);
+        out.put("inWorkspace", false);
+        if (path.isEmpty()) return new Gson().toJson(out);
+        try {
+            Path dir = Paths.get(path).toAbsolutePath().normalize();
+            String canonical = dir.toString();
+            out.put("path", canonical);
+            out.put("name", dir.getFileName() == null ? canonical : dir.getFileName().toString());
+            out.put("exists", Files.isDirectory(dir));
+            out.put("trusted", TrustStore.isTrusted(canonical));
+            out.put("hasClaudeMd", hasClaudeMd(dir));
+            String ws = TrustStore.normalize(workspaceRoot());
+            String me = TrustStore.normalize(canonical);
+            out.put("inWorkspace", me.equals(ws) || me.startsWith(ws + "/"));
+        } catch (Exception ignored) {
+            // A malformed path stays "doesn't exist, not trusted" — the window then
+            // asks, which is the safe direction to fail in.
+        }
+        return new Gson().toJson(out);
+    }
+
+    /** Whether a CLAUDE.md is in effect for this folder — here or anywhere above it,
+     *  which is how the CLI resolves its config chain. */
+    private static boolean hasClaudeMd(Path dir) {
+        for (Path p = dir; p != null; p = p.getParent()) {
+            try { if (Files.isRegularFile(p.resolve("CLAUDE.md"))) return true; }
+            catch (Exception ignored) {}
+        }
+        return false;
+    }
+
+    /**
+     * Opens {@code path} as a working root in the GUI — the "Open Claude Code Here"
+     * entry point. Selects the root if it already exists, otherwise the page creates
+     * it (asking for trust first when the folder is new to us) along with a
+     * conversation under it. Queued when the webview is still loading.
+     */
+    public void openRootDirectory(String path) {
+        if (path == null || path.isBlank()) return;
+        if (!pageLoaded) { pendingRootPath = path; return; }
+        executeJS("window.openRootDirectory && window.openRootDirectory('" + esc(path) + "')");
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public <T> T getAdapter(Class<T> adapter) {
+        if (adapter == IShowInTarget.class) return (T) this;
+        return super.getAdapter(adapter);
+    }
+
+    /**
+     * Show In ▸ Claude Code — same outcome as "Open Claude Here ▸ Claude Code": the
+     * selected folder (a file's parent) becomes a working root, with a conversation in
+     * it. Show In opens this view if it was closed, so the page may still be loading;
+     * {@link #openRootDirectory} queues the folder for the load to flush.
+     */
+    @Override
+    public boolean show(ShowInContext context) {
+        if (context == null) return false;
+        ISelection selection = context.getSelection();
+        if (!(selection instanceof IStructuredSelection structured)) return false;
+        Object element = structured.getFirstElement();
+        IResource resource = null;
+        if (element instanceof IResource r) {
+            resource = r;
+        } else if (element instanceof IAdaptable adaptable) {
+            resource = adaptable.getAdapter(IResource.class);
+        }
+        IResource target = (resource instanceof IFile) ? resource.getParent()
+                         : (resource instanceof IContainer) ? resource : null;
+        if (target == null || target.getLocation() == null) return false;
+        openRootDirectory(target.getLocation().toOSString());
+        return true;
+    }
+
+    // History is served by the bundled PHP (scripts/history.php) so it can be
+    // iterated without a native rebuild; the Rust core stays as a fallback.
+    private String safeSessionList() { return safeSessionList(activeRoot()); }
+
+    /** @param root the working root to list — captured by the caller, since the
+     *  async path scans off the UI thread while the user may switch tabs. */
+    private String safeSessionList(String root) {
+        String json = "[]";
+        try { String r = PhpHistory.run("list", root, ""); if (r != null && !r.isBlank()) json = r; }
+        catch (Throwable ignored) {}
+        if ("[]".equals(json)) {
+            try { json = NativeCore.sessionList(root); } catch (Throwable t) {}
+        }
+        return mergeCustomTitles(json, root);
+    }
+
+    /** @param root the working root whose title sidecar to merge — passed in for the
+     *  same reason as {@link #safeSessionList(String)}: the scan is off the UI thread. */
+    private String mergeCustomTitles(String sessionsJson, String root) {
         try {
             String home = Activator.isWindows() ? System.getenv("USERPROFILE") : System.getenv("HOME");
             if (home == null || home.isEmpty()) home = System.getProperty("user.home");
             if (home == null) return sessionsJson;
-            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(workspaceRoot()), "session-titles.json");
+            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(root), "session-titles.json");
             if (!Files.exists(titlesPath)) return sessionsJson;
             Map<String, String> titles = new Gson().fromJson(Files.readString(titlesPath), new TypeToken<Map<String, String>>(){}.getType());
             if (titles == null || titles.isEmpty()) return sessionsJson;
@@ -1301,29 +1746,29 @@ public class ClaudeGuiView extends ViewPart {
     }
 
     private String safeSessionLoad(String id) {
-        try { String r = PhpHistory.run("load", workspaceRoot(), id); if (r != null && !r.isBlank()) return r; }
+        try { String r = PhpHistory.run("load", activeRoot(), id); if (r != null && !r.isBlank()) return r; }
         catch (Throwable ignored) {}
-        try { return NativeCore.sessionLoad(workspaceRoot(), id); }
+        try { return NativeCore.sessionLoad(activeRoot(), id); }
         catch (Throwable t) { return "[]"; }
     }
 
     /** Message ids in render order. An older DLL has no such symbol → "[]", which
      *  the GUI reads as "no per-message actions here" rather than failing a click. */
     private String safeMessageIds(String id) {
-        try { return NativeCore.sessionMessageIds(workspaceRoot(), id); }
+        try { return NativeCore.sessionMessageIds(activeRoot(), id); }
         catch (Throwable t) { return "[]"; }
     }
 
     /** Permanent per-message delete, guarded the same way (an older DLL reports an
      *  error the dialog can show instead of throwing into the browser callback). */
     private String safeDeleteMessage(String sessionId, String messageId) {
-        try { return NativeCore.sessionDeleteMessage(workspaceRoot(), sessionId, messageId); }
+        try { return NativeCore.sessionDeleteMessage(activeRoot(), sessionId, messageId); }
         catch (Throwable t) { return "{\"error\":\"This build's native core has no message delete.\"}"; }
     }
 
     /** Delete one local session file (PHP bridge; Java file-delete as fallback). */
     private void deleteSessionFile(String id) {
-        try { String r = PhpHistory.run("delete", workspaceRoot(), id); if (r != null && !r.isBlank()) return; }
+        try { String r = PhpHistory.run("delete", activeRoot(), id); if (r != null && !r.isBlank()) return; }
         catch (Throwable ignored) {}
         try {
             if (id == null || id.isEmpty() || id.contains("/") || id.contains("\\") || id.contains("..")) return;
@@ -1331,7 +1776,7 @@ public class ClaudeGuiView extends ViewPart {
             if (home == null || home.isEmpty()) home = System.getProperty("user.home");
             if (home == null) return;
             java.nio.file.Path p = java.nio.file.Paths.get(
-                    home, ".claude", "projects", projectHash(workspaceRoot()), id + ".jsonl");
+                    home, ".claude", "projects", projectHash(activeRoot()), id + ".jsonl");
             java.nio.file.Files.deleteIfExists(p);
         } catch (Exception ignored) {}
     }
@@ -1374,7 +1819,7 @@ public class ClaudeGuiView extends ViewPart {
                             .getString(com.anthropic.claudecode.eclipse.Constants.PREF_CLAUDE_CMD);
                     if (claudeCmd == null || claudeCmd.isBlank())
                         claudeCmd = com.anthropic.claudecode.eclipse.Constants.DEFAULT_CLAUDE_CMD;
-                    ok = NativeCore.sessionRename(claudeCmd, workspaceRoot(), id, title);
+                    ok = NativeCore.sessionRename(claudeCmd, activeRoot(), id, title);
                 } catch (Throwable ignored) {} // old DLL: sessionRename missing
             }
             if (ok) removeSidecarTitle(id);
@@ -1388,7 +1833,7 @@ public class ClaudeGuiView extends ViewPart {
             String home = Activator.isWindows() ? System.getenv("USERPROFILE") : System.getenv("HOME");
             if (home == null || home.isEmpty()) home = System.getProperty("user.home");
             if (home == null) return;
-            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(workspaceRoot()), "session-titles.json");
+            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(activeRoot()), "session-titles.json");
             Map<String, String> titles = new HashMap<>();
             if (Files.exists(titlesPath)) {
                 try { titles = new Gson().fromJson(Files.readString(titlesPath), new TypeToken<Map<String, String>>(){}.getType()); }
@@ -1411,7 +1856,7 @@ public class ClaudeGuiView extends ViewPart {
             String home = Activator.isWindows() ? System.getenv("USERPROFILE") : System.getenv("HOME");
             if (home == null || home.isEmpty()) home = System.getProperty("user.home");
             if (home == null) return;
-            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(workspaceRoot()), "session-titles.json");
+            Path titlesPath = Paths.get(home, ".claude", "projects", projectHash(activeRoot()), "session-titles.json");
             if (!Files.exists(titlesPath)) return;
             Map<String, String> titles = new Gson().fromJson(Files.readString(titlesPath), new TypeToken<Map<String, String>>(){}.getType());
             if (titles == null || titles.remove(id) == null) return;
@@ -1452,6 +1897,38 @@ public class ClaudeGuiView extends ViewPart {
         // Same idea for the key-binding scheme: cheap to re-read, and it means a scheme
         // change shows up in the right-click menu's hints on the next activation.
         pushEditKeyHints();
+        pushDebugMode();
+    }
+
+    /**
+     * Host-driven half of the {@link #editOpsReady} handshake, and the reliable half.
+     *
+     * <p>The page also reports in by calling {@code _editOpsReady()} — but it does that
+     * while it is still parsing, and a JS&#8594;Java call is not the same thing on every
+     * platform. On Windows it is a synchronous WebView2 host object and on macOS an
+     * Objective-C selector on the script bridge, both direct in-process calls; on GTK it
+     * is a synchronous {@code XMLHttpRequest} to a custom {@code swt://} scheme that has
+     * to round-trip through SWT's request handler. Asking the page from here instead runs
+     * after {@code completed} and only needs {@code evaluate}, which is an ordinary script
+     * evaluation on all three. Retried on the same schedule as {@link #activateInput()},
+     * because a webview can report complete a beat before the scripts have run.
+     *
+     * <p>The flag stays a gate rather than an assumption: until the entry points provably
+     * exist, the edit handlers report themselves unhandled and the keys keep the webview's
+     * own behaviour, instead of being swallowed with no JS behind them.
+     */
+    private void verifyEditOps() {
+        if (editOpsReady || browser == null || browser.isDisposed() || !pageLoaded) return;
+        try {
+            Object r = browser.evaluate(
+                    "return !!(window.__ccCopy && window.__ccCut && window.__ccPaste"
+                  + " && window.__ccSelectAll && window.__ccDelete);");
+            if (Boolean.TRUE.equals(r)) editOpsReady = true;
+            ClaudeCodeView.debug("[EDIT] verifyEditOps -> " + r);
+        } catch (Exception e) {
+            // evaluate() throws while the page is mid-navigation; a later retry settles it.
+            ClaudeCodeView.debug("[EDIT] verifyEditOps failed: " + e);
+        }
     }
 
     private void activateInput() {
@@ -1571,8 +2048,10 @@ public class ClaudeGuiView extends ViewPart {
             } catch (Exception ignored) {}
         }
 
+        cardOpened();
         Display.getDefault().asyncExec(() -> {
             if (view.browser != null && !view.browser.isDisposed() && view.pageLoaded) {
+                pushCancelHint(view);
                 view.browser.execute("window.onApprovalRequest && window.onApprovalRequest('"
                         + tid + "','" + reqId + "','" + tn + "','" + dt + "','" + rl + "')");
             } else {
@@ -1581,16 +2060,236 @@ public class ClaudeGuiView extends ViewPart {
             }
         });
         try {
-            return future.get(30, TimeUnit.MINUTES);
+            long seconds = com.anthropic.claudecode.eclipse.Constants.resolveTimeoutSeconds(
+                    Activator.getDefault().getPreferenceStore(),
+                    com.anthropic.claudecode.eclipse.Constants.PREF_APPROVAL_TIMEOUT_MODE,
+                    com.anthropic.claudecode.eclipse.Constants.PREF_APPROVAL_TIMEOUT_SECONDS);
+            return future.get(seconds, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            // The card is still on screen (the user never answered): the JS side has
+            // no idea we're about to give up on its behalf, so tell it to tear the
+            // card down and show what happened — otherwise it sits there forever
+            // even though the CLI has already moved on with this "deny".
+            dismissTimedOutCard(reqId);
+            return "deny";
         } catch (Exception e) {
             return "deny";
         } finally {
+            cardClosed();
             PENDING.remove(reqId);
             if (preview[0] != null) {
                 try { com.anthropic.claudecode.eclipse.tools.DiffPreview.close(preview[0]); }
                 catch (Exception ignored) {}
             }
         }
+    }
+
+    // ── Card key binding (Esc / Ctrl+G under Emacs) ─────────────────────────────────
+
+    private static final String CARD_CONTEXT_ID =
+            "com.anthropic.claudecode.eclipse.contexts.cardOpen";
+    private static final String DISMISS_COMMAND_ID =
+            "com.anthropic.claudecode.eclipse.commands.dismissCard";
+
+    private static final Object CARD_LOCK = new Object();
+    private static int cardDepth;
+    private static org.eclipse.ui.contexts.IContextActivation cardActivation;
+
+    /**
+     * Activates the card key-binding context. Called by every card raiser before the card
+     * goes up, and paired with {@link #cardClosed()} in a {@code finally} — a leaked
+     * activation would leave Esc bound to "dismiss a card" with no card on screen.
+     *
+     * <p>Depth-counted rather than a boolean: the raisers block, but nothing structurally
+     * prevents a second card while one is up, and an inner card's close must not deactivate
+     * the outer one's binding.
+     */
+    static void cardOpened() {
+        synchronized (CARD_LOCK) {
+            if (++cardDepth != 1) return;
+        }
+        Display.getDefault().asyncExec(() -> {
+            synchronized (CARD_LOCK) {
+                // Re-check under the lock: a card that opened and closed before this ran
+                // must not leave the context activated behind it.
+                if (cardDepth == 0 || cardActivation != null) return;
+                org.eclipse.ui.contexts.IContextService svc = contextService();
+                if (svc != null) cardActivation = svc.activateContext(CARD_CONTEXT_ID);
+            }
+        });
+    }
+
+    /** Deactivates the card context once the last open card has resolved. */
+    static void cardClosed() {
+        synchronized (CARD_LOCK) {
+            if (cardDepth > 0 && --cardDepth != 0) return;
+        }
+        Display.getDefault().asyncExec(() -> {
+            synchronized (CARD_LOCK) {
+                if (cardDepth != 0 || cardActivation == null) return;
+                org.eclipse.ui.contexts.IContextService svc = contextService();
+                if (svc != null) {
+                    try { svc.deactivateContext(cardActivation); } catch (Exception ignored) {}
+                }
+                cardActivation = null;
+            }
+        });
+    }
+
+    /**
+     * Page-local overlays (advisor card, rewind picker, lightbox) telling us they are open,
+     * via the {@code _overlayOpen} browser function. Nothing on the Java side raises them, so
+     * without this the key context never activates for them and their cancel key stays dead.
+     *
+     * <p>Edge-triggered on purpose: repeated {@code true}s (or {@code false}s) are ignored, so
+     * an overlay that is torn down without unregistering — the advisor card can be replaced
+     * mid-turn by a blocking card — can only leak one activation, which the next
+     * open/close corrects. A counter would accumulate that leak instead.
+     */
+    static void overlaySetOpen(boolean open) {
+        synchronized (CARD_LOCK) {
+            if (open == overlayOpen) return;
+            overlayOpen = open;
+        }
+        if (open) cardOpened(); else cardClosed();
+    }
+
+    private static boolean overlayOpen;
+
+    private static org.eclipse.ui.contexts.IContextService contextService() {
+        try {
+            return org.eclipse.ui.PlatformUI.getWorkbench()
+                    .getService(org.eclipse.ui.contexts.IContextService.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * The printable label of whatever key currently dismisses a card — "Esc" under the
+     * default scheme, "Ctrl+G" under Emacs, or whatever the user rebound it to in
+     * Preferences &gt; Keys. Empty when nothing is bound, which the page renders as no hint
+     * at all rather than promising a key that does nothing.
+     *
+     * <p>Must be called on the UI thread. Reading it per card rather than caching it is
+     * deliberate: the scheme can change while the view is open.
+     */
+    static String cancelKeyLabel() {
+        try {
+            org.eclipse.ui.keys.IBindingService bs = org.eclipse.ui.PlatformUI.getWorkbench()
+                    .getService(org.eclipse.ui.keys.IBindingService.class);
+            if (bs == null) return "";
+
+            // Deliberately NOT getBestActiveBindingFormattedFor. That reports only bindings
+            // whose context is currently ACTIVE, and ours is scoped to cardOpen — inactive
+            // whenever no card is up, which is precisely when the hint has to be drawn. It
+            // answers empty at page load and hides every hint. Walking the binding table is
+            // context-independent and still honours the active scheme and user rebindings,
+            // since getBindings() returns the live set.
+            org.eclipse.jface.bindings.Scheme scheme = bs.getActiveScheme();
+            String schemeId = scheme != null ? scheme.getId() : null;
+            org.eclipse.jface.bindings.Binding[] all = bs.getBindings();
+            if (all == null) return "";
+
+            String fallback = "";
+            for (org.eclipse.jface.bindings.Binding b : all) {
+                if (b == null) continue;
+                org.eclipse.core.commands.ParameterizedCommand pc = b.getParameterizedCommand();
+                // A null command is a deletion marker — the user unbound the key. Skipping it
+                // (rather than treating it as a match) is what makes an unbound command
+                // report "", which the page renders as no hint at all.
+                if (pc == null || pc.getCommand() == null) continue;
+                if (!DISMISS_COMMAND_ID.equals(pc.getCommand().getId())) continue;
+                org.eclipse.jface.bindings.TriggerSequence ts = b.getTriggerSequence();
+                if (ts == null || ts.isEmpty()) continue;
+                if (schemeId != null && schemeId.equals(b.getSchemeId())) return ts.format();
+                // Another scheme's binding: remember it, but keep looking for the active
+                // scheme's. Only used when the active scheme defines none.
+                if (fallback.isEmpty()) fallback = ts.format();
+            }
+            return fallback;
+        } catch (Exception ignored) {
+            // No workbench (headless/shutdown) — fall through to "no hint".
+        }
+        return "";
+    }
+
+    /**
+     * Invoked by {@link com.anthropic.claudecode.eclipse.ui.handlers.DismissCardHandler}
+     * when the bound key is pressed. Routes to the page's own cancel path so the keyboard
+     * and in-page routes stay identical.
+     */
+    public static void dismissActiveCard() {
+        ClaudeGuiView view = active;
+        if (view == null || view.browser == null || view.browser.isDisposed()
+                || !view.pageLoaded) {
+            return;
+        }
+        view.browser.execute("window.cancelActiveCard && window.cancelActiveCard()");
+    }
+
+    /** Pushes the current cancel-key label to the page. UI thread; call before raising a card. */
+    private static void pushCancelHint(ClaudeGuiView view) {
+        if (view.browser == null || view.browser.isDisposed() || !view.pageLoaded) return;
+        view.browser.execute("window.setCancelHint && window.setCancelHint('"
+                + esc(cancelKeyLabel()) + "')");
+    }
+
+    /**
+     * Repaints every visible hint the moment Eclipse's bindings change — picking Emacs in
+     * Preferences &gt; Keys and hitting Apply has to update the text there and then, not on
+     * the next card.
+     *
+     * <p>The signal is the binding service's own listener, the same shape as taking live
+     * theme changes off the JFace {@code ColorRegistry}: the component that owns the state
+     * publishes the change, so nothing here has to poll or guess when to re-read.
+     * {@code setCancelHint} is a no-op when the label is unchanged, so the noisier events
+     * (locale, platform) cost nothing.
+     */
+    private org.eclipse.jface.bindings.IBindingManagerListener bindingListener;
+
+    private void hookBindingChanges() {
+        try {
+            org.eclipse.ui.keys.IBindingService bs = org.eclipse.ui.PlatformUI.getWorkbench()
+                    .getService(org.eclipse.ui.keys.IBindingService.class);
+            if (bs == null) return;
+            bindingListener = event -> {
+                if (!event.isActiveSchemeChanged() && !event.isActiveBindingsChanged()) return;
+                if (browser == null || browser.isDisposed() || !pageLoaded) return;
+                pushCancelHint(this);
+            };
+            bs.addBindingManagerListener(bindingListener);
+        } catch (Exception e) {
+            // No binding service (headless/shutdown) — hints simply stay as last pushed.
+            bindingListener = null;
+        }
+    }
+
+    private void unhookBindingChanges() {
+        if (bindingListener == null) return;
+        try {
+            org.eclipse.ui.keys.IBindingService bs = org.eclipse.ui.PlatformUI.getWorkbench()
+                    .getService(org.eclipse.ui.keys.IBindingService.class);
+            if (bs != null) bs.removeBindingManagerListener(bindingListener);
+        } catch (Exception ignored) {
+        } finally {
+            bindingListener = null;
+        }
+    }
+
+    /** Tells the page a card's Java-side wait timed out, so it can dismiss the
+     *  card presentation-only — the CLI already has its answer (see the
+     *  matching JS comment on registerCardTimeout in cards.js). Safe to call for
+     *  a card that already resolved itself (window.dismissTimedOutCard no-ops). */
+    private static void dismissTimedOutCard(String reqId) {
+        ClaudeGuiView view = active;
+        if (view == null || view.browser == null) return;
+        final String rid = esc(reqId);
+        Display.getDefault().asyncExec(() -> {
+            if (view.browser != null && !view.browser.isDisposed() && view.pageLoaded) {
+                view.browser.execute("window.dismissTimedOutCard && window.dismissTimedOutCard('" + rid + "')");
+            }
+        });
     }
 
     /**
@@ -1604,6 +2303,21 @@ public class ClaudeGuiView extends ViewPart {
         return requestQuestion(active != null ? active.activeTabId : "", questionsJson);
     }
 
+    /**
+     * Whether an in-chat question card can actually be shown right now — i.e. whether a GUI
+     * view is open with its page loaded.
+     *
+     * <p>For callers that have a text fallback and need to tell two cases apart:
+     * {@link #requestQuestion} answers {@code "[]"} both when the user dismissed a card and
+     * when no card was ever rendered (no GUI view — the call came from the Terminal view, or
+     * during shutdown). Those mean opposite things. Check this first and the caller can say
+     * "name one of these" instead of claiming the user cancelled something they never saw.
+     */
+    public static boolean canAskQuestion() {
+        ClaudeGuiView view = active;
+        return view != null && view.browser != null && !view.browser.isDisposed() && view.pageLoaded;
+    }
+
     public static String requestQuestion(String tabId, String questionsJson) {
         ClaudeGuiView view = active;
         if (view == null || view.browser == null) return "[]";
@@ -1612,8 +2326,10 @@ public class ClaudeGuiView extends ViewPart {
         QPENDING.put(reqId, future);
         final String tid = esc(tabId == null ? "" : tabId);
         final String qjson = esc(questionsJson == null ? "[]" : questionsJson);
+        cardOpened();
         Display.getDefault().asyncExec(() -> {
             if (view.browser != null && !view.browser.isDisposed() && view.pageLoaded) {
+                pushCancelHint(view);
                 view.browser.execute("window.onAskQuestion && window.onAskQuestion('"
                         + tid + "','" + reqId + "','" + qjson + "')");
             } else {
@@ -1622,10 +2338,18 @@ public class ClaudeGuiView extends ViewPart {
             }
         });
         try {
-            return future.get(30, TimeUnit.MINUTES);
+            long seconds = com.anthropic.claudecode.eclipse.Constants.resolveTimeoutSeconds(
+                    Activator.getDefault().getPreferenceStore(),
+                    com.anthropic.claudecode.eclipse.Constants.PREF_QUESTION_TIMEOUT_MODE,
+                    com.anthropic.claudecode.eclipse.Constants.PREF_QUESTION_TIMEOUT_SECONDS);
+            return future.get(seconds, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            dismissTimedOutCard(reqId);   // see the matching comment in requestApproval
+            return "[]";
         } catch (Exception e) {
             return "[]";
         } finally {
+            cardClosed();
             QPENDING.remove(reqId);
         }
     }
@@ -1633,6 +2357,7 @@ public class ClaudeGuiView extends ViewPart {
     @Override
     public void dispose() {
         if (active == this) active = null;
+        unhookBindingChanges();
         contextPolling = false;
         if (statusPrefListener != null) {
             try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(statusPrefListener); }
@@ -1645,6 +2370,14 @@ public class ClaudeGuiView extends ViewPart {
                         .removeListener(themeChangeListener);
             } catch (Throwable ignored) {}
             themeChangeListener = null;
+        }
+        if (bindingChangeListener != null) {
+            try {
+                org.eclipse.ui.keys.IBindingService bs =
+                        getSite().getService(org.eclipse.ui.keys.IBindingService.class);
+                if (bs != null) bs.removeBindingManagerListener(bindingChangeListener);
+            } catch (Throwable ignored) {}
+            bindingChangeListener = null;
         }
         if (!editHandlers.isEmpty()) {
             try {

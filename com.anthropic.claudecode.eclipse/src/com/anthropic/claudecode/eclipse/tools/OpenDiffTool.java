@@ -38,6 +38,8 @@ import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IWorkbenchPart;
 import org.eclipse.ui.IWorkbenchPartReference;
 
+import com.anthropic.claudecode.eclipse.Activator;
+import com.anthropic.claudecode.eclipse.Constants;
 import com.anthropic.claudecode.eclipse.editor.UiHelper;
 import com.anthropic.claudecode.eclipse.mcp.McpTool;
 import com.anthropic.claudecode.eclipse.mcp.McpToolResult;
@@ -393,7 +395,11 @@ public class OpenDiffTool implements McpTool {
         // Block the MCP worker thread — Claude waits here until the diff is resolved.
         // The UI thread is free to process events (paint, respond to clicks, etc.).
         try {
-            McpToolResult result = decision.get(30, TimeUnit.MINUTES);
+            long timeoutSeconds = Constants.resolveTimeoutSeconds(
+                    Activator.getDefault().getPreferenceStore(),
+                    Constants.PREF_DIFF_REVIEW_TIMEOUT_MODE,
+                    Constants.PREF_DIFF_REVIEW_TIMEOUT_SECONDS);
+            McpToolResult result = decision.get(timeoutSeconds, TimeUnit.SECONDS);
             // After FILE_SAVED the CLI writes the file. Schedule a workspace refresh
             // so Eclipse picks up the change once the CLI write lands on disk.
             Display.getDefault().asyncExec(() -> refreshWorkspaceFile(filePath));

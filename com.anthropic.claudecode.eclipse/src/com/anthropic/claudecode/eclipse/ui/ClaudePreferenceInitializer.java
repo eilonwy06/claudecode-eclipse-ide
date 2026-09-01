@@ -27,6 +27,13 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         store.setDefault(Constants.PREF_HTTPS_PROXY, "");
         store.setDefault(Constants.PREF_NO_PROXY, "");
 
+        store.setDefault(Constants.PREF_APPROVAL_TIMEOUT_MODE, Constants.TIMEOUT_MODE_DEFAULT);
+        store.setDefault(Constants.PREF_APPROVAL_TIMEOUT_SECONDS, Constants.DEFAULT_DECISION_TIMEOUT_SECONDS);
+        store.setDefault(Constants.PREF_QUESTION_TIMEOUT_MODE, Constants.TIMEOUT_MODE_DEFAULT);
+        store.setDefault(Constants.PREF_QUESTION_TIMEOUT_SECONDS, Constants.DEFAULT_DECISION_TIMEOUT_SECONDS);
+        store.setDefault(Constants.PREF_DIFF_REVIEW_TIMEOUT_MODE, Constants.TIMEOUT_MODE_DEFAULT);
+        store.setDefault(Constants.PREF_DIFF_REVIEW_TIMEOUT_SECONDS, Constants.DEFAULT_DECISION_TIMEOUT_SECONDS);
+
         // Claude Terminal status bar (statusLine) — on by default, except the thinking segment.
         store.setDefault(Constants.PREF_STATUSLINE_ENABLED, true);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_MODEL, true);

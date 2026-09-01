@@ -42,6 +42,15 @@ import com.anthropic.claudecode.eclipse.Constants;
  *   <li>if even the short form overflows, trailing meter groups are dropped from the right
  *       (model is always kept).</li>
  * </ol>
+ *
+ * <p><b>The long↔short breakpoint is shared by both views.</b> It is measured with reset
+ * text always reserved, whether or not the current status carries any, so the labels
+ * expand and contract at the same window width in the Claude Terminal (whose statusLine
+ * supplies reset epochs) and in Claude Code (whose {@code /usage} probe supplies only
+ * percentages). Measuring just the visible text would let the same window show
+ * {@code Context/Session/Weekly} in one view and {@code C/S/W} in the other, flipping on
+ * every switch. The reserved space is simply left unused when there is no reset time to
+ * draw — that missing countdown is the only intended difference between the two.
  * It also paints a 1px delimiter line along its top edge, separating it from the terminal
  * area above.
  *
@@ -162,13 +171,22 @@ public final class ClaudeStatusBar extends Canvas {
         }
 
         // Pick the widest form that fits: long → short → short with trailing groups dropped.
-        SegLayout layout = buildSegments(gc, false, true);
+        //
+        // The long↔short decision is measured with reset text ALWAYS reserved
+        // (RESERVE_RESET_WIDTH), even when this particular status carries none, so the
+        // labels flip at the SAME window width in both views. Without that reservation
+        // the Claude Code view — whose /usage probe supplies percentages but no reset
+        // epochs — measures narrower and keeps "Context/Session/Weekly" at widths where
+        // the Terminal, carrying "(resets in 2h 23m)", has already dropped to "C/S/W";
+        // switching views then flips the labels back and forth for no visible reason.
+        // Rendering still uses the real data, so the reserved space simply goes unused
+        // when there is no reset time to draw.
+        boolean compact =
+                totalWidth(buildSegments(gc, false, true, RESERVE_RESET_WIDTH)) > area.width;
+        SegLayout layout = buildSegments(gc, compact, true, MEASURE_ACTUAL);
         if (totalWidth(layout) > area.width) {
-            layout = buildSegments(gc, true, true);
-            if (totalWidth(layout) > area.width) {
-                layout = buildSegments(gc, true, false);
-                dropToFit(layout, area.width);
-            }
+            layout = buildSegments(gc, compact, false, MEASURE_ACTUAL);
+            dropToFit(layout, area.width);
         }
         draw(gc, layout, area.width, midY);
     }
@@ -234,7 +252,22 @@ public final class ClaudeStatusBar extends Canvas {
 
     // ── Segment construction ────────────────────────────────────────────────
 
-    private SegLayout buildSegments(GC gc, boolean compact, boolean withResets) {
+    /** {@code reserveResets} value that measures a rate-limit meter as if it carried
+     *  reset text — used only to fix the long↔short breakpoint (see {@link #onPaint}). */
+    private static final boolean RESERVE_RESET_WIDTH = true;
+    /** {@code reserveResets} value that measures exactly what will be drawn. */
+    private static final boolean MEASURE_ACTUAL = false;
+
+    /** Reset strings used purely for width reservation — never drawn. These are the
+     *  <em>widest</em> forms {@link #formatRemaining} can produce ({@code "%dh %dm"} with
+     *  two-digit hours; the {@code "%dd %dh"} branch is never wider, as the 7-day window
+     *  caps days at 6). Reserving the widest case means the text actually drawn can never
+     *  exceed what the breakpoint measured. */
+    private static final String RESET_SAMPLE_LONG = "(resets in 23h 59m)";
+    private static final String RESET_SAMPLE_SHORT = "(23h 59m)";
+
+    private SegLayout buildSegments(GC gc, boolean compact, boolean withResets,
+                                    boolean reserveResets) {
         IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
         ClaudeStatus s = lastStatus;
         List<Seg> left = new ArrayList<>();
@@ -244,9 +277,10 @@ public final class ClaudeStatusBar extends Canvas {
         if (model != null) left.add(model);
 
         if (prefs.getBoolean(Constants.PREF_STATUSLINE_SHOW_CONTEXT)) {
+            // Context never carries a reset time, so it never reserves width for one.
             left.add(buildMeter(gc, compact ? "C" : "Context",
                     s.contextUsedPercentage().orElse(0.0), true,
-                    OptionalLong.empty(), compact, withResets,
+                    OptionalLong.empty(), compact, withResets, false,
                     buildContextTooltip(s)));
         }
 
@@ -259,7 +293,7 @@ public final class ClaudeStatusBar extends Canvas {
                 && five.isPresent() && five.get().usedPercentage().isPresent()) {
             right.add(buildMeter(gc, compact ? "S" : "Session",
                     five.get().usedPercentage().getAsDouble(), false,
-                    five.get().resetsAt(), compact, withResets,
+                    five.get().resetsAt(), compact, withResets, reserveResets,
                     buildLimitTooltip("5-hour session usage limit",
                             five.get().usedPercentage().getAsDouble(), five.get().resetsAt())));
         }
@@ -269,7 +303,7 @@ public final class ClaudeStatusBar extends Canvas {
                 && seven.isPresent() && seven.get().usedPercentage().isPresent()) {
             right.add(buildMeter(gc, compact ? "W" : "Weekly",
                     seven.get().usedPercentage().getAsDouble(), false,
-                    seven.get().resetsAt(), compact, withResets,
+                    seven.get().resetsAt(), compact, withResets, reserveResets,
                     buildLimitTooltip("Weekly usage limit",
                             seven.get().usedPercentage().getAsDouble(), seven.get().resetsAt())));
         }
@@ -406,7 +440,7 @@ public final class ClaudeStatusBar extends Canvas {
     /** A usage meter: {@code Context ▮▮░ 24% resets in 2h 23m} (long) / {@code C ▮ 24 2h 23m} (short). */
     private Seg buildMeter(GC gc, String label, double pct, boolean isContext,
                            OptionalLong resetsAt, boolean compact, boolean withResets,
-                           String tooltip) {
+                           boolean reserveResets, String tooltip) {
         int barW = compact ? BAR_W_SHORT : BAR_W_LONG;
         int rounded = (int) Math.floor(Math.max(0.0, pct)); // round down for display
         String pctText = compact ? Integer.toString(rounded) : rounded + "%";
@@ -420,8 +454,15 @@ public final class ClaudeStatusBar extends Canvas {
         Color color = meterColor(pct, isContext);
         int lw = gc.textExtent(label).x;
         int pw = gc.textExtent(pctText).x;
-        int rw = resetText != null ? gc.textExtent(resetText).x : 0;
-        int width = lw + GAP + barW + GAP + pw + (resetText != null ? GAP + rw : 0);
+        // Width reservation for the shared breakpoint: when this meter carries no reset
+        // text but the caller is measuring the common case, charge it for one anyway so
+        // both views break at the same width. Never drawn — only `resetText` is painted.
+        String measured = resetText;
+        if (measured == null && withResets && reserveResets) {
+            measured = compact ? RESET_SAMPLE_SHORT : RESET_SAMPLE_LONG;
+        }
+        int rw = measured != null ? gc.textExtent(measured).x : 0;
+        int width = lw + GAP + barW + GAP + pw + (measured != null ? GAP + rw : 0);
 
         final String fReset = resetText;
         Seg seg = new Seg(width);

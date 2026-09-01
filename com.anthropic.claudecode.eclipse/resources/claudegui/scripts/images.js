@@ -142,7 +142,17 @@ function openLightbox(im) {
   img.src = im.url;
   img.alt = im.name || 'image';
   box.classList.add('open');
+  // Tooltip names the key Eclipse actually has bound (Esc, or Ctrl+G under Emacs, where Esc
+  // is a multi-stroke prefix the page never receives). The markup names no key at all, so
+  // the worst case here is the bare "Close preview" rather than a wrong one.
+  registerHintPainter(box.querySelector('.lb-x'), function paintCloseTitle() {
+    const x = box.querySelector('.lb-x');
+    if (!x) return;
+    const k = cancelKeyName();
+    x.title = k ? 'Close preview (' + k + ')' : 'Close preview';
+  });
   document.addEventListener('keydown', lightboxKey, true);
+  registerOverlayCancel(closeLightbox, false);   // not tab-owned — no visibility guard
 }
 function closeLightbox() {
   const box = document.getElementById('lightbox');
@@ -151,6 +161,7 @@ function closeLightbox() {
   const img = box.querySelector('img');
   if (img) img.src = '';        // release the data URL
   document.removeEventListener('keydown', lightboxKey, true);
+  unregisterOverlayCancel();
 }
 /* Backdrop click closes; clicks on the image itself don't. */
 (function wireLightbox() {
@@ -181,8 +192,13 @@ function renderPendingImages() {
 
 /* Capture image paste on the composer. A screenshot paste arrives as a file item
    with an image/* MIME type; when present we consume the event so the textarea
-   doesn't also paste a filename/text alternative. Plain-text paste is untouched. */
+   doesn't also paste a filename/text alternative. Plain-text paste is untouched.
+
+   Only Ctrl+V produces this DOM event at all — see the comment on window.__ccLastPaste
+   in contextmenu.js for why ccPaste() (the host's org.eclipse.ui.edit.paste handler,
+   and the right-click menu's Paste item) needs to know this one just happened. */
 input.addEventListener('paste', (e) => {
+  window.__ccLastPaste = Date.now();
   const data = e.clipboardData;
   if (!data) return;
   let took = false;

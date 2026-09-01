@@ -36,9 +36,53 @@ public final class ClaudeStatusStore {
             // Only keep snapshots that actually advance the account-global data;
             // otherwise a context-only update would wipe the last known limits.
             if (s.fiveHour().isPresent() || s.sevenDay().isPresent()) {
-                latest = s;
+                latest = merge(latest, s);
             }
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * Folds a new snapshot over the previous one <em>per window</em>, carrying a
+     * previously known {@code resets_at} forward when the incoming window omits
+     * it.
+     *
+     * <p>The two producers carry different halves of the data. The CLI
+     * statusLine supplies percentage <em>and</em> reset epoch; the Claude GUI's
+     * {@code /usage} probe supplies percentage only (that command reports reset
+     * times as localized prose, which is deliberately not parsed). A plain
+     * last-writer-wins would make the countdowns of a user running both views
+     * flicker away every time the GUI refreshed. Percentages always come from
+     * the newer snapshot — only a missing reset time is inherited.
+     */
+    private static ClaudeStatus merge(ClaudeStatus prev, ClaudeStatus next) {
+        if (prev == null) return next;
+        JsonObject root = new JsonObject();
+        JsonObject limits = new JsonObject();
+        mergeWindow(limits, "five_hour", prev.fiveHour(), next.fiveHour());
+        mergeWindow(limits, "seven_day", prev.sevenDay(), next.sevenDay());
+        root.add("rate_limits", limits);
+        ClaudeStatus merged = ClaudeStatus.parse(root.toString());
+        return merged != null ? merged : next;
+    }
+
+    private static void mergeWindow(JsonObject out, String key,
+                                    java.util.Optional<ClaudeStatus.RateLimit> prev,
+                                    java.util.Optional<ClaudeStatus.RateLimit> next) {
+        // Nothing new for this window: keep whatever we already knew.
+        if (next.isEmpty() || next.get().usedPercentage().isEmpty()) {
+            addWindow(out, key, prev);
+            return;
+        }
+        ClaudeStatus.RateLimit n = next.get();
+        JsonObject w = new JsonObject();
+        w.addProperty("used_percentage", n.usedPercentage().getAsDouble());
+        if (n.resetsAt().isPresent()) {
+            w.addProperty("resets_at", n.resetsAt().getAsLong());
+        } else if (prev.isPresent() && prev.get().resetsAt().isPresent()) {
+            // Inherit the epoch the statusLine gave us so the countdown survives.
+            w.addProperty("resets_at", prev.get().resetsAt().getAsLong());
+        }
+        out.add(key, w);
     }
 
     /**

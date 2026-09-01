@@ -8,6 +8,7 @@ import org.eclipse.jface.preference.FieldEditor;
 import org.eclipse.jface.preference.FieldEditorPreferencePage;
 import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.preference.IntegerFieldEditor;
+import org.eclipse.jface.preference.RadioGroupFieldEditor;
 import org.eclipse.jface.preference.StringFieldEditor;
 import org.eclipse.jface.util.PropertyChangeEvent;
 import org.eclipse.swt.SWT;
@@ -25,6 +26,10 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
 
     private BooleanFieldEditor statuslineEnabled;
     private final List<FieldEditor> statuslineDependents = new ArrayList<>();
+
+    /** One decision-card timeout's mode radio group + its dependent custom-seconds field. */
+    private record TimeoutFieldPair(RadioGroupFieldEditor mode, IntegerFieldEditor seconds) {}
+    private final List<TimeoutFieldPair> timeoutFields = new ArrayList<>();
 
     public ClaudePreferencePage() {
         super(GRID);
@@ -149,6 +154,55 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 Constants.PREF_NO_PROXY,
                 "NO_PROXY:",
                 getFieldEditorParent()));
+
+        Label timeoutSeparator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);
+        timeoutSeparator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+
+        Label timeoutLabel = new Label(getFieldEditorParent(), SWT.NONE);
+        timeoutLabel.setText("Decision card timeouts: how long an unanswered card waits before Claude\n"
+                + "Code assumes an answer (a denial, for approval/question cards) and continues\n"
+                + "on its own. Applies to cards raised after the change; a card already waiting\n"
+                + "keeps the timeout that was in effect when it appeared:");
+        timeoutLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+
+        addTimeoutFields("Permission approval:", Constants.PREF_APPROVAL_TIMEOUT_MODE,
+                Constants.PREF_APPROVAL_TIMEOUT_SECONDS);
+        addTimeoutFields("Ask-user question:", Constants.PREF_QUESTION_TIMEOUT_MODE,
+                Constants.PREF_QUESTION_TIMEOUT_SECONDS);
+        addTimeoutFields("Diff review:", Constants.PREF_DIFF_REVIEW_TIMEOUT_MODE,
+                Constants.PREF_DIFF_REVIEW_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * Adds one decision-card timeout's mode radio group + custom-seconds field,
+     * under a sub-heading naming which card it governs.
+     */
+    private void addTimeoutFields(String heading, String modeKey, String secondsKey) {
+        Label heading_ = new Label(getFieldEditorParent(), SWT.NONE);
+        heading_.setText(heading);
+        heading_.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+
+        RadioGroupFieldEditor mode = new RadioGroupFieldEditor(
+                modeKey,
+                "",
+                1,
+                new String[][] {
+                        { "Default (30 minutes)", Constants.TIMEOUT_MODE_DEFAULT },
+                        { "Never — wait indefinitely for an answer", Constants.TIMEOUT_MODE_NEVER },
+                        { "Custom:", Constants.TIMEOUT_MODE_CUSTOM },
+                },
+                getFieldEditorParent(),
+                true);
+        addField(mode);
+
+        IntegerFieldEditor seconds = new IntegerFieldEditor(
+                secondsKey,
+                "Custom timeout (seconds):",
+                getFieldEditorParent());
+        seconds.setValidRange(1, Integer.MAX_VALUE / 2);
+        addField(seconds);
+
+        timeoutFields.add(new TimeoutFieldPair(mode, seconds));
     }
 
     private void addStatuslineDependent(FieldEditor editor) {
@@ -167,16 +221,29 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
         }
     }
 
+    private void updateTimeoutSecondsEnabled(TimeoutFieldPair pair) {
+        boolean custom = Constants.TIMEOUT_MODE_CUSTOM.equals(pair.mode().getSelectionValue());
+        pair.seconds().setEnabled(custom, getFieldEditorParent());
+    }
+
+    private void updateAllTimeoutSecondsEnabled() {
+        for (TimeoutFieldPair pair : timeoutFields) {
+            updateTimeoutSecondsEnabled(pair);
+        }
+    }
+
     @Override
     protected void initialize() {
         super.initialize();
         updateStatuslineDependentsEnabled();
+        updateAllTimeoutSecondsEnabled();
     }
 
     @Override
     protected void performDefaults() {
         super.performDefaults();
         updateStatuslineDependentsEnabled();
+        updateAllTimeoutSecondsEnabled();
     }
 
     @Override
@@ -185,6 +252,13 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
         if (event.getSource() == statuslineEnabled
                 && FieldEditor.VALUE.equals(event.getProperty())) {
             updateStatuslineDependentsEnabled();
+        }
+        if (FieldEditor.VALUE.equals(event.getProperty())) {
+            for (TimeoutFieldPair pair : timeoutFields) {
+                if (event.getSource() == pair.mode()) {
+                    updateTimeoutSecondsEnabled(pair);
+                }
+            }
         }
     }
 

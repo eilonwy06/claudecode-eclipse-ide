@@ -8,6 +8,7 @@
  * @property {string} id              "tab1", "tab2", … — also keys the Java-side ChatProcessManager
  * @property {string} title           tab-strip / header title
  * @property {string} sessionId       CLI session id ("" until the first init event; non-empty → sends resume)
+ * @property {string} rootId          the supertab (working root) this conversation runs in — its claude cwd
  * @property {HTMLElement} pane       this conversation's transcript container inside #messages
  * @property {boolean} titled         true once the title is fixed (first send or manual rename)
  * @property {string} draft           unsent composer text, restored on tab switch
@@ -19,13 +20,17 @@
  * @property {boolean} [compacting]   /compact (or auto-compact) running — gerund pinned to "Compacting…"
  * @property {Object}  [_r]           parked render globals while another tab is loaded (see loadRender)
  * @property {HTMLElement|null} [_compEl] latest "Compacted chat" element awaiting its summary body
+ * @property {boolean} [followTail] whether #messages should follow new content for THIS tab;
+ *   undefined (a brand-new tab) means caught-up, same as true (see chat.js)
+ * @property {number} [scrollTop] this tab's own #messages.scrollTop, parked on switch-away
+ *   since #messages is one shared scroll container — undefined means "at the bottom"
  */
 /** @type {Tab[]} */
 let tabs = [], activeId = null, tabSeq = 0;
 // Defaults a NEW conversation starts with (not inherited from the last-viewed tab).
 const DEFAULT_EFFORT_IDX = 2;      // "high"
 const DEFAULT_THINKING = false;    // thinking off
-const DEFAULT_PERM_MODE = 'default';   // "Ask before edits"
+const DEFAULT_PERM_MODE = 'default';   // "Manual"
 function defaultModel() { return (typeof customModel !== 'undefined' && customModel) ? customModel : ''; }
 /** @returns {Tab|null} */
 function activeTab() { return tabs.find(t => t.id === activeId) || null; }
@@ -69,7 +74,7 @@ function WELCOME_HTML() {
 }
 /**
  * @param {{title?: string, sessionId?: string, titled?: boolean, model?: string,
- *          effortIdx?: number, thinking?: boolean, permMode?: string}} [opts]
+ *          effortIdx?: number, thinking?: boolean, permMode?: string, rootId?: string}} [opts]
  * @returns {Tab} the new (now active) tab
  */
 function createTab(opts) {
@@ -82,6 +87,8 @@ function createTab(opts) {
   // DEFAULTS (not whatever the last-viewed convo used); each tab then remembers its
   // own. Defaults: high effort, thinking off, the user's configured default model.
   tabs.push({ id, title: opts.title || 'Claude Code', sessionId: opts.sessionId || '', pane, titled: !!opts.titled, draft: '',
+    // Conversations belong to a working root; #tabs shows only the active root's.
+    rootId: opts.rootId || activeRootId,
     model: (opts.model !== undefined ? opts.model : defaultModel()),
     effortIdx: (opts.effortIdx !== undefined ? opts.effortIdx : DEFAULT_EFFORT_IDX),
     thinking: (opts.thinking !== undefined ? opts.thinking : DEFAULT_THINKING),
@@ -93,10 +100,22 @@ function switchTab(id) {
   // Each tab keeps its own unsent draft: stash the composer into the outgoing tab,
   // then restore the incoming tab's draft so drafts don't bleed across tabs.
   const prev = tabById(activeId);
-  if (prev && prev.id !== id) prev.draft = input.value;
+  if (prev && prev.id !== id) {
+    prev.draft = input.value;
+    // Parked unconditionally, even with the lock off: the toggle can be armed while this
+    // tab sits in the background, and the position it was left at is the only record of
+    // where the user had read up to.
+    prev.followTail = followTail;
+    prev.scrollTop = messagesEl.scrollTop;
+  }
   activeId = id;
   tabs.forEach(t => { t.pane.style.display = (t.id === id) ? '' : 'none'; });
   const t = activeTab();
+  // Selecting a conversation also selects its root, so clicking a background root's
+  // tab (via history, or a close falling through) keeps the two rows agreeing.
+  if (t && t.rootId && t.rootId !== activeRootId) activeRootId = t.rootId;
+  const ar = activeRoot && activeRoot();
+  if (ar) ar.activeTabId = id;
   if (t) {
     document.getElementById('convo-title').textContent = t.title;
     applyTabSettings(t);   // restore this conversation's model/effort/thinking
@@ -107,9 +126,34 @@ function switchTab(id) {
   if (typeof renderBottomCard === 'function') renderBottomCard();   // card only in its own tab
   if (typeof renderPendingImages === 'function') renderPendingImages();  // this tab's pasted-image chips
   if (typeof syncComposer === 'function') syncComposer();           // send/stop reflects THIS tab
-  try { if (window._activeTab) window._activeTab(id); } catch (e) {} // status bar follows active tab
+  // The root rides along: Java scopes session history, rewind and the status bar to
+  // the conversation's own folder, not to the workspace root.
+  try { if (window._activeTab) window._activeTab(id, rootPathOf(t)); } catch (e) {} // status bar follows active tab
   renderTabs();
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  if (typeof renderSupertabs === 'function') renderSupertabs();
+  // #messages is one scroll container shared by every pane, so a background pane's
+  // position is not preserved by the DOM on its own and every switch has to place it.
+  //
+  // Armed: restore THIS tab's own remembered spot, so a tab left scrolled up reopens
+  // where the user stopped reading instead of snapping down and hiding exactly the
+  // content they had scrolled up to see. A brand-new tab (both undefined) reads as
+  // caught-up, matching the previous always-jump behavior.
+  //
+  // Off: land on the bottom. That is the released behavior, and the toggle promises to
+  // change nothing while off — with the lock off the transcript follows unconditionally
+  // anyway, so a restored position would only survive until the next render.
+  //
+  // followTail is set directly either way rather than left to the 'scroll' event this
+  // write may fire: restoring a position the container already holds is a no-op that
+  // fires nothing, which would strand followTail at whatever the PREVIOUS tab left.
+  if (scrollLocked && t) {
+    followTail = t.followTail !== false;
+    messagesEl.scrollTop = followTail ? messagesEl.scrollHeight : (t.scrollTop || 0);
+  } else {
+    followTail = true;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+  updateJumpToLatest();
 }
 /* Loads a tab's stored model/effort/thinking/permission-mode into the composer UI
    + status bar. */
@@ -127,19 +171,39 @@ function applyTabSettings(t) {
   if (typeof applyModeUI === 'function') applyModeUI(permMode);
   if (typeof notifyStatusSelection === 'function') notifyStatusSelection();
 }
-function closeTab(id) {
+/**
+ * @param {string} id
+ * @param {{keepRoot?: boolean}} [opts] keepRoot: the caller is tearing the whole root
+ *   down (closeRoot), so skip the refill that would otherwise resurrect a tab in it.
+ */
+function closeTab(id, opts) {
+  opts = opts || {};
   const idx = tabs.findIndex(t => t.id === id);
   if (idx < 0) return;
   const t = tabs[idx];
+  // A root with no conversations has nothing to show, so its last one closing closes
+  // the root too — and when that is also the LAST root, closeRoot asks before taking
+  // the view down. Checked BEFORE any teardown: the confirmation is asynchronous, so
+  // a cancel has to find this tab still whole.
+  if (!opts.keepRoot && tabs.filter(x => x.rootId === t.rootId).length === 1) {
+    closeRoot(t.rootId); return;
+  }
   if (t.streaming && window._cancelRequest) window._cancelRequest(id);   // stop its stream
   if (window._disposeTab) window._disposeTab(id);                         // free its process
   if (rtab === t) rtab = null;
   if (pendingCardOwner === t) { pendingCard = null; pendingCardOwner = null; }
   t.pane.remove();
   tabs.splice(idx, 1);
-  if (!tabs.length) { createTab(); return; }
-  if (activeId === id) switchTab(tabs[Math.min(idx, tabs.length - 1)].id);
-  else renderTabs();
+  if (opts.keepRoot) return;   // closeRoot is tearing the whole root down
+  // Non-empty by construction: the guard above diverted the last-one-left case, so
+  // this root still has at least one conversation to land on.
+  const own = tabs.filter(x => x.rootId === t.rootId);
+  if (activeId === id) {
+    // Land on the neighbour WITHIN this root — the flat index next door may well
+    // belong to another root and would silently switch the user's folder.
+    const oidx = own.findIndex(x => tabs.indexOf(x) >= idx);
+    switchTab((oidx >= 0 ? own[oidx] : own[own.length - 1]).id);
+  } else renderTabs();
 }
 let dragTabId = null;
 function clearDropMarks() {
@@ -161,7 +225,9 @@ function moveTab(fromId, toId, after) {
 function renderTabs() {
   const c = document.getElementById('tabs'); if (!c) return;
   c.innerHTML = '';
-  tabs.forEach(t => {
+  // Only the active root's conversations. The array stays flat and globally ordered,
+  // so a filtered view keeps each root's tabs in the order the user dragged them into.
+  tabs.filter(t => t.rootId === activeRootId).forEach(t => {
     const el = document.createElement('div'); el.className = 'tab' + (t.id === activeId ? ' active' : '');
     el.draggable = true; el.dataset.id = t.id;
     el.innerHTML = '<span class="ti">' + ICONS.SUNBURST + '</span><span class="tt"></span><span class="tab-close">' + ICONS.X + '</span>';
@@ -176,6 +242,9 @@ function renderTabs() {
     });
     el.addEventListener('dragend', () => { dragTabId = null; el.classList.remove('dragging'); clearDropMarks(); });
     el.addEventListener('dragover', (e) => {
+      // dragTabId is null while a ROOT is being dragged, so returning without
+      // preventDefault is also what refuses a root dropped onto the conversation
+      // row — the browser shows the no-drop cursor and never fires drop.
       if (dragTabId === null || dragTabId === t.id) return;
       e.preventDefault(); e.dataTransfer.dropEffect = 'move';
       const r = el.getBoundingClientRect();
@@ -255,7 +324,8 @@ function startTitleEdit() {
     else if (e.key === 'Escape') { e.preventDefault(); inp.onblur = null; finish(false); }
   };
 }
-function newSession() { closeMenus(); createTab(); input.focus(); }
+/* New conversation in the ACTIVE root — a new FOLDER is newRootDirectory(). */
+function newSession() { closeMenus(); createTab({ rootId: activeRootId }); input.focus(); }
 
 /* /clear — start a fresh conversation IN PLACE. VSCode stays on the tab the
    command was invoked from rather than opening another one, so the tab, its
@@ -282,6 +352,13 @@ function clearSession() {
   t.compacting = false;
   t.downgradeWarned = null;
   t.pane.innerHTML = '';
+  // The old transcript's scroll state means nothing against an emptied pane: left alone, a
+  // scrolled-up scrollTop would reopen the fresh conversation scrolled into blank space
+  // with the button showing, the next time this tab is switched to while the lock is on.
+  // t is the active tab, so the module global needs resetting alongside it.
+  t.followTail = true; t.scrollTop = 0;
+  followTail = true;
+  if (typeof updateJumpToLatest === 'function') updateJumpToLatest();
   document.getElementById('convo-title').textContent = t.title;
   renderTabs();
   if (typeof renderPendingImages === 'function') renderPendingImages();

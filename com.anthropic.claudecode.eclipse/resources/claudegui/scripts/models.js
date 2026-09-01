@@ -436,8 +436,21 @@ function openAccount() {
   h += '<div class="aw-note">Usage limits live on your Claude account — the CLI doesn\'t expose the percentages here. <a href="https://claude.ai/settings/usage">Manage usage on claude.ai</a></div>';
   win.innerHTML = h;
   document.getElementById('account-overlay').classList.add('open');
+  // Closable by keyboard, not just the X. No hint is drawn — this window shows none and
+  // gains none. Both routes, matching every other overlay: the in-page listener covers the
+  // default scheme, and registerOverlayCancel lets Eclipse's own binding close it under
+  // Emacs, where Esc is a multi-stroke prefix that never reaches the page.
+  document.addEventListener('keydown', accountKey, true);
+  registerOverlayCancel(closeAccount, false);   // not tab-owned — no visibility guard
 }
-function closeAccount() { document.getElementById('account-overlay').classList.remove('open'); }
+function accountKey(e) {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAccount(); }
+}
+function closeAccount() {
+  document.getElementById('account-overlay').classList.remove('open');
+  document.removeEventListener('keydown', accountKey, true);
+  unregisterOverlayCancel();
+}
 
 /* ---- slash commands inside the actions menu ---- */
 function buildActionsSlash() {

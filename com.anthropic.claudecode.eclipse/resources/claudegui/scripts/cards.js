@@ -1,5 +1,58 @@
 /* cards.js — CLI-enforced permission decision card + AskUserQuestion card. */
 
+/* The CLI's own wording for "rejected, and here is what the user wants instead",
+   copied verbatim from the claude binary (verified byte-for-byte against
+   bin/claude.exe — note it ends with a NEWLINE, not a space; the user's text goes
+   on the following line). Using the CLI's phrasing is what makes
+   the model treat the tail as the user speaking instead of as anomalous tool
+   output, and the explicit rejection clause stops it narrating an edit that never
+   happened (#98). The CLI's other variant ends "STOP what you are doing and wait
+   for the user to tell you how to proceed." — that one is for a deny with no
+   instruction, and it is what the CLI already sends when this text is empty. */
+const DENY_WITH_INSTRUCTION =
+  "The user doesn't want to proceed with this tool use. The tool use was rejected " +
+  "(eg. if it was a file edit, the new_string was NOT written to the file). " +
+  "To tell you how to proceed, the user said:\n";
+
+/* Identifies the ONE middle-option label that means "switch this session to
+   acceptEdits". The label is built by primary_suggestion() in chat.rs, which is
+   the only thing that crosses the bridge — the suggestion's type does not — so
+   the wording is the signal. Its other branches are deliberately excluded:
+     "Yes, allow '<rule>' …"      addRules      — scoped to one tool/path
+     "Yes, allow all <Tool> …"    addRules      — scoped to one tool
+     "Yes, allow edits in <dir> …" addDirectories — scoped to one directory
+     "Yes, switch to <m> mode …"  setMode, but not acceptEdits
+   Flipping the indicator (and therefore the next spawn's --permission-mode) to
+   acceptEdits for any of those would hand the session BROADER permission than
+   the user agreed to on the card. Keep this in step with primary_suggestion. */
+const ACCEPTS_ALL_EDITS = /^Yes, allow all edits\b/;
+
+/* ---- plan approval (ExitPlanMode) ----
+   The CLI asks for ExitPlanMode like any other tool — `checkPermissions` returns
+   a bare {behavior:"ask", message:"Exit plan mode?"} with NO permission_suggestions,
+   so this card's three options cannot be derived from the wire the way an edit's
+   middle option is; they are synthesised here to match the CLI's own dialog.
+
+   Plan mode is ONE SHOT: approving ends it. The CLI then exits to the mode it
+   remembered as `prePlanMode`, which is NOT necessarily the one picked here — so
+   the choice is pushed explicitly with set_permission_mode after the allow. */
+const PLAN_TOOL = 'ExitPlanMode';
+/** decision value → permission mode the user asked for by choosing it. */
+const PLAN_MODE_FOR = { allowAuto: 'acceptEdits', allowManual: 'default' };
+/* The CLI's own wording for a rejected plan, copied byte-exact from claude.exe
+   (its `dmn`, up to the "\n\nRejected plan:\n" slot, which we can't fill — the
+   plan text isn't on this wire). NOT DENY_WITH_INSTRUCTION: that one asserts a
+   file edit was skipped, which is wrong here and would drop edit-rejection
+   language into a planning conversation. */
+const PLAN_REJECTED =
+  "The agent proposed a plan that was rejected by the user. The user chose to stay " +
+  "in plan mode rather than proceed with implementation.\n";
+/* The tail fragment of the CLI's deny-with-instruction variant, byte-exact and on
+   its own — generic enough to carry "here is what to change" feedback without the
+   file-edit clause that precedes it there. The blank-line separator is added at
+   the join site (below), NOT baked in here, so this stays greppable in claude.exe. */
+const PLAN_FEEDBACK = "To tell you how to proceed, the user said:\n";
+
 /* ---- permission decision card (claude --permission-prompt-tool) ---- */
 /**
  * Permission decision card (CLI can_use_tool). Blocks the CLI until _decide(reqId,…).
@@ -18,11 +71,16 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   // flips it green on allow / red on deny.
   const pendingTool = lastToolLine(curTurn);
   if (pendingTool) pendingTool.classList.add('pending');
-  const isEdit = /edit|write|multiedit|str_replace|notebook|create/i.test(toolName || '');
+  // Keyed on the tool NAME alone — never on "has no suggestions", which plenty of
+  // ordinary asks also satisfy and which would give them plan options.
+  const isPlan = (toolName === PLAN_TOOL);
+  const isEdit = !isPlan && /edit|write|multiedit|str_replace|notebook|create/i.test(toolName || '');
   const card = document.createElement('div'); card.className = 'decision';
 
   const q = document.createElement('div'); q.className = 'dec-q';
-  if (isEdit && detail) {
+  if (isPlan) {
+    q.textContent = 'Accept this plan?';
+  } else if (isEdit && detail) {
     q.appendChild(document.createTextNode('Make this edit to '));
     const c = document.createElement('code'); c.textContent = detail; q.appendChild(c);
     q.appendChild(document.createTextNode('?'));
@@ -38,32 +96,94 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   let resolved = false;
   function decide(d, msg) {
     if (resolved) return; resolved = true;
+    unregisterCardTimeout(reqId);
+    unregisterCardCancel();
     document.removeEventListener('keydown', onKey, true);
     // Resolve the pending tool's dot: allow → green (finished), deny → red (rejected).
     if (pendingTool) {
       pendingTool.classList.remove('pending');
       const dot = pendingTool.querySelector('.dot');
       if (dot) dot.className = (d === 'deny') ? 'dot red' : 'dot done';
+      // The plan line states the OUTCOME, not a diff summary — a green
+      // "Claude's Plan … User approved the plan" reads very differently from a
+      // red "… Stayed in plan mode", and the dot alone doesn't say which.
+      if (isPlan) {
+        const sub = document.createElement('div'); sub.className = 'tool-sub';
+        sub.textContent = planOutcomeText(d === 'deny');   // shared with the reload path
+        pendingTool.appendChild(sub);
+      }
     }
-    if (window._decide) window._decide(reqId, d, msg || '');
+    // Bare user prose must never be the deny message on its own: the CLI hands a
+    // deny message to the model as an is_error tool_result, so unframed prose there
+    // reads as anomalous/injected output, and the model — told only that the tool
+    // failed — would narrate success for an edit that never ran (#98).
+    //
+    // The CLI itself has a canonical wrapper for exactly this case. Prefixing the
+    // user's words with DENY_WITH_INSTRUCTION reuses the CLI's own wording, so the
+    // model reads the tail as the user speaking rather than as stray tool output.
+    // The alternative (deny + a separately queued user message) costs an extra turn
+    // and produces a dead-end "the edit was declined" reply before the real one,
+    // because the model answers the deny before the queued text arrives.
+    //
+    // Wire path: Java completes "deny" + text, and chat.rs's `decision.len() > 4`
+    // slices the text back out as the deny message — the same channel as before,
+    // now carrying CLI-authored framing. JS-only; no DLL rebuild.
+    let out = '';
+    if (d === 'deny' && isPlan) out = msg ? PLAN_REJECTED + '\n' + PLAN_FEEDBACK + msg : PLAN_REJECTED;
+    else if (d === 'deny' && msg) out = DENY_WITH_INSTRUCTION + msg;
+    if (window._decide) window._decide(reqId, d, out);
+    // Approving the plan ENDS plan mode, so the indicator has to move off "Plan"
+    // — and to the mode the user actually chose, which the CLI won't do for us
+    // (it restores its own prePlanMode). Push it only AFTER the allow is written,
+    // or the control request races the CLI's own transition.
+    if (isPlan && PLAN_MODE_FOR[d]) {
+      const mode = PLAN_MODE_FOR[d];
+      if (t && window._setPermissionMode) {
+        try { window._setPermissionMode(t.id, mode); } catch (e) {}
+      }
+      if (typeof adoptModeForTab === 'function') adoptModeForTab(t, mode);
+    }
+    // "Yes, allow all edits …" IS a mode switch: chat.rs echoes the CLI's setMode
+    // suggestion back as updatedPermissions, so from here on the session behaves
+    // exactly like "Edit automatically". Move the indicator to match, or it keeps
+    // claiming "Manual" while nothing prompts again.
+    // NOT while the tab is in Plan. There, "allow all edits this session" answers
+    // the pending edit — it is not a request to leave planning. Adopting it anyway
+    // set t.permMode='acceptEdits', so the next message respawned out of plan mode,
+    // and the CLI then remembered prePlanMode==='acceptEdits', which SUPPRESSES the
+    // setMode suggestion on every later card (the missing middle option). Leaving
+    // t.permMode alone keeps Plan sticky exactly as it was before this flip existed.
+    if (d === 'allowRemember' && ACCEPTS_ALL_EDITS.test(rememberLabel || '')
+        && !(t && t.permMode === 'plan')
+        && typeof adoptModeForTab === 'function') {
+      adoptModeForTab(t, 'acceptEdits');
+    }
     clearBottomCard();                          // card disappears — composer returns
     if (d === 'deny' && msg) {
-      addAnswered(msg, pane); startFreshTurn();  // instruction stays; reply goes below
+      // Keep the "User answered:" card: this is a decision the user made on a card,
+      // and it reads as such. (A reload replays it from the transcript as a plain
+      // user line, since that is what it is on the wire.)
+      addAnswered(msg, pane);
+      startFreshTurn();
     } else {
       // Process continues after the decision — start a fresh body below the edits
       // and re-show the working indicator so the user sees activity again.
       finalizeThink(); curBody = null; curText = '';
       showWorking();
     }
-    scrollBottom();
+    scrollBottom();   // obeys Scroll Lock — answering must not move them either
   }
 
   // Middle "remember" option is contextual: its label comes from the CLI's own
   // permission_suggestion (edits→"all edits", Bash→the command, etc.), and is
   // omitted entirely when the CLI offers no suggestion for this tool.
-  const opts = [['allow', 'Yes']];
-  if (rememberLabel) opts.push(['allowRemember', rememberLabel]);
-  opts.push(['deny', 'No']);
+  const opts = isPlan
+    ? [['allowAuto',   'Yes, and auto-accept'],
+       ['allowManual', 'Yes, and manually approve edits'],
+       ['deny',        'No, keep planning']]
+    : [['allow', 'Yes']];
+  if (!isPlan && rememberLabel) opts.push(['allowRemember', rememberLabel]);
+  if (!isPlan) opts.push(['deny', 'No']);
   opts.forEach(([d, label], i) => {
     const opt = document.createElement('div'); opt.className = 'dec-opt' + (i === 0 ? ' sel' : '');
     opt.setAttribute('data-d', d);
@@ -79,16 +199,24 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   const instead = document.createElement('div'); instead.className = 'dec-instead';
   instead.innerHTML = '<span class="num">' + insteadNum + '</span>';
   const inp = document.createElement('input'); inp.type = 'text';
-  inp.placeholder = 'Tell Claude what to do instead';
+  inp.placeholder = isPlan ? 'Tell Claude what to change' : 'Tell Claude what to do instead';
   inp.onkeydown = (e) => {
     e.stopPropagation();
-    if (e.key === 'Enter') { e.preventDefault(); const v = inp.value.trim(); if (v) decide('deny', '[User typed]: ' + v); }
+    if (e.key === 'Enter') { e.preventDefault(); const v = inp.value.trim(); if (v) decide('deny', v); }
     else if (e.key === 'Escape') { e.preventDefault(); decide('deny', ''); }
   };
   instead.appendChild(inp); card.appendChild(instead);
 
-  const esc = document.createElement('div'); esc.className = 'dec-esc'; esc.textContent = 'Esc to cancel';
+  // Label comes from the live Eclipse binding (Esc, or Ctrl+G under Emacs). Always built,
+  // then hidden when nothing is bound — an element that was never created could not repaint
+  // itself if the user binds a key while the card is up.
+  const esc = document.createElement('div'); esc.className = 'dec-esc';
   card.appendChild(esc);
+  registerHintPainter(esc, () => {
+    const t = cancelHintText();
+    esc.textContent = t;
+    esc.style.display = t ? '' : 'none';
+  });
 
   // Number-key shortcuts map to the visible options in order; Esc cancels.
   function onKey(e) {
@@ -98,6 +226,35 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
     if (n >= 1 && n <= opts.length) { e.preventDefault(); decide(opts[n - 1][0], ''); }
   }
   document.addEventListener('keydown', onKey, true);
+  registerCardCancel(() => decide('deny', ''));
+
+  // Java already answered "deny" to the CLI by the time this fires (its own
+  // future.get(...) timed out) — this is presentation-only cleanup, so it must
+  // NOT call window._decide again (that reqId is no longer pending on the Java
+  // side; a stray second answer would be sent for nothing).
+  registerCardTimeout(reqId, () => {
+    if (resolved) return; resolved = true;
+    unregisterCardCancel();
+    document.removeEventListener('keydown', onKey, true);
+    if (pendingTool) {
+      pendingTool.classList.remove('pending');
+      const dot = pendingTool.querySelector('.dot');
+      if (dot) dot.className = 'dot red';
+      if (isPlan) {
+        const sub = document.createElement('div'); sub.className = 'tool-sub';
+        sub.textContent = planOutcomeText(true);
+        pendingTool.appendChild(sub);
+      }
+    }
+    clearBottomCard();
+    // addAnswered inserts a new sibling turn div; startFreshTurn must follow it
+    // (curTurn = null) or the CLI's continuation streams into the turn ABOVE this
+    // note instead of below it — the same pairing decide()'s message-deny branch
+    // uses, not the silent plain-deny branch (which inserts nothing).
+    addAnswered('(No response — the request timed out and was denied.)', pane);
+    startFreshTurn();
+    scrollBottom();
+  });
 
   showBottomCard(card);
 };
@@ -135,7 +292,10 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
 
   function answeredText(i) {
     const st = state[i], q = questions[i];
-    if (st.choice === 'other') return '[User typed]: ' + st.other.trim();
+    // No "[User typed]: " prefix — this is a legitimate answer on the allow path
+    // (updatedInput.answers). The prefix leaked into the visible bubble and made
+    // the model read the answer as anomalous tool output (issue #98).
+    if (st.choice === 'other') return st.other.trim();
     if (st.choice != null && q.options[st.choice]) return q.options[st.choice].label;
     return '';
   }
@@ -144,6 +304,8 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   }
   function finish() {
     if (resolved || !allAnswered()) return; resolved = true;
+    unregisterCardTimeout(reqId);
+    unregisterCardCancel();
     document.removeEventListener('keydown', onKey, true);
     resolveDot(false);
     const answers = questions.map((q, i) => ({
@@ -153,14 +315,16 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     if (window._answerQuestion) window._answerQuestion(reqId, JSON.stringify(answers));
     clearBottomCard();
     const summary = answers.map(a => questions.length > 1 ? (a.header + ': ' + a.answer) : a.answer).join('\n');
-    addAnswered(summary, pane); startFreshTurn(); scrollBottom();
+    addAnswered(summary, pane); startFreshTurn(); scrollBottom();   // obeys Scroll Lock
   }
   function cancel() {
     if (resolved) return; resolved = true;
+    unregisterCardTimeout(reqId);
+    unregisterCardCancel();
     document.removeEventListener('keydown', onKey, true);
     resolveDot(true);
     if (window._answerQuestion) window._answerQuestion(reqId, '[]');
-    clearBottomCard(); scrollBottom();
+    clearBottomCard(); scrollBottom();   // obeys Scroll Lock
   }
 
   function render() {
@@ -206,26 +370,82 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     otxt.appendChild(Object.assign(document.createElement('div'), { className: 'q-otitle', textContent: 'Other' }));
     orow.appendChild(otxt);
     orow.onclick = () => { state[activeQ].choice = 'other'; render();
-      setTimeout(() => { const i = card.querySelector('.q-other-in input'); if (i) i.focus(); }, 0); };
+      setTimeout(() => { const i = card.querySelector('.q-other-in textarea'); if (i) i.focus(); }, 0); };
     card.appendChild(orow);
     if (state[activeQ].choice === 'other') {
       const oin = document.createElement('div'); oin.className = 'q-other-in';
-      const inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = 'Type your answer'; inp.value = state[activeQ].other;
-      inp.oninput = () => { state[activeQ].other = inp.value; submit.classList.toggle('ready', allAnswered()); };
-      inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(); } };
+      // textarea, not input: a single-line <input> has no notion of a newline at
+      // all, so Shift+Enter had nothing to fall through to. Mirrors the main
+      // composer (#input in ui.js) — auto-grow on input, Enter submits, Shift+Enter
+      // is left alone to insert a newline natively.
+      const inp = document.createElement('textarea'); inp.rows = 1; inp.placeholder = 'Type your answer'; inp.value = state[activeQ].other;
+      // box-sizing is border-box globally (tokens.css), so style.height has to cover padding
+      // AND border — but scrollHeight only covers content + padding. Setting height straight
+      // from scrollHeight leaves the box short by exactly the border, so it overflows by 2px
+      // at every size and shows a scrollbar that never goes away. offsetHeight - clientHeight
+      // is that border. The composer doesn't need this: #input has no padding or border.
+      const grow = () => {
+        inp.style.height = 'auto';
+        const natural = inp.scrollHeight + (inp.offsetHeight - inp.clientHeight);
+        inp.style.height = Math.min(natural, 160) + 'px';
+        // Only scroll once the answer is genuinely taller than the cap.
+        inp.style.overflowY = natural > 160 ? 'auto' : 'hidden';
+      };
+      inp.oninput = () => { state[activeQ].other = inp.value; submit.classList.toggle('ready', allAnswered()); grow(); };
+      inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finish(); } };
       oin.appendChild(inp); card.appendChild(oin);
+      // render() re-seeds .value from saved state on every option click / question-tab
+      // switch, but oninput (where grow() normally runs) doesn't fire for that — size
+      // it once here too, or a revisited multi-line answer comes back collapsed to one
+      // row. Needs to be in the DOM first for scrollHeight to mean anything.
+      grow();
     }
     submit.className = 'q-submit' + (allAnswered() ? ' ready' : '');
     submit.innerHTML = '<span class="num">1</span><span>Submit answers</span>';
     submit.onclick = finish;
     card.appendChild(submit);
-    card.appendChild(Object.assign(document.createElement('div'), { className: 'q-esc', textContent: 'Esc to cancel' }));
+    // Live Eclipse binding label, not a hardcoded "Esc" — under the Emacs scheme Esc is a
+    // multi-stroke prefix and never arrives, so naming it would be a lie. Hidden, not
+    // omitted, so it can repaint if the binding changes while the card is open.
+    const qesc = Object.assign(document.createElement('div'), { className: 'q-esc' });
+    card.appendChild(qesc);
+    registerHintPainter(qesc, () => {
+      const t = cancelHintText();
+      qesc.textContent = t;
+      qesc.style.display = t ? '' : 'none';
+    });
   }
   function onKey(e) {
     if (resolved) return;
-    if (e.key === 'Escape' && (!document.activeElement || document.activeElement.tagName !== 'INPUT')) { e.preventDefault(); cancel(); }
+    // Capture-phase on document: runs before the Other field's own onkeydown, so
+    // that handler's stopPropagation can't shield it — the tag check here is what
+    // has to do it. Must accept TEXTAREA too now that Other is one (was INPUT-only
+    // when it was a single-line <input>), or Escape while typing an answer
+    // dismisses the whole card and throws away what was typed.
+    const ae = document.activeElement;
+    const inField = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+    if (e.key === 'Escape' && !inField) { e.preventDefault(); cancel(); }
   }
   document.addEventListener('keydown', onKey, true);
+  registerCardCancel(cancel);
+
+  // Java already answered "[]" (dismissed) to the CLI by the time this fires — see
+  // the matching comment on the approval card's registerCardTimeout for why this
+  // must be presentation-only and never call window._answerQuestion again.
+  registerCardTimeout(reqId, () => {
+    if (resolved) return; resolved = true;
+    unregisterCardCancel();
+    document.removeEventListener('keydown', onKey, true);
+    resolveDot(true);
+    clearBottomCard();
+    // Same pairing as finish(): addAnswered's new sibling turn div requires
+    // startFreshTurn right after it (see the matching comment on the approval
+    // card's timeout handler) so Claude's continuation lands below this note.
+    addAnswered('(No response — the question timed out and was dismissed.)', pane);
+    startFreshTurn();
+    scrollBottom();
+  });
+
   render(); showBottomCard(card);
 };
 
