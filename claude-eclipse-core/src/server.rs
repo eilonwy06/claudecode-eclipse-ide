@@ -100,6 +100,11 @@ pub struct Server {
     port_min: u16,
     port_max: u16,
     shutdown_tx: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    /// Handle to the Axum serve task. `axum::serve` owns the TcpListener and only
+    /// releases it when its future returns, which graceful shutdown will not do
+    /// while any client still holds a connection open. Keeping the handle lets
+    /// stop() cancel the task outright so the port is free before we return.
+    serve_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     port: AtomicU16,
     running: AtomicBool,
     /// Pending debounce task for selection-changed notifications (50 ms).
@@ -139,6 +144,7 @@ impl Server {
             port_min,
             port_max,
             shutdown_tx: Mutex::new(None),
+            serve_task: Mutex::new(None),
             port: AtomicU16::new(0),
             running: AtomicBool::new(false),
             selection_debounce: Mutex::new(None),
@@ -172,8 +178,25 @@ impl Server {
                     }
                 }
                 Err(std::io::Error::other("No available port"))
-            })
-            .expect("Failed to bind HTTP server to any port");
+            });
+
+        // No bindable port in the configured range — an empty range, or one whose
+        // every port is already taken. Report failure instead of panicking: this is
+        // called through JNI, where an unwind across the extern "system" boundary
+        // aborts the whole IDE. Java's HttpSseServer.start() already treats 0 as
+        // "did not start" and leaves `running` false.
+        let listener = match listener {
+            Ok(l) => l,
+            Err(_) => {
+                if crate::is_debug() {
+                    eprintln!(
+                        "[server] no free port in range {}-{}; server not started",
+                        port_min, port_max
+                    );
+                }
+                return 0;
+            }
+        };
 
         let bound_port = listener.local_addr().unwrap().port();
         self.port.store(bound_port, Ordering::Relaxed);
@@ -182,7 +205,7 @@ impl Server {
         *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
 
         let state = Arc::clone(&self.state);
-        self.runtime.spawn(async move {
+        let serve_task = self.runtime.spawn(async move {
             let app = Router::new()
                 .route("/sse", get(sse_handler))
                 .route("/messages", post(messages_handler))
@@ -196,6 +219,7 @@ impl Server {
                 .await
                 .ok();
         });
+        *self.serve_task.lock().unwrap() = Some(serve_task);
 
         self.running.store(true, Ordering::Relaxed);
         bound_port
@@ -219,9 +243,28 @@ impl Server {
         // and the Axum tasks complete before the runtime shuts down.
         self.state.clients.lock().unwrap().clear();
 
-        // Signal Axum to stop accepting new connections.
+        // Signal Axum to stop accepting new connections, giving in-flight responses
+        // the chance to finish on their own.
         if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
             let _ = tx.send(());
+        }
+
+        // Then cancel the serve task and wait for the cancellation to land, so the
+        // TcpListener is dropped and the port is free before this returns.
+        //
+        // Graceful shutdown alone is not enough: it waits for every open connection,
+        // and a connected CLI keeps one open indefinitely, so the listener stayed
+        // bound and the next start had to pick a different port (measured: a server
+        // reused its port across 13 restarts with no conversation open, then climbed
+        // the moment one connected). Every caller that restarts this server also
+        // reconnects its CLI sessions, so cutting the old connections here tears
+        // down nothing that was not already being replaced.
+        //
+        // block_on is safe: stop() is only reached from the JNI thread (serverStop
+        // or Drop), never from inside the runtime.
+        if let Some(task) = self.serve_task.lock().unwrap().take() {
+            task.abort();
+            let _ = self.runtime.block_on(task);
         }
     }
 
