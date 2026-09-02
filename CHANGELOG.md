@@ -4,7 +4,15 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.16] — 2026-09-01 *(current)*
+## [3.1.17] — 2026-09-02 *(current)*
+
+### Fixed
+- **Fixed port usage.** No more conflicts or pile-up between MCP servers and bridge relays — a restart reuses its port instead of stranding it and climbing to the next one.
+- **Ports no longer die on a bad range.** An unusable port range used to take Eclipse with it; now the server just stays stopped, and the range is checked before it can be saved.
+
+---
+
+## [3.1.16] — 2026-09-01
 
 ### Added
 - **Conversations can run in any folder, not just the workspace root.** A row of directory tabs sits above the conversation tabs — one per folder, each with its own conversations and its own session history. Add a folder from that row or from a project's context menu; Claude asks before it runs in one for the first time ([#93](https://github.com/eilonwy06/claudecode-eclipse-ide/issues/93)).
