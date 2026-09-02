@@ -148,8 +148,20 @@ public class Activator extends AbstractUIPlugin {
         String tokenToRestore = null;
 
         if (httpSseServer != null && httpSseServer.isRunning()) {
-            portToRestore = httpSseServer.getPort();
-            tokenToRestore = httpSseServer.getAuthToken();
+            // Keeping the same port across a restart avoids disturbing anything that
+            // already knows it — but only while that port is still one we are allowed
+            // to serve on. The native side tries the preferred port BEFORE it consults
+            // the range, so handing it a port outside the configured range would rebind
+            // there and silently ignore the range the user just set. Leaving it at 0
+            // makes the scan pick a valid port instead.
+            int current = httpSseServer.getPort();
+            IPreferenceStore prefs = getPreferenceStore();
+            int portMin = prefs.getInt(Constants.PREF_PORT_MIN);
+            int portMax = prefs.getInt(Constants.PREF_PORT_MAX);
+            if (current >= portMin && current <= portMax) {
+                portToRestore = current;
+                tokenToRestore = httpSseServer.getAuthToken();
+            }
         }
 
         shutdown();
