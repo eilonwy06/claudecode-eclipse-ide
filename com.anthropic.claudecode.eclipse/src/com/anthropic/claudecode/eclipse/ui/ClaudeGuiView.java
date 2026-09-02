@@ -571,6 +571,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             pushCliModels();         // ditto for the installed binary's model support
             pushEditKeyHints();      // label the right-click menu with the user's real keys
             pushDebugMode();         // let the page report its keys while Debug mode is on
+            pushSpinnerVerbs();      // which gerund categories the working indicator cycles
             // An "Open Claude Code Here" that arrived while the view was still loading.
             String queuedRoot = pendingRootPath;
             if (queuedRoot != null) { pendingRootPath = null; openRootDirectory(queuedRoot); }
@@ -1293,6 +1294,27 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         browser.execute("window.__ccDebug = " + DebugModeUi.isDebugEnabled() + ";");
     }
 
+    /**
+     * Tells the page which optional slices of the working-indicator gerund list are in
+     * rotation (Preferences &gt; Claude Code &gt; Miscellaneous Configuration). Sent as one
+     * JSON object rather than positional booleans so adding a category later doesn't
+     * change the signature on either side. Re-pushed on activation, like the theme and
+     * Debug mode, so ticking a box takes effect on the next click into the view.
+     */
+    private void pushSpinnerVerbs() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        org.eclipse.jface.preference.IPreferenceStore store =
+                Activator.getDefault().getPreferenceStore();
+        Map<String, Boolean> sets = new HashMap<>();
+        sets.put("deprecated", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_DEPRECATED));
+        sets.put("pack1", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_PACK_ONE));
+        sets.put("pack2", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_PACK_TWO));
+        sets.put("dank", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_DANK));
+        sets.put("vibecoder", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_VIBECODER));
+        browser.execute("window.onSpinnerVerbs && window.onSpinnerVerbs('"
+                + esc(new Gson().toJson(sets)) + "')");
+    }
+
     private void pushEditKeyHints() {
         if (browser == null || browser.isDisposed() || !pageLoaded) return;
         org.eclipse.ui.keys.IBindingService bs =
@@ -1891,6 +1913,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         // change shows up in the right-click menu's hints on the next activation.
         pushEditKeyHints();
         pushDebugMode();
+        pushSpinnerVerbs();
     }
 
     /**

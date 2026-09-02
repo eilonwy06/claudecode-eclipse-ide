@@ -245,6 +245,38 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 Constants.PREF_QUESTION_TIMEOUT_SECONDS);
         addTimeoutFields("Diff review:", Constants.PREF_DIFF_REVIEW_TIMEOUT_MODE,
                 Constants.PREF_DIFF_REVIEW_TIMEOUT_SECONDS);
+
+        Label miscSeparator = new Label(getFieldEditorParent(), SWT.SEPARATOR | SWT.HORIZONTAL);
+        miscSeparator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+
+        Label miscLabel = new Label(getFieldEditorParent(), SWT.NONE);
+        miscLabel.setText("Miscellaneous Configuration");
+        miscLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+
+        addField(new BooleanFieldEditor(
+                Constants.PREF_SPINNER_DEPRECATED,
+                "Use deprecated spinner verbs",
+                getFieldEditorParent()));
+
+        addField(new BooleanFieldEditor(
+                Constants.PREF_SPINNER_PACK_ONE,
+                "Use expansion pack one spinner verbs",
+                getFieldEditorParent()));
+
+        addField(new BooleanFieldEditor(
+                Constants.PREF_SPINNER_PACK_TWO,
+                "Use expansion pack two spinner verbs",
+                getFieldEditorParent()));
+
+        addField(new BooleanFieldEditor(
+                Constants.PREF_SPINNER_DANK,
+                "Use dank spinner verbs",
+                getFieldEditorParent()));
+
+        addField(new BooleanFieldEditor(
+                Constants.PREF_SPINNER_VIBECODER,
+                "Assert being a vibecoder",
+                getFieldEditorParent()));
     }
 
     /**

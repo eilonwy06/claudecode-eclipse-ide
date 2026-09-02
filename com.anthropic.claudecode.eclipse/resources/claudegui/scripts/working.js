@@ -3,34 +3,102 @@
 
 /* ---- working indicator (sunburst + gerund) ---- */
 const GERUNDS = [
-  'Absquatulating','Abstracting','Accomplishing','Actioning','Actualizing','Architecting','Baking','Beaming','Beboppin\'','Befuddling',
+  'Absquatulating','Abstracting','Accomplishing','Actioning','Actualizing','Architecting','Aura farming','Baking','Basking','Beaming','Beboppin\'','Befuddling',
   'Billowing','Blanching','Bloviating','Boogieing','Boondoggling','Booping','Bootstrapping','Brainstorming',
-  'Brainrotting','Brewing','Bunning','Burrowing','Calculating','Canoodling','Caramelizing','Cascading',
+  'Brainrotting','Brewing','Bunning','Burrowing','Bussing','Calculating','Canoodling','Cappin\'','Caramelizing','Caramelizing onions','Cascading',
   'Catapulting','Cerebrating','Channeling','Channelling','Chock-a-blocking','Choreographing','Churning','Clauding',
   'Coalescing','Cogitating','Combobulating','Compartmentalizing','Composing','Computing','Concocting','Confabulating','Considering',
   'Contemplating','Cooking','Coruscating','Crafting','Creating','Crocheting','Crunching','Crystallizing','Cultivating','Deciphering',
-  'Deliberating','Determining','Dilly-dallying','Discombobulating','Doing','Doodling','Drizzling','Ebbing','Eclipsing',
-  'Effecting','Effervescing','Elucidating','Embellishing','Encapsulating','Enchanting','Envisioning','Evaporating','Fanum taxing','Felting','Fermenting',
-  'Fiddle-faddling','Finagling','Fishmongering','Flabbergasting','Flambéing','Flibbertigibbeting','Flowing','Flummoxing','Fluttering',
+  'Deliberating','Determining','Dilly-dallying','Discombobulating','Doing','Doodling','Drizzling','Ebbing','Eclipsing','Edging',
+  'Effecting','Effervescing','Elucidating','Embellishing','Encapsulating','Enchanting','Envisioning','Evaporating','Fanum taxing','Fathoming','Felting','Fermenting',
+  'Fiddle-faddling','Figuring','Finagling','Fishmongering','Flabbergasting','Flambéing','Flibbertigibbeting','Flowing','Flummoxing','Fluttering',
   'Fluxing','Forging','Forming','Frolicking','Frosting','Gallivanting','Galloping','Garnishing',
-  'Generating','Gesticulating','Germinating','Gerrymandering','Gibbergaberring','Gitifying','Gooning','Gravitating','Grooving',
-  'Gusting','Harmonizing','Hashing','Hatching','Herding','Honking','Hullaballooing','Hyperspacing','Hypnotizing',
+  'Generating','Gesticulating','Germinating','Gerrymandering','Gibbergaberring','Gitifying','Glazing','Gooning','Gravitating','Grooving',
+  'Gusting','Gyatting','Harmonizing','Hashing','Hatching','Herding','Honing','Honking','Hullaballooing','Hyperspacing','Hypnotizing',
   'Hyperenthusiasticating','Ideating','Imagining','Improvising','Incubating','Inferring','Infusing','Inheriting','Intellectualizing',
-  'Ionizing','Jitterbugging','Journaling','Julienning','Kneading','Leavening','Levitating','Lollygagging',
+  'Ionizing','Jitterbugging','Journaling','Julienning','Kneading','Leavening','Levitating','Lollygagging','Looksmaxxing',
   'Malding','Manifesting','Marinating','Meandering','Meowing','Metamorphosing','Mewing','Misting','Moonwalking',
   'Moseying','Mulling','Mustering','Musing','Nebulizing','Nesting','Newspapering','Noodling',
-  'Nucleating','Orbiting','Orchestrating','Osmosing','Perambulating','Percolating','Perplexing','Perusing',
-  'Philosophising','Photosynthesizing','Pollinating','Polymorphing','Pondering','Pontificating','Pouncing','Precipitating','Prestidigitating',
+  'Nucleating','Orbiting','Orchestrating','Osmosing','Perambulating','Percolating','Perplexing','Perusing','Picturing',
+  'Philosophising','Photosynthesizing','Poggering','Pollinating','Polymorphing','Pondering','Pontificating','Pouncing','Precipitating','Prestidigitating',
   'Processing','Proofing','Propagating','Puttering','Puzzling','Quantumizing','Razzle-dazzling','Razzmatazzing',
-  'Ratiocinating','Recombobulating','Reticulating','Rizzing','Rizzmastering','Roosting','Ruminating','Sautéing','Scampering',
-  'Schlepping','Scurrying','Seasoning','Shenaniganing','Shimmying','Simmering','Skedaddling','Sketching',
+  'Ratiocinating','Reckoning','Recombobulating','Reticulating','Rizzing','Rizzmastering','Roosting','Ruminating','Sautéing','Scampering',
+  'Schlepping','Scurrying','Seasoning','Shenaniganing','Shimmying','Sifting','Sigmaing','Simmering','Skedaddling','Sketching',
   'Skibidirizzing','Skitterscattering','Skylarking','Slithering','Smooshing','Sock-hopping','Sous-viding','Spelunking','Spinning',
   'Sprouting','Stewing','Sublimating','Susurrating','Swirling','Swooping','Symbioting','Synthesizing','Tempering',
-  'Thinking','Thundering','Tinkering','Tomfoolering','Topsy-turvying','Transfiguring','Transmogrifying','Transmuting','Twisting',
-  'Undulating','Unfurling','Unravelling','Vibing','Vulcanizing','Waddling','Wandering','Warping','Whatchamacalliting',
+  'Thinking','Thundering','Tinkering','Tomfoolering','Topsy-turvying','Transfiguring','Transmogrifying','Transmuting','Triangulating','Twisting',
+  'Undulating','Unfurling','Unravelling','Untangling','Vibecoding','Vibing','Vulcanizing','Waddling','Wandering','Warping','Weighing','Whatchamacalliting',
   'Whirlpooling','Whirring','Whisking','Wibbling','Wewertsing','Woolgathering','Working','Wrangling','Xanthating','Xeriscaping','Xylographing','Zambasdting',
   'Zesting','Zigzagging','Zooming'
 ];
+
+/* Optional slices of GERUNDS, each behind a preference checkbox (Preferences >
+   Claude Code > Miscellaneous Configuration). These are MEMBERSHIP LABELS over the
+   master list above, not separate word lists: a word rotates when it belongs to no
+   set at all, or to at least one ENABLED set. Written this way so a category can
+   never silently disagree with the master list: a name here that isn't in GERUNDS
+   simply matches nothing, which the test asserts against.
+
+   The sets are pairwise DISJOINT — every word belongs to at most one category, so a
+   checkbox is the sole owner of the words it names. Wewertsing and Zambasdting read
+   as pack-one words but are dank; they live in `dank` alone, which is why the two of
+   them leave the rotation by default. The union rule above still holds and needs no
+   special case either way; disjointness is a rule about the data, and the test
+   enforces it so a word can't quietly acquire a second owner. */
+const VERB_SETS = {
+  deprecated: [
+    'Accomplishing','Actioning','Actualizing','Doing','Effecting','Processing'
+  ],
+  pack1: [
+    'Absquatulating','Abstracting','Brainstorming','Chock-a-blocking','Compartmentalizing',
+    'Confabulating','Coruscating','Crocheting','Eclipsing','Effervescing','Encapsulating',
+    'Evaporating','Felting','Fishmongering','Flabbergasting','Fluxing','Gerrymandering',
+    'Gibbergaberring','Gravitating','Hypnotizing','Hyperenthusiasticating','Inheriting',
+    'Intellectualizing','Journaling','Perplexing','Polymorphing','Ratiocinating',
+    'Skitterscattering','Skylarking','Sous-viding','Susurrating','Transmogrifying',
+    'Vulcanizing','Woolgathering','Xanthating','Xeriscaping','Xylographing','Zooming'
+  ],
+  pack2: [
+    'Fathoming','Triangulating','Picturing','Figuring','Weighing','Honing','Sifting',
+    'Untangling','Reckoning','Caramelizing onions','Basking'
+  ],
+  dank: [
+    'Brainrotting','Wewertsing','Fanum taxing','Gooning','Malding','Mewing','Rizzing',
+    'Rizzmastering','Skibidirizzing','Zambasdting','Aura farming','Looksmaxxing','Sigmaing',
+    'Glazing','Bussing','Cappin\'','Gyatting','Edging','Poggering'
+  ],
+  vibecoder: ['Vibecoding']
+};
+/* Mirrors the preference defaults in ClaudePreferenceInitializer, so the rotation is
+   already correct in the window before the first onSpinnerVerbs push arrives — and
+   stays correct if one never does (an older host that doesn't send it). */
+let verbSetsEnabled = { deprecated: true, pack1: true, pack2: true, dank: false, vibecoder: false };
+/* The words currently in rotation: everything not claimed by any set, plus every
+   word claimed by at least one enabled set. */
+function activeGerunds() {
+  const claimed = new Set(), allowed = new Set();
+  for (const key of Object.keys(VERB_SETS)) {
+    for (const w of VERB_SETS[key]) {
+      claimed.add(w);
+      if (verbSetsEnabled[key]) allowed.add(w);
+    }
+  }
+  return GERUNDS.filter(w => !claimed.has(w) || allowed.has(w));
+}
+/* Preference push from ClaudeGuiView. Rebuilding the pool is not enough: the shuffle
+   is only regenerated when gerundIdx wraps, and the hold grows a second per cycle, so
+   a stale shuffle would keep serving switched-off words for the rest of the session.
+   Reshuffle and rewind the index. A gerund mid-morph is left alone — the next cycle
+   picks from the new pool. */
+window.onSpinnerVerbs = function (json) {
+  let prefs;
+  try { prefs = JSON.parse(json); } catch (e) { return; }
+  for (const key of Object.keys(verbSetsEnabled))
+    if (typeof prefs[key] === 'boolean') verbSetsEnabled[key] = prefs[key];
+  shuffledGerunds = shuffleGerunds();
+  gerundIdx = 0;
+};
+
 let workingEl = null, workingGerund = '', lastTokens = 0;
 let gerundCycleTimer = null, gerundTypeTimer = null, gerundIdx = 0, gerundHold = 0;
 const GERUND_HOLD_START = 5000;   // first gerund holds 5s, then 6s, 7s, 8s, 9s…
@@ -47,7 +115,7 @@ function renderThinkLabel() {
   if (lbl) lbl.textContent = 'Thinking…' + (lastTokens > 0 ? ' · ' + lastTokens.toLocaleString() + ' tokens' : '');
 }
 function shuffleGerunds() {
-  const arr = GERUNDS.slice();
+  const arr = activeGerunds();
   for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; }
   return arr;
 }

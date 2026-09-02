@@ -70,6 +70,17 @@ public final class Constants {
     /** Claude's idle re-run timer for the statusLine command, in seconds. */
     public static final String PREF_STATUSLINE_REFRESH_SECONDS = "statuslineRefreshSeconds";
 
+    // ── Claude Code view spinner verbs ──────────────────────────────────────
+    // Which optional slices of the working-indicator gerund list are in rotation.
+    // Each names a membership set over the single master list in working.js
+    // (VERB_SETS there); a word rotates when it belongs to no set, or to at least
+    // one enabled set. Applied on page load and on view activation.
+    public static final String PREF_SPINNER_DEPRECATED = "spinnerVerbsDeprecated";
+    public static final String PREF_SPINNER_PACK_ONE = "spinnerVerbsPackOne";
+    public static final String PREF_SPINNER_PACK_TWO = "spinnerVerbsPackTwo";
+    public static final String PREF_SPINNER_DANK = "spinnerVerbsDank";
+    public static final String PREF_SPINNER_VIBECODER = "spinnerVerbsVibecoder";
+
     public static final String DEFAULT_CLAUDE_CMD = "claude";
 
     public static final String IMG_CLEAR_REFRESH = "clear_co";
