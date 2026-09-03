@@ -4,7 +4,20 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.17] — 2026-09-02 *(current)*
+## [3.1.18] — 2026-09-03 *(current)*
+
+### Changed
+- Persistent bridge relay ports.
+
+### Added (Development tools)
+- **Stop/Start Server** in the Claude IDE Server view, taking the server and its relay down and back up together.
+
+### Fixed
+- **A dropped relay re-establishes itself**, and a disconnected peer no longer takes the relay down with it — either way, the MCP server's port is not affected and should work the same as before.
+
+---
+
+## [3.1.17] — 2026-09-02
 
 ### Fixed
 - **Fixed port usage.** No more conflicts or pile-up between MCP servers and bridge relays — a restart reuses its port instead of stranding it and climbing to the next one.

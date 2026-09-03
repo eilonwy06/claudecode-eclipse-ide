@@ -173,9 +173,16 @@ public final class Bridge {
                 }
             }
         } catch (IOException e) {
-            if (running.get()) {
-                stop();
-            }
+            // Fall through to the teardown below — an errored socket and a peer that
+            // hung up cleanly leave this side equally dead.
+        }
+        // Reached on a clean EOF as well as on an error, which matters because the relay
+        // now outlives a disconnect: its liveness no longer implies THIS side is still
+        // wired through, so a bridge left marked "running" here would report healthy
+        // with a dead socket and never be rebuilt. Marking it down is what gets the
+        // watchdog to stand up a fresh pair and handshake both halves again.
+        if (running.get()) {
+            stop();
         }
     }
 

@@ -4,7 +4,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.util.IPropertyChangeListener;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.StyledText;
@@ -25,7 +24,6 @@ import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.part.ViewPart;
 
 import com.anthropic.claudecode.eclipse.Activator;
-import com.anthropic.claudecode.eclipse.Constants;
 import com.anthropic.claudecode.eclipse.NativeCore;
 import com.anthropic.claudecode.eclipse.bridge.Bridge;
 import com.anthropic.claudecode.eclipse.editor.UiHelper;
@@ -44,9 +42,9 @@ public class ClaudeCodeView extends ViewPart {
     private Label bridgeIndicator;
     private Label bridgeLabel;
     private Button launchButton;
+    private Button serverToggleButton;
     private ScheduledExecutorService statusPoller;
     private volatile boolean launching = false;
-    private Bridge bridge;
 
     private Image greenLight;
     private Image yellowLight;
@@ -87,7 +85,7 @@ public class ClaudeCodeView extends ViewPart {
         createLogArea(container, display);
         active = this;
 
-        appendLog("Claude Code for Eclipse v3.1.17\n");
+        appendLog("Claude Code for Eclipse v3.1.18\n");
         appendLog("─────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {
@@ -103,7 +101,8 @@ public class ClaudeCodeView extends ViewPart {
             appendLog("Lock file: ~/.claude/ide/" + port + ".lock\n\n");
         }
 
-        startBridge();
+        // The relay is owned by the Activator and comes up with the MCP server at launch,
+        // so this view only reports on it — opening or closing the view leaves it alone.
         logBridgeInfo();
         appendLog("Click 'Launch Claude Terminal' to open the Claude Terminal.\n\n");
 
@@ -206,6 +205,41 @@ public class ClaudeCodeView extends ViewPart {
         Button restartBtn = new Button(buttonRow, SWT.PUSH);
         restartBtn.setText("Restart Server");
         restartBtn.addListener(SWT.Selection, e -> restartServer());
+
+        serverToggleButton = new Button(buttonRow, SWT.PUSH);
+        serverToggleButton.setText("Stop Server");
+        serverToggleButton.addListener(SWT.Selection, e -> toggleServer());
+    }
+
+    /**
+     * Stops or starts the MCP server and the bridge relay together, which is the coupling
+     * this view exists to make visible. Start goes through the same entry point as launch,
+     * so the port scan, lock file and relay handshake all follow their normal paths.
+     */
+    private void toggleServer() {
+        Activator activator = Activator.getDefault();
+        boolean running = activator.isServerRunning();
+        setServerStatus(Status.YELLOW, running ? "Stopping..." : "Starting...");
+        setBridgeStatus(Status.YELLOW, running ? "Stopping..." : "Starting...");
+        Display.getCurrent().update();
+
+        Display.getCurrent().asyncExec(() -> {
+            if (running) {
+                activator.shutdown();
+                appendLog("Server stopped; bridge relay stopped with it.\n\n");
+            } else {
+                activator.initialize();
+                if (activator.isServerRunning()) {
+                    int port = activator.getHttpSseServer().getPort();
+                    appendLog("Server started on port " + port + "\n");
+                    appendLog("Lock file: ~/.claude/ide/" + port + ".lock\n");
+                } else {
+                    appendLog("[WARN] Server failed to start.\n");
+                }
+                logBridgeInfo();
+            }
+            updateStatus();
+        });
     }
 
     private void createLogArea(Composite parent, Display display) {
@@ -287,11 +321,9 @@ public class ClaudeCodeView extends ViewPart {
             appendLog("New token: " + newToken.substring(0, 8) + "...\n");
             appendLog("Lock file updated: ~/.claude/ide/" + newPort + ".lock\n");
 
-            if (bridge != null) {
-                NativeCore.bridgeDisconnect();
-                bridge.stop();
-            }
-            startBridge();
+            // Activator.restart() cycles the relay along with the server (and in the
+            // order that lets the server reclaim its port first), so this view must not
+            // cycle it a second time here.
             logBridgeInfo();
             updateStatus();
 
@@ -337,6 +369,7 @@ public class ClaudeCodeView extends ViewPart {
 
     // Show bridge info for Windows/Linux, or override message for macOS
     private void logBridgeInfo() {
+        Bridge bridge = Activator.getDefault().getBridge();
         if (bridge != null && bridge.isOverridden()) {
             appendLog("macOS detected, direct protocol active.\n\n");
         } else if (bridge != null && bridge.isRunning()) {
@@ -345,68 +378,14 @@ public class ClaudeCodeView extends ViewPart {
                 appendLog(msg + "\n");
             }
             appendLog("Bridge relay ports: " + bridge.getPortA() + " ↔ " + bridge.getPortB() + "\n\n");
+        } else {
+            appendLog("Bridge relay is not running.\n\n");
         }
-    }
-
-    /** Diagnostic helper: relay liveness without throwing if the native lib is old. */
-    private static boolean safeRelayRunning() {
-        try { return NativeCore.bridgeRelayIsRunning(); } catch (Throwable t) { return false; }
     }
 
     /** Diagnostic helper: native-side connection state without throwing. */
     private static boolean safeBridgeConnected() {
         try { return NativeCore.bridgeIsConnected(); } catch (Throwable t) { return false; }
-    }
-
-    private void startBridge() {
-        // [DIAG] A relay that is already live here means relay_start() will take its
-        // early-return branch and hand back the PREVIOUS generation's ports.
-        if (isDebugMode()) {
-            appendLog("[DIAG] relayRunning before start: " + safeRelayRunning() + "\n");
-        }
-
-        bridge = new Bridge();
-        boolean started = bridge.start(data -> {
-            if (isDebugMode()) {
-                String msg = new String(data, java.nio.charset.StandardCharsets.UTF_8);
-                Display.getDefault().asyncExec(() -> appendLog("[BRIDGE] " + msg));
-            }
-        });
-
-        // [DIAG] Did the relay survive start()? Ports here are what Java will actually dial.
-        if (isDebugMode()) {
-            appendLog("[DIAG] after start(): started=" + started
-                    + " portA=" + bridge.getPortA()
-                    + " portB=" + bridge.getPortB()
-                    + " relayRunning=" + safeRelayRunning() + "\n");
-        }
-
-        if (started) {
-            if (isDebugMode()) {
-                appendLog("Bridge started on port " + bridge.getPortA() + "\n");
-            }
-            boolean connected = NativeCore.bridgeConnect(bridge.getPortA(), bridge.getToken());
-            if (isDebugMode()) {
-                if (connected) {
-                    appendLog("Rust connected to Bridge.\n\n");
-                } else {
-                    // [DIAG] Separates "portA was already gone" from "connect failed for
-                    // another reason" — relayRunning=false means the relay died first.
-                    appendLog("[DIAG] after failed connect: relayRunning=" + safeRelayRunning()
-                            + " bridgeIsConnected=" + safeBridgeConnected() + "\n");
-                    appendLog("[WARN] Rust failed to connect to Bridge.\n\n");
-                }
-            }
-        } else {
-            if (isDebugMode()) {
-                appendLog("[WARN] Bridge failed to start.\n\n");
-            }
-        }
-    }
-
-    private boolean isDebugMode() {
-        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
-        return store.getBoolean(Constants.PREF_DEBUG_MODE);
     }
 
     private void appendLog(String text) {
@@ -454,16 +433,29 @@ public class ClaudeCodeView extends ViewPart {
             setServerStatus(Status.RED, "Stopped");
         }
 
+        Bridge bridge = activator.getBridge();
         if (bridge != null && bridge.isOverridden()) {
             setBridgeStatus(Status.BLUE, "Overridden");
         } else if (bridge != null && bridge.isRunning()) {
-            if (NativeCore.bridgeIsConnected()) {
-                setBridgeStatus(Status.GREEN, "Connected");
+            if (safeBridgeConnected()) {
+                setBridgeStatus(Status.GREEN, "Connected " + bridge.getPortA() + " ↔ " + bridge.getPortB());
             } else {
                 setBridgeStatus(Status.YELLOW, "Running");
             }
         } else {
             setBridgeStatus(Status.RED, "Off");
+        }
+
+        updateServerToggleLabel(activator.isServerRunning());
+    }
+
+    /** Keeps the toggle's label in step with the actual server state. */
+    private void updateServerToggleLabel(boolean serverRunning) {
+        if (serverToggleButton == null || serverToggleButton.isDisposed()) return;
+        String want = serverRunning ? "Stop Server" : "Start Server";
+        if (!want.equals(serverToggleButton.getText())) {
+            serverToggleButton.setText(want);
+            serverToggleButton.getParent().layout();
         }
     }
 
@@ -518,10 +510,8 @@ public class ClaudeCodeView extends ViewPart {
         if (statusPoller != null) {
             statusPoller.shutdownNow();
         }
-        if (bridge != null) {
-            NativeCore.bridgeDisconnect();
-            bridge.stop();
-        }
+        // The relay outlives this view — it belongs to the Activator and dies with the
+        // MCP server, not with the console that reports on it.
         if (greenLight != null && !greenLight.isDisposed()) greenLight.dispose();
         if (yellowLight != null && !yellowLight.isDisposed()) yellowLight.dispose();
         if (redLight != null && !redLight.isDisposed()) redLight.dispose();
