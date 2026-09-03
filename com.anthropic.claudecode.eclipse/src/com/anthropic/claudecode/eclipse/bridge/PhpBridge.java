@@ -28,6 +28,18 @@ public final class PhpBridge {
     // the assigned ports come back via the READY line.
     private static final long STARTUP_TIMEOUT_MS = 5000;
 
+    /**
+     * The extracted PHP runtime and relay script, kept for the life of the JVM.
+     * Extraction copies a ~30 MB runtime out of the bundle into a fresh temp directory,
+     * and the relay is supervised now — a start that cannot succeed is retried on a
+     * backoff for as long as the IDE runs. Extracting per attempt would copy all of that
+     * again on every retry and leave the directory behind each time. Extract once, reuse,
+     * and re-extract only if what was cached has gone from disk.
+     */
+    private static final Object EXTRACT_LOCK = new Object();
+    private static Path cachedBinary;
+    private static Path cachedScript;
+
     private Process process;
     private Socket socketB;
     private int portA;
@@ -312,13 +324,32 @@ public final class PhpBridge {
                 }
             }
         } catch (IOException e) {
-            if (running.get()) {
-                stop();
-            }
+            // Fall through to the teardown below — an errored socket and a peer that
+            // hung up cleanly leave this side equally dead.
+        }
+        // Reached on a clean EOF as well as on an error, which matters because the relay
+        // now outlives a disconnect: the interpreter still being alive no longer implies
+        // THIS side is wired through, so a bridge left marked "running" here would report
+        // healthy with a dead socket and never be rebuilt. Marking it down is what gets
+        // the watchdog to stand up a fresh pair and handshake both halves again.
+        if (running.get()) {
+            stop();
         }
     }
 
+    /** The bundled runtime's {@code php} binary, extracting it the first time it is asked for. */
     private Path extractBinary() throws IOException {
+        synchronized (EXTRACT_LOCK) {
+            if (cachedBinary != null && Files.isRegularFile(cachedBinary)) {
+                return cachedBinary;
+            }
+            Path binary = extractRuntime();
+            cachedBinary = binary;
+            return binary;
+        }
+    }
+
+    private Path extractRuntime() throws IOException {
         String basePath = binaryBasePath();
         if (basePath == null) {
             throw new IOException("Unsupported platform");
@@ -364,16 +395,23 @@ public final class PhpBridge {
         return binary;
     }
 
+    /** The relay script, cached alongside the runtime for the same reason. */
     private Path extractScript() throws IOException {
-        String resourcePath = "/scripts/bridge.php";
-        try (InputStream in = getClass().getResourceAsStream(resourcePath)) {
-            if (in == null) {
-                throw new IOException("Script not found: " + resourcePath);
+        synchronized (EXTRACT_LOCK) {
+            if (cachedScript != null && Files.isRegularFile(cachedScript)) {
+                return cachedScript;
             }
-            Path tmp = Files.createTempFile("cs_", ".php");
-            tmp.toFile().deleteOnExit();
-            Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
-            return tmp;
+            String resourcePath = "/scripts/bridge.php";
+            try (InputStream in = getClass().getResourceAsStream(resourcePath)) {
+                if (in == null) {
+                    throw new IOException("Script not found: " + resourcePath);
+                }
+                Path tmp = Files.createTempFile("cs_", ".php");
+                tmp.toFile().deleteOnExit();
+                Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
+                cachedScript = tmp;
+                return tmp;
+            }
         }
     }
 

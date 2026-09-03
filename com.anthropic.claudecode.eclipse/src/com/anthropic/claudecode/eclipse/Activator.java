@@ -21,7 +21,7 @@ import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 
-import com.anthropic.claudecode.eclipse.bridge.Bridge;
+import com.anthropic.claudecode.eclipse.bridge.PhpBridge;
 import com.anthropic.claudecode.eclipse.editor.SelectionTracker;
 import com.anthropic.claudecode.eclipse.mcp.McpToolRegistry;
 import com.anthropic.claudecode.eclipse.server.HttpSseServer;
@@ -47,18 +47,29 @@ public class Activator extends AbstractUIPlugin {
      * come up with the MCP server at launch and stay up for the life of the IDE, whether
      * or not that (debug-gated, hidden by default) view is ever opened.
      */
-    private volatile Bridge bridge;
+    private volatile PhpBridge bridge;
 
     /**
-     * Re-establishes the relay if it dies. The relay is one-shot by construction — the
-     * first EOF on either peer ends it and nothing reconnects — so without supervision
-     * "starts with the server" would not imply "still up an hour later". Gated on the
-     * server running, which is what couples the two lifecycles: stopping the server
+     * Re-establishes the relay if it dies. The relay script now keeps its listeners bound
+     * across a peer hanging up, but this side does not: a disconnect leaves the Java half
+     * dead and the bridge marked down, and nothing else would ever wire it back. Gated on
+     * the server running, which is what couples the two lifecycles: stopping the server
      * deliberately must not have the watchdog resurrect the relay behind it.
+     *
+     * <p>The first tick fires immediately rather than after a delay, because it is also
+     * what brings the relay up in the first place — see {@link #initializeWithConfig}.
      */
     private ScheduledExecutorService bridgeWatchdog;
-    private static final long WATCHDOG_INITIAL_DELAY_SEC = 5;
+    private static final long WATCHDOG_INITIAL_DELAY_SEC = 0;
     private static final long WATCHDOG_PERIOD_SEC = 3;
+
+    /**
+     * Whether a start attempt is in flight. Set under the lock and cleared under it again,
+     * so the seconds spent spawning the interpreter happen with the monitor free while the
+     * decision to make the attempt stays serialized. A candidate is not published on
+     * {@link #bridge} until it is adopted, so this flag is the only thing that marks it.
+     */
+    private boolean bridgeStarting;
 
     /**
      * Whether the relay is meant to be up. Set when the plug-in is brought up and cleared
@@ -116,8 +127,12 @@ public class Activator extends AbstractUIPlugin {
         // Independent of the server's state above, and deliberately after it: the relay
         // scans for free ports in the same configured range, so the server must already
         // hold (or have reclaimed) its own port before the relay looks for the rest.
+        //
+        // The relay is not started inline. Bringing it up means extracting a PHP runtime
+        // and waiting on the interpreter's READY line, and this method runs on the UI
+        // thread from the view and the preference page — so the watchdog's first tick,
+        // scheduled with no initial delay, does it on its own thread instead.
         setBridgeEnabled(true);
-        startBridgeIfNeeded();
         startBridgeWatchdog();
     }
 
@@ -189,68 +204,128 @@ public class Activator extends AbstractUIPlugin {
      * picks its own two free ports out of the configured range (the preference page
      * enforces room for three), so which ports it lands on is incidental — an
      * established connection is the point.
+     *
+     * <p>The start itself runs <em>outside</em> the lock. Standing this relay up means
+     * spawning the PHP interpreter and waiting on its READY line — seconds, not the
+     * microseconds a port scan costs — and holding the monitor across that would park
+     * every caller of {@link #shutdown()} behind it. So the attempt is claimed under the
+     * lock, run unlocked, and adopted under the lock again only if the relay is still
+     * wanted by then; one that lost that race tears down its own candidate. That is what
+     * lets a concurrent shutdown return without ever waiting for a start in flight.
      */
-    private synchronized void startBridgeIfNeeded() {
-        // Checked inside the lock: a watchdog tick that passed its own check before a
-        // shutdown began would otherwise re-establish the relay behind the teardown.
-        if (!bridgeEnabled) {
-            return;
-        }
-        // The relay is subordinate to the MCP server — it exists to serve the server's
-        // IDE instance, so it never runs beside one that is not up (failed to bind, or
-        // died). The watchdog brings it in as soon as the server is back. The dependency
-        // is one-way: see the tick, where a dead relay never disturbs the server.
-        if (!isServerRunning()) {
-            return;
-        }
-        if (bridge != null && bridge.isRunning()) {
-            return;
-        }
-        // The macOS direct-protocol fallback is a terminal state, not a failure: keep the
-        // Bridge that reported it so the view still shows "Overridden" rather than
-        // churning a fresh relay attempt every tick that can only fail the same way.
-        if (bridge != null && bridge.isOverridden()) {
-            return;
-        }
-        // A Bridge whose relay has died still reports running==true internally, and
-        // start() early-returns on that. Tear the old one down before replacing it so
-        // the native client half is released too.
-        if (bridge != null) {
-            stopBridge();
-        }
-        bridge = new Bridge();
-        boolean started = bridge.start(data -> {
-            // Checked before decoding: this runs once per inbound relay message, and the
-            // relay is now always connected, so building a string the log would only throw
-            // away would put allocation on a path that carries every mirrored chat event.
-            if (!DebugModeUi.isDebugEnabled()) {
+    private void startBridgeIfNeeded() {
+        PhpBridge candidate;
+        synchronized (this) {
+            // Checked inside the lock: a watchdog tick that passed its own check before a
+            // shutdown began would otherwise re-establish the relay behind the teardown.
+            if (!bridgeEnabled) {
                 return;
             }
-            ClaudeCodeView.debug("[BRIDGE] " + new String(data, java.nio.charset.StandardCharsets.UTF_8));
-        });
+            // The relay is subordinate to the MCP server — it exists to serve the server's
+            // IDE instance, so it never runs beside one that is not up (failed to bind, or
+            // died). The watchdog brings it in as soon as the server is back. The dependency
+            // is one-way: see the tick, where a dead relay never disturbs the server.
+            if (!isServerRunning()) {
+                return;
+            }
+            // An attempt already owns this. Its candidate is not on the field yet, so none
+            // of the checks below can see it — this flag is what stands in for it.
+            if (bridgeStarting) {
+                return;
+            }
+            if (bridge != null && bridge.isRunning()) {
+                return;
+            }
+            // The macOS direct-protocol fallback is a terminal state, not a failure: keep the
+            // bridge that reported it so the view still shows "Overridden" rather than
+            // churning a fresh relay attempt every tick that can only fail the same way.
+            if (bridge != null && bridge.isOverridden()) {
+                return;
+            }
+            // A bridge whose relay has died still reports running==true internally, and
+            // start() early-returns on that. Tear the old one down before replacing it so
+            // the native client half and the interpreter process are released too.
+            if (bridge != null) {
+                stopBridge();
+            }
+            bridgeStarting = true;
+            candidate = new PhpBridge();
+        }
+
+        boolean started;
+        try {
+            started = candidate.start(data -> {
+                // Checked before decoding: this runs once per inbound relay message, and the
+                // relay is now always connected, so building a string the log would only throw
+                // away would put allocation on a path that carries every mirrored chat event.
+                if (!DebugModeUi.isDebugEnabled()) {
+                    return;
+                }
+                ClaudeCodeView.debug("[BRIDGE] " + new String(data, java.nio.charset.StandardCharsets.UTF_8));
+            });
+        } catch (Throwable t) {
+            // start() is not meant to throw, but it spawns a process and touches the
+            // filesystem. Letting one escape would take the watchdog thread with it.
+            started = false;
+            logError("Bridge relay failed to start", t);
+        }
+
         if (!started) {
-            if (bridge.isOverridden()) {
-                ClaudeCodeView.debug("[Bridge] Direct protocol active; relay not used.");
-                return;
+            boolean overridden = candidate.isOverridden();
+            synchronized (this) {
+                bridgeStarting = false;
+                if (overridden) {
+                    // Published anyway: "Overridden" is a state the view reports, and the
+                    // guard above reads it off the field to stop retrying what cannot work.
+                    bridge = candidate;
+                } else {
+                    noteBridgeFailure();
+                }
             }
-            noteBridgeFailure();
-            ClaudeCodeView.debug("[Bridge] Relay failed to start; watchdog will retry.");
+            ClaudeCodeView.debug(overridden
+                    ? "[Bridge] Direct protocol active; relay not used."
+                    : "[Bridge] Relay failed to start; watchdog will retry.");
             return;
         }
-        boolean connected = NativeCore.bridgeConnect(bridge.getPortA(), bridge.getToken());
+
+        boolean wanted;
+        synchronized (this) {
+            bridgeStarting = false;
+            wanted = bridgeEnabled && isServerRunning();
+            if (wanted) {
+                bridge = candidate;
+            }
+        }
+        if (!wanted) {
+            // Shut down while this was starting. The teardown already ran and returned
+            // without waiting, and nothing else holds this candidate, so releasing the
+            // interpreter is this thread's job.
+            try { candidate.stop(); } catch (Throwable ignored) {}
+            ClaudeCodeView.debug("[Bridge] Relay came up after a shutdown; taking it back down.");
+            return;
+        }
+
+        boolean connected = NativeCore.bridgeConnect(candidate.getPortA(), candidate.getToken());
         ClaudeCodeView.debug(connected
-                ? "[Bridge] Relay up on " + bridge.getPortA() + " and " + bridge.getPortB()
+                ? "[Bridge] Relay up on " + candidate.getPortA() + " and " + candidate.getPortB()
                         + "; handshake complete."
-                : "[Bridge] Relay up on " + bridge.getPortA() + " and " + bridge.getPortB()
+                : "[Bridge] Relay up on " + candidate.getPortA() + " and " + candidate.getPortB()
                         + " but the handshake failed; watchdog will retry.");
-        if (connected) {
-            bridgeFailureStreak = 0;
-            bridgeTicksToSkip = 0;
-        } else {
-            // Half-open is not a usable relay — drop it so the watchdog rebuilds a clean
-            // pair rather than leaving a listener nobody is wired through.
-            stopBridge();
-            noteBridgeFailure();
+        synchronized (this) {
+            if (connected) {
+                bridgeFailureStreak = 0;
+                bridgeTicksToSkip = 0;
+            } else {
+                // Half-open is not a usable relay — drop it so the watchdog rebuilds a clean
+                // pair rather than leaving a listener nobody is wired through. Guarded on
+                // identity: a shutdown may already have cleared or replaced the field.
+                if (bridge == candidate) {
+                    stopBridge();
+                } else {
+                    try { candidate.stop(); } catch (Throwable ignored) {}
+                }
+                noteBridgeFailure();
+            }
         }
     }
 
@@ -285,7 +360,10 @@ public class Activator extends AbstractUIPlugin {
         stopBridge();
     }
 
-    /** Tears the relay down and releases both halves. Safe to call when nothing is up. */
+    /**
+     * Tears the relay down and releases both halves — the native client and the
+     * interpreter process hosting the listeners. Safe to call when nothing is up.
+     */
     private synchronized void stopBridge() {
         if (bridge == null) {
             return;
@@ -340,13 +418,13 @@ public class Activator extends AbstractUIPlugin {
      * deliberately unsynchronized: the status poller reads this on the UI thread every
      * few seconds and must never block behind a watchdog restart holding the lock.
      */
-    public Bridge getBridge() {
-        Bridge b = bridge;
+    public PhpBridge getBridge() {
+        PhpBridge b = bridge;
         return b;
     }
 
     public boolean isBridgeRunning() {
-        Bridge b = bridge;
+        PhpBridge b = bridge;
         return b != null && b.isRunning();
     }
 

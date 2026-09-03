@@ -32,6 +32,15 @@ if ($expectedToken === false || $expectedToken === '') {
     exit(1);
 }
 
+// How long the relay may sit without a complete peer pair before it gives up and
+// exits. This is the orphan guard: the relay is a child process holding two listening
+// sockets, and now that it outlives a disconnect, an Eclipse that dies without stopping
+// it would strand it -- and its two ports -- until the machine is restarted. A dead IDE
+// closes both of its peer sockets, so "nobody wired through for a while" is exactly the
+// shape of that crash. The plug-in's watchdog re-establishes a live relay within seconds,
+// so this can only fire when there is nothing left to reconnect.
+const IDLE_EXIT_SECONDS = 30;
+
 // PHP's stream_socket_server() sets SO_REUSEADDR, which on Windows lets a
 // bind succeed even when another process already listens on the port. A
 // failed bind therefore isn't a reliable "port taken" signal: probe with a
@@ -118,11 +127,19 @@ $clientA = null;
 $clientB = null;
 $running = true;
 
+// Wall clock since the relay last had both peers wired through, or since it came up if
+// it never has. Only the idle guard reads it; a live pairing keeps resetting it.
+$unpairedSince = microtime(true);
+
 if (function_exists('pcntl_signal')) {
     pcntl_signal(SIGTERM, function() use (&$running) { $running = false; });
     pcntl_signal(SIGINT,  function() use (&$running) { $running = false; });
 }
 
+// One pass per pairing. The two listening sockets are bound once, above, and stay bound
+// for the life of this process: a peer hanging up ends that PAIRING, not the relay, so
+// the loop drops both halves and goes back to accepting on the SAME two ports. Only a
+// signal from the plug-in, or the idle guard, ends the relay itself.
 while ($running) {
     if (function_exists('pcntl_signal_dispatch')) {
         pcntl_signal_dispatch();
@@ -142,22 +159,49 @@ while ($running) {
     }
 
     if ($clientA && $clientB) {
+        // Wired through, so the idle guard's clock stays parked at now.
+        $unpairedSince = microtime(true);
+
         $read = [$clientA, $clientB];
         $write = null;
         $except = null;
+        $hungUp = false;
 
         if (@stream_select($read, $write, $except, 0, 50000) > 0) {
             foreach ($read as $sock) {
                 $data = @fread($sock, 65536);
-                if ($data === false || $data === '') {
-                    $running = false;
-                    break 2;
+                // On a non-blocking socket an empty read is EOF only when feof() agrees;
+                // a readable socket can still come back empty. Tearing a live pairing
+                // down on that would drop the relay under a peer that never left.
+                if ($data === false || ($data === '' && feof($sock))) {
+                    $hungUp = true;
+                    break;
+                }
+                if ($data === '') {
+                    continue;
                 }
                 $target = ($sock === $clientA) ? $clientB : $clientA;
                 @fwrite($target, $data);
             }
         }
+
+        if ($hungUp) {
+            // Both halves go, not just the one that left: a relay wired to a single peer
+            // is not a relay, and the plug-in rebuilds its side from scratch anyway. The
+            // listeners are untouched, so the next pair lands on the same ports.
+            @fclose($clientA);
+            @fclose($clientB);
+            $clientA = null;
+            $clientB = null;
+            $unpairedSince = microtime(true);
+            fwrite(STDERR, "peer disconnected; relay waiting for a new pair\n");
+        }
     } else {
+        // Orphan guard -- see IDLE_EXIT_SECONDS.
+        if (microtime(true) - $unpairedSince >= IDLE_EXIT_SECONDS) {
+            fwrite(STDERR, "no peers for " . IDLE_EXIT_SECONDS . "s; relay exiting\n");
+            break;
+        }
         usleep(10000);
     }
 }
