@@ -73,8 +73,12 @@ pub fn send_line(s: &str) -> bool {
 // fixed ports), then accepts one peer per port. Every peer must present the
 // shared-secret handshake token on its first line within a short window or it
 // is dropped — no other local process can attach to either side. Once both
-// peers are authenticated, bytes are pumped verbatim in both directions;
-// either side disconnecting ends the relay (matching the old behavior).
+// peers are authenticated, bytes are pumped verbatim in both directions.
+//
+// A disconnect ends that PAIRING, not the relay: the listeners stay bound and
+// the loop goes back to accepting, so the relay keeps the same two ports for as
+// long as it is running and a peer can reconnect into them. Only relay_stop()
+// ends it.
 // ---------------------------------------------------------------------------
 
 struct RelayState {
@@ -179,50 +183,68 @@ fn relay_loop(
     stop: &Arc<AtomicBool>,
     peers: &Arc<Mutex<Vec<TcpStream>>>,
 ) {
-    let mut client_a: Option<TcpStream> = None;
-    let mut client_b: Option<TcpStream> = None;
+    // One iteration per peer pairing. The listeners are owned by this function and
+    // stay bound across iterations, which is what lets the relay keep its two ports
+    // when a peer hangs up instead of dying with the first disconnect.
+    while !stop.load(Ordering::Relaxed) {
+        let mut client_a: Option<TcpStream> = None;
+        let mut client_b: Option<TcpStream> = None;
 
-    while !stop.load(Ordering::Relaxed) && (client_a.is_none() || client_b.is_none()) {
-        if client_a.is_none() {
-            client_a = accept_authed(&listener_a, token);
-        }
-        if client_b.is_none() {
-            client_b = accept_authed(&listener_b, token);
-        }
-        if client_a.is_none() || client_b.is_none() {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-    if stop.load(Ordering::Relaxed) {
-        return;
-    }
-    let a = client_a.unwrap();
-    let b = client_b.unwrap();
-
-    // Register clones so relay_stop() can shutdown() blocked pump reads.
-    if let (Ok(ca), Ok(cb)) = (a.try_clone(), b.try_clone()) {
-        let mut guard = peers.lock().unwrap();
-        guard.push(ca);
-        guard.push(cb);
-    }
-
-    match (a.try_clone(), b.try_clone()) {
-        (Ok(a_writer), Ok(b_writer)) => {
-            let pump_ab = std::thread::Builder::new()
-                .name("bridge-relay-ab".into())
-                .spawn(move || pump(a, b_writer));
-            pump(b, a_writer); // B→A runs on the relay thread itself
-            if let Ok(handle) = pump_ab {
-                handle.join().ok();
+        while !stop.load(Ordering::Relaxed) && (client_a.is_none() || client_b.is_none()) {
+            if client_a.is_none() {
+                client_a = accept_authed(&listener_a, token);
+            }
+            if client_b.is_none() {
+                client_b = accept_authed(&listener_b, token);
+            }
+            if client_a.is_none() || client_b.is_none() {
+                std::thread::sleep(Duration::from_millis(10));
             }
         }
-        _ => {
+        // Torn down while accepting; any half-accepted peer drops with the scope.
+        let (a, b) = match (client_a, client_b) {
+            (Some(a), Some(b)) if !stop.load(Ordering::Relaxed) => (a, b),
+            _ => return,
+        };
+
+        // Register clones so relay_stop() can shutdown() blocked pump reads. The
+        // previous pairing's entries are dead sockets by now, so replace rather than
+        // append — otherwise the list grows without bound across reconnects.
+        {
+            let mut guard = peers.lock().unwrap();
+            guard.clear();
+            if let (Ok(ca), Ok(cb)) = (a.try_clone(), b.try_clone()) {
+                guard.push(ca);
+                guard.push(cb);
+            }
+        }
+        // relay_stop() may have drained the list between the accept and the push
+        // above, in which case nothing will ever shut these two down and the pumps
+        // would block forever. Tear them down here instead.
+        if stop.load(Ordering::Relaxed) {
             a.shutdown(Shutdown::Both).ok();
             b.shutdown(Shutdown::Both).ok();
+            return;
         }
+
+        match (a.try_clone(), b.try_clone()) {
+            (Ok(a_writer), Ok(b_writer)) => {
+                let pump_ab = std::thread::Builder::new()
+                    .name("bridge-relay-ab".into())
+                    .spawn(move || pump(a, b_writer));
+                pump(b, a_writer); // B→A runs on the relay thread itself
+                if let Ok(handle) = pump_ab {
+                    handle.join().ok();
+                }
+            }
+            _ => {
+                a.shutdown(Shutdown::Both).ok();
+                b.shutdown(Shutdown::Both).ok();
+            }
+        }
+        // This pairing is over. Unless relay_stop() tore us down, loop back and accept
+        // the next one on the SAME ports — the relay outlives the disconnect.
     }
-    // Either side hung up (or relay_stop tore us down) — the relay is over.
-    stop.store(true, Ordering::Relaxed);
 }
 
 /// Accepts a pending connection only if it presents the expected token on its
@@ -349,11 +371,38 @@ mod tests {
         b.write_all(b"pong\n").unwrap();
         assert_eq!(read_exact_str(&mut a, 5), "pong\n");
 
+        // A disconnect must end only this pairing: the relay keeps the SAME two ports
+        // and accepts a fresh pair, rather than dying with the first hang-up.
+        drop(a);
+        drop(b);
+        assert!(relay_is_running(), "a peer disconnect must not end the relay");
+
+        let (port_a2, port_b2) =
+            relay_start(47610, 47690, token).expect("relay is still up on its ports");
+        assert_eq!(
+            (port_a2, port_b2),
+            (port_a, port_b),
+            "the relay must not rebind after a disconnect"
+        );
+
+        let mut a2 = TcpStream::connect(("127.0.0.1", port_a)).unwrap();
+        a2.write_all(format!("{}\n", token).as_bytes()).unwrap();
+        let mut b2 = TcpStream::connect(("127.0.0.1", port_b)).unwrap();
+        b2.write_all(format!("{}\n", token).as_bytes()).unwrap();
+        a2.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        b2.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+
+        a2.write_all(b"second\n").unwrap();
+        assert_eq!(read_exact_str(&mut b2, 7), "second\n");
+        b2.write_all(b"back\n").unwrap();
+        assert_eq!(read_exact_str(&mut a2, 5), "back\n");
+
+        // Stop tears down whichever pairing is live at the time — here, the second one.
         relay_stop();
         assert!(!relay_is_running());
         let mut one = [0u8; 1];
         assert!(
-            matches!(a.read(&mut one), Ok(0) | Err(_)),
+            matches!(a2.read(&mut one), Ok(0) | Err(_)),
             "peers are torn down on stop"
         );
     }
