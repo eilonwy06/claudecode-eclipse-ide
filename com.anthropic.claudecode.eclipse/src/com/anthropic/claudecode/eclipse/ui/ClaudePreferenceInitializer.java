@@ -51,6 +51,8 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
 
         // Claude Code view spinner verbs — the three that were already in rotation
         // stay on; dank and the vibecoder claim are opt-in.
+        store.setDefault(Constants.PREF_HIDE_ROOT_DIRECTORIES_ROW, false);
+
         store.setDefault(Constants.PREF_SPINNER_DEPRECATED, true);
         store.setDefault(Constants.PREF_SPINNER_PACK_ONE, true);
         store.setDefault(Constants.PREF_SPINNER_PACK_TWO, true);

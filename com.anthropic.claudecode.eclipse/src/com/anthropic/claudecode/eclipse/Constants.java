@@ -83,6 +83,14 @@ public final class Constants {
      *  per-session time, so this trades a bit of vertical space for always-visible detail. */
     public static final String PREF_HISTORY_SHOW_TIMESTAMPS = "historyShowTimestamps";
 
+    /** Hide the root ("supertab") directory row entirely, in the Claude Code view —
+     *  no picker, no per-session show/hide toggle (supertabsVisible), nothing. For a
+     *  user who only ever works in one folder, the row (plus the toggle's own collapsed
+     *  #cwd-row stand-in) is pure vertical space spent on a feature they never use. Off
+     *  by default: multi-root conversations are the new upstream behavior, and this is
+     *  an opt-out, not the other way around. */
+    public static final String PREF_HIDE_ROOT_DIRECTORIES_ROW = "hideRootDirectoriesRow";
+
     // ── Spinner verbs ───────────────────────────────────────────────────────
     // Which optional slices of the working-indicator gerund list are in rotation.
     // Each names a membership set over the single master list in working.js

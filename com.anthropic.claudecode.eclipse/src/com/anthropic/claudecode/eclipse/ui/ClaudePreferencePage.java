@@ -269,6 +269,11 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 getFieldEditorParent()));
 
         addField(new BooleanFieldEditor(
+                Constants.PREF_HIDE_ROOT_DIRECTORIES_ROW,
+                "Hide the root directories row, in the Claude Code view (for single-folder use)",
+                getFieldEditorParent()));
+
+        addField(new BooleanFieldEditor(
                 Constants.PREF_SPINNER_DEPRECATED,
                 "Use deprecated spinner verbs",
                 getFieldEditorParent()));
