@@ -150,6 +150,8 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     private ClaudeStatusBar statusBar;
     // Live-applies PREF_STATUSLINE_* changes (enable/toggles/refresh) without a restart.
     private org.eclipse.jface.util.IPropertyChangeListener statusPrefListener;
+    // Live-applies PREF_HISTORY_SHOW_TIMESTAMPS changes without a restart or page reload.
+    private org.eclipse.jface.util.IPropertyChangeListener historyShowTimestampsPrefListener;
     // Re-pushes light/dark to the webview when the Eclipse workbench theme changes.
     private org.eclipse.jface.util.IPropertyChangeListener themeChangeListener;
     // Re-pushes the right-click menu's key hints when the user's bindings change.
@@ -220,6 +222,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         // this view sees them without having to send a turn first (issue #99).
         fetchUsageAsync();
         registerStatusPrefListener();
+        registerHistoryShowTimestampsPrefListener();
         registerThemeListener();
         registerBindingListener();
         registerEditHandlers();
@@ -571,6 +574,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             pushCliModels();         // ditto for the installed binary's model support
             pushEditKeyHints();      // label the right-click menu with the user's real keys
             pushDebugMode();         // let the page report its keys while Debug mode is on
+            pushHistoryShowTimestamps(); // whether to show a timestamp above your own messages
             pushSpinnerVerbs();      // which gerund categories the working indicator cycles
             // An "Open Claude Code Here" that arrived while the view was still loading.
             String queuedRoot = pendingRootPath;
@@ -1067,6 +1071,19 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         Activator.getDefault().getPreferenceStore().addPropertyChangeListener(statusPrefListener);
     }
 
+    /** Live-applies a Preferences change to "show message timestamps" without needing a
+     *  page reload or the view to regain focus — mirrors {@link #registerStatusPrefListener()}.
+     *  Without this, saving the preference from a Preferences dialog that never took focus
+     *  away from (and back to) this view left the old value pushed at page-load in place
+     *  until the next {@link #setFocus()}. */
+    private void registerHistoryShowTimestampsPrefListener() {
+        historyShowTimestampsPrefListener = event -> {
+            if (!com.anthropic.claudecode.eclipse.Constants.PREF_HISTORY_SHOW_TIMESTAMPS.equals(event.getProperty())) return;
+            Display.getDefault().asyncExec(this::pushHistoryShowTimestamps);
+        };
+        Activator.getDefault().getPreferenceStore().addPropertyChangeListener(historyShowTimestampsPrefListener);
+    }
+
     /**
      * Live theme refresh driven by the JFace {@link org.eclipse.jface.resource.ColorRegistry},
      * the SAME signal that recolors the shared status bar the instant the Eclipse theme changes
@@ -1406,6 +1423,20 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     private void pushDebugMode() {
         if (browser == null || browser.isDisposed() || !pageLoaded) return;
         browser.execute("window.__ccDebug = " + DebugModeUi.isDebugEnabled() + ";");
+    }
+
+    /**
+     * Tells the page whether to show a timestamp above each of your own messages.
+     * Re-pushed on activation and on every live Preferences change (see
+     * {@link #registerHistoryShowTimestampsPrefListener()}) — a Preferences dialog OK
+     * doesn't reload the page or necessarily refocus this view, so without the live
+     * push a mid-session toggle would sit unapplied until the next focus.
+     */
+    private void pushHistoryShowTimestamps() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        boolean show = Activator.getDefault().getPreferenceStore()
+                .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_HISTORY_SHOW_TIMESTAMPS);
+        browser.execute("window.__historyShowTimestamps = " + show + ";");
     }
 
     /**
@@ -2032,6 +2063,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         // change shows up in the right-click menu's hints on the next activation.
         pushEditKeyHints();
         pushDebugMode();
+        pushHistoryShowTimestamps();
         pushSpinnerVerbs();
     }
 
@@ -2498,6 +2530,11 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(statusPrefListener); }
             catch (Throwable ignored) {}
             statusPrefListener = null;
+        }
+        if (historyShowTimestampsPrefListener != null) {
+            try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(historyShowTimestampsPrefListener); }
+            catch (Throwable ignored) {}
+            historyShowTimestampsPrefListener = null;
         }
         if (themeChangeListener != null) {
             try {

@@ -45,6 +45,8 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_WEEKLY, true);
         store.setDefault(Constants.PREF_STATUSLINE_REFRESH_SECONDS, 60);
 
+        store.setDefault(Constants.PREF_HISTORY_SHOW_TIMESTAMPS, false);
+
         // Claude Code view spinner verbs — the three that were already in rotation
         // stay on; dank and the vibecoder claim are opt-in.
         store.setDefault(Constants.PREF_SPINNER_DEPRECATED, true);

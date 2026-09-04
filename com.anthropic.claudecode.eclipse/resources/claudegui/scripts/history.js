@@ -286,7 +286,7 @@ function loadHistory(id, title) {
       if (/^\[Image:[^\]]*\]$/.test(marker)) return;
       // Messages sent with pasted images carry them as {media_type,data} blocks —
       // rebuild the same chips the live bubble showed.
-      if (!invisible) addUserMessage(p.text, p.chip, imgs, it.id);
+      if (!invisible) addUserMessage(p.text, p.chip, imgs, it.id, it.ts);
       if (isCompactCmd) flushCompact();
     } else if (ty === 'answered') {
       flushCompact();

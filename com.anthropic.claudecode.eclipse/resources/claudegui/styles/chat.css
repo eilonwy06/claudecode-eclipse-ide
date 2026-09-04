@@ -50,6 +50,11 @@
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='8'%3E%3Cpath d='M0 4 Q4 0 8 4 T16 4' fill='none' stroke='%236e6e6e' stroke-width='1'/%3E%3C/svg%3E") repeat-x center; }
 .switch-divider .sw-text { white-space: nowrap; }
 
+/* Opt-in timestamp line above a user bubble (PREF_HISTORY_SHOW_TIMESTAMPS). Its own
+   line in the turn, not part of .user-msg, so it never shifts the bubble's own padding
+   or the hover-actions badges pinned to .user-msg's corner. */
+.msg-ts { color: var(--fg-faint); font-size: 10.5px; margin: 0 2px 4px; }
+
 /* user bubble */
 .user-msg { position: relative; border: 1px solid var(--border); background: var(--bg-soft);
   border-radius: 8px; padding: 10px 12px; }
