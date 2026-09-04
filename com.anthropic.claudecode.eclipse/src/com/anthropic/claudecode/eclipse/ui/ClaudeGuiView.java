@@ -708,11 +708,125 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
      * :root.light CSS token overrides. The theme is derived from the perceived luminance
      * of the widget background — the actually-painted color, so it's correct for custom
      * themes too (issue #78). Dark is the default and stays visually unchanged.
+     *
+     * <p>Also pushes the ACTUAL native editor-area tab-folder colors when reachable (see
+     * {@link #findEditorAreaTabColors()}), so the webview's own tab strip (#toolbar /
+     * #convo-header) matches Eclipse's real chrome instead of a hardcoded guess at it —
+     * a single hardcoded value can't be right for every OS/GTK theme (the GTK chrome
+     * gray looks nothing like Windows' or macOS'). Passed as optional 2nd/3rd args;
+     * the webview's tokens.css values are the fallback when null (the editor area
+     * isn't reachable or rendered yet — see that method's comment). Deliberately the
+     * EDITOR area specifically, not wherever this view itself happens to be docked:
+     * the view-stack and editor-stack active-tab styling differ in Eclipse, and the
+     * editor style is the one this webview's own tab strip is designed to match.
      */
     private void pushTheme() {
         if (browser == null || browser.isDisposed() || !pageLoaded) return;
         String mode = isDarkTheme() ? "dark" : "light";
-        browser.execute("window.onTheme && window.onTheme('" + mode + "')");
+        String[] tabColors = findEditorAreaTabColors();
+        if (tabColors != null) lastEditorAreaTabColors = tabColors;
+        // Falls back to the last successfully sampled colors (not the CSS default)
+        // when the editor area is momentarily unreachable (e.g. zero editors open),
+        // so the tab strip doesn't visibly shift color depending on editor state.
+        String[] use = tabColors != null ? tabColors : lastEditorAreaTabColors;
+        if (Activator.getDefault().getPreferenceStore().getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_DEBUG_MODE)) {
+            Activator.log("editor-area tab colors: "
+                    + (use == null ? "unavailable" : use[0] + " / " + use[1]) + " (mode=" + mode + ")"
+                    + " [" + lastTabColorsDiagnostic + "]");
+        }
+        String call = "window.onTheme && window.onTheme('" + mode + "'"
+                + (use != null ? ",'" + use[0] + "','" + use[1] + "'" : "")
+                + ")";
+        browser.execute(call);
+    }
+
+    /** Last successfully sampled {@code {inactiveHex, activeHex}} from {@link
+     *  #findEditorAreaTabColors()}, kept so a momentarily-unreachable editor area
+     *  (e.g. zero editors open) doesn't flicker the tab strip back to the CSS default. */
+    private String[] lastEditorAreaTabColors;
+
+    /**
+     * Finds the EDITOR area's {@link org.eclipse.swt.custom.CTabFolder} — the real
+     * "History | Claude Code | ..." tab strip when editors are docked there — via
+     * the E4 model, and samples its actual painted colors: inactive-tab background
+     * ({@code getBackground()}) and active-tab background ({@code
+     * getSelectionBackground()}). Both are read directly off the widget rather than
+     * through the CSS engine: E4 themes a CTabFolder by calling these same setters,
+     * so the getters already return the themed value, and going through {@code
+     * IThemeEngine}'s CSS layer would mean casting its implementation to an internal
+     * type and manually disposing the Color objects it allocates — extra risk for a
+     * value the widget already holds. Returns {@code {inactiveHex, activeHex}}, or
+     * {@code null} if the editor area isn't in the model yet, isn't rendered as a
+     * CTabFolder (e.g. zero editors open), or the colors aren't readable.
+     */
+    /** Set by {@link #findEditorAreaTabColors()} on every call — which step it got to,
+     *  for the debug-mode log line in {@link #pushTheme()} (this method itself only
+     *  returns null/non-null, so this is the only way to see WHERE it failed). */
+    private String lastTabColorsDiagnostic = "not yet run";
+
+    private String[] findEditorAreaTabColors() {
+        try {
+            org.eclipse.ui.IWorkbench wb = org.eclipse.ui.PlatformUI.getWorkbench();
+            org.eclipse.e4.ui.workbench.modeling.EModelService modelService =
+                    wb.getService(org.eclipse.e4.ui.workbench.modeling.EModelService.class);
+            org.eclipse.e4.ui.model.application.MApplication application =
+                    wb.getService(org.eclipse.e4.ui.model.application.MApplication.class);
+            if (modelService == null || application == null) {
+                lastTabColorsDiagnostic = "modelService=" + modelService + " application=" + application;
+                return null;
+            }
+
+            org.eclipse.e4.ui.model.application.ui.MUIElement element =
+                    modelService.find(org.eclipse.ui.IPageLayout.ID_EDITOR_AREA, application);
+            String elementClassBeforeDeref = element == null ? "null" : element.getClass().getName();
+            if (element instanceof org.eclipse.e4.ui.model.application.ui.advanced.MPlaceholder ph) {
+                element = ph.getRef();
+            }
+            // ID_EDITOR_AREA resolves to an MArea (the editor area's own container),
+            // NOT the MPartStack directly — confirmed by logging the actual class here
+            // against a live GTK session. The real per-editor tab folder (the one
+            // showing open file tabs) is a descendant of it, tagged by E4's renderer
+            // with a CSS class name containing "EditorStack" — findElements walks
+            // down to find it rather than assuming a fixed nesting depth, since that
+            // can vary with split editors / multiple editor areas.
+            if (!(element instanceof org.eclipse.e4.ui.model.application.ui.advanced.MArea area)) {
+                lastTabColorsDiagnostic = "find(" + org.eclipse.ui.IPageLayout.ID_EDITOR_AREA + ") -> "
+                        + elementClassBeforeDeref + ", after MPlaceholder deref -> "
+                        + (element == null ? "null" : element.getClass().getName()) + " (want MArea)";
+                return null;
+            }
+            // A split editor area has more than one MPartStack descendant. Prefer the
+            // one E4 itself tags as the primary data stack (confirmed present as a
+            // literal tag, not the element ID, via a live GTK log dump); fall back to
+            // the first live one so a split editor still works even if some future
+            // Eclipse version stops tagging it this way.
+            org.eclipse.swt.custom.CTabFolder tabFolder = null;
+            org.eclipse.swt.custom.CTabFolder firstLive = null;
+            for (org.eclipse.e4.ui.model.application.ui.basic.MPartStack stack
+                    : modelService.findElements(area, null, org.eclipse.e4.ui.model.application.ui.basic.MPartStack.class)) {
+                if (!(stack.getWidget() instanceof org.eclipse.swt.custom.CTabFolder ctf) || ctf.isDisposed()) continue;
+                if (firstLive == null) firstLive = ctf;
+                if (stack.getTags().contains("org.eclipse.e4.primaryDataStack")) { tabFolder = ctf; break; }
+            }
+            if (tabFolder == null) tabFolder = firstLive;
+            if (tabFolder == null) {
+                lastTabColorsDiagnostic = "MArea found, but no descendant MPartStack has a live CTabFolder widget"
+                        + " (zero editors open, or the editor area isn't rendered yet)";
+                return null;
+            }
+
+            org.eclipse.swt.graphics.Color inactive = tabFolder.getBackground();
+            org.eclipse.swt.graphics.Color active = tabFolder.getSelectionBackground();
+            if (inactive == null || inactive.isDisposed() || active == null || active.isDisposed()) {
+                lastTabColorsDiagnostic = "inactive=" + inactive + " active=" + active + " (disposed or null)";
+                return null;
+            }
+            lastTabColorsDiagnostic = "ok";
+            return new String[]{ ColorUtils.toHex(inactive.getRGB()), ColorUtils.toHex(active.getRGB()) };
+        } catch (Exception e) {
+            lastTabColorsDiagnostic = "threw " + e;
+            return null;
+        }
     }
 
     /**

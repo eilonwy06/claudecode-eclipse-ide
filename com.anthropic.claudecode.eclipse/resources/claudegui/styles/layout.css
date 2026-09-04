@@ -16,7 +16,7 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 
 /* ── Top toolbar (VSCode editor-tab strip) ───────────────── */
 #toolbar { display: flex; align-items: stretch; height: 35px; flex-shrink: 0;
-  background: var(--bg); border-bottom: 1px solid var(--border-soft); }
+  background: var(--tab-bg); border-bottom: 1px solid var(--border-soft); }
 /* min-width:0 lets the strip shrink within the toolbar so its tabs scroll INTERNALLY
    (instead of pushing the toolbar tools off-screen). Thin bottom scrollbar, thumb
    visible only on hover — like VSCode. */
@@ -27,13 +27,17 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 #tabs::-webkit-scrollbar-track { background: transparent; }
 #tabs::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
 #tabs.sb-show::-webkit-scrollbar-thumb { background: var(--scrollbar-track); }
+/* --border (not --toolbar's --border-soft): now that inactive tabs share the
+   strip's own fill (--tab-bg) instead of standing out from it, they need a
+   visible edge to read as separate tabs rather than one undifferentiated bar. */
 .tab { display: flex; align-items: center; gap: 7px; padding: 0 10px; height: 100%; cursor: pointer;
-  background: var(--bg); border-right: 1px solid var(--border-soft); border-top: 2px solid transparent;
+  background: var(--tab-bg); border-right: 1px solid var(--border); border-top: 2px solid transparent;
   font-size: 12.5px; color: var(--fg-dim); max-width: 200px; flex-shrink: 0; }
-.tab.active { background: var(--bg-soft); border-top-color: var(--accent); color: var(--fg); }
-/* Hovering an unfocused tab previews it with the active tab's bg + text colors
-   (the accent top border stays exclusive to the truly active tab). */
-.tab:hover { background: var(--bg-soft); color: var(--fg); }
+.tab.active { background: var(--tab-bg-active); border-top-color: var(--accent); color: var(--fg); }
+/* Unchanged from the original --bg-soft behavior (--tab-hover-preview equals
+   --tab-bg-active in dark, same as before this token split) — hovering previews
+   the active look, and only the accent top border marks the truly active tab. */
+.tab:hover { background: var(--tab-hover-preview); color: var(--fg); }
 /* drag-to-reorder: dragged tab dims; a 2px accent line marks the drop position */
 .tab.dragging { opacity: .4; }
 .tab.drop-before { box-shadow: inset 2px 0 0 0 var(--accent); }
@@ -110,8 +114,12 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
 #cwd-row .ct { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 /* ── Conversation header ─────────────────────────────────── */
+/* Same chrome fill as #toolbar (--tab-bg): both rows sit above the content pane
+   (--bg), not as part of it, so the active tab above them is the only light thing
+   in that chrome strip. --border stays the stronger divider vs. --toolbar's
+   --border-soft since this is the direct boundary against the content pane. */
 #convo-header { display: flex; align-items: center; justify-content: space-between;
-  padding: 9px 14px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+  padding: 9px 14px; flex-shrink: 0; background: var(--tab-bg); border-bottom: 1px solid var(--border); }
 
 /* ---- CLI update banner ----
    Shown only when the installed Claude Code is behind the published release, so
@@ -135,7 +143,7 @@ html, body { height: 100%; background: var(--bg); color: var(--fg);
    pill's height is set here — the input is never forced to the pill's height. */
 #convo-header .title-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 340px;
   height: 32px; box-sizing: border-box; padding: 0 6px; border-radius: 8px; margin: -1px -6px; cursor: pointer; }
-#convo-header .title-wrap:hover { background: var(--bg-hover); }
+#convo-header .title-wrap:hover { background: var(--chrome-hover); }
 #convo-header .title { font-weight: 600; font-size: 13px; color: var(--fg); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 #convo-header .title-edit { color: var(--fg-faint); display: none; flex-shrink: 0; }
