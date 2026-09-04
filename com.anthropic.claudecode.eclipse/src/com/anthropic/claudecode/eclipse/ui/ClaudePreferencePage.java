@@ -196,8 +196,18 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 getFieldEditorParent()));
 
         addStatuslineDependent(new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_SHOW_SESSION_5H_RESET,
+                "Show reset time for 5-hour (session) usage limit",
+                getFieldEditorParent()));
+
+        addStatuslineDependent(new BooleanFieldEditor(
                 Constants.PREF_STATUSLINE_SHOW_WEEKLY,
                 "Show weekly (7-day) usage limit",
+                getFieldEditorParent()));
+
+        addStatuslineDependent(new BooleanFieldEditor(
+                Constants.PREF_STATUSLINE_SHOW_WEEKLY_RESET,
+                "Show reset time for weekly (7-day) usage limit",
                 getFieldEditorParent()));
 
         IntegerFieldEditor refreshSeconds = new IntegerFieldEditor(

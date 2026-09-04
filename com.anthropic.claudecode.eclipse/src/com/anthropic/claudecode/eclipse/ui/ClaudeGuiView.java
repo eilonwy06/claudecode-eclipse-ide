@@ -1622,7 +1622,13 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         m.setOnToolStart(n -> display.asyncExec(() -> executeJS("window.onToolStart && window.onToolStart('" + tj + "','" + esc(n) + "')")));
         m.setOnThinking(t -> display.asyncExec(() -> executeJS("window.onThinking && window.onThinking('" + tj + "','" + esc(t) + "')")));
         m.setOnTokens(n -> display.asyncExec(() -> executeJS("window.onTokens && window.onTokens('" + tj + "','" + esc(n) + "')")));
-        m.setOnRateLimit(j -> display.asyncExec(() -> executeJS("window.onRateLimit && window.onRateLimit('" + tj + "','" + esc(j) + "')")));
+        m.setOnRateLimit(j -> {
+            ClaudeStatusStore.acceptRateLimitEvent(j);
+            display.asyncExec(() -> {
+                refreshStatusBar();
+                executeJS("window.onRateLimit && window.onRateLimit('" + tj + "','" + esc(j) + "')");
+            });
+        });
         m.setOnSessionId(id -> display.asyncExec(() -> executeJS("window.onSessionId && window.onSessionId('" + tj + "','" + esc(id) + "')")));
         m.setOnError(msg -> display.asyncExec(() -> executeJS("window.onError && window.onError('" + tj + "','" + esc(msg) + "')")));
         m.setOnCompact(j -> display.asyncExec(() -> executeJS("window.onCompact && window.onCompact('" + tj + "','" + esc(j) + "')")));

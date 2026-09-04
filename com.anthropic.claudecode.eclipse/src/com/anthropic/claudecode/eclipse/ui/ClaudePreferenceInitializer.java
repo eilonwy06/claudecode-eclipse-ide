@@ -42,7 +42,9 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_CONTEXT, true);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_COST, false);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_SESSION_5H, true);
+        store.setDefault(Constants.PREF_STATUSLINE_SHOW_SESSION_5H_RESET, true);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_WEEKLY, true);
+        store.setDefault(Constants.PREF_STATUSLINE_SHOW_WEEKLY_RESET, true);
         store.setDefault(Constants.PREF_STATUSLINE_REFRESH_SECONDS, 60);
 
         store.setDefault(Constants.PREF_HISTORY_SHOW_TIMESTAMPS, false);
