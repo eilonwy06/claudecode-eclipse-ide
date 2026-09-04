@@ -20,7 +20,7 @@ window.onStreamText    = (tabId, t) => withTab(tabId, () => appendAssistant(t));
    stay hidden until then). */
 window.onStreamEnd     = (tabId) => withTab(tabId, (t) => { t.compacting = false; hideWorking(); endAssistant(); setStreaming(false); backfillMessageIds(t); });
 window.onToolStart     = (tabId, n) => withTab(tabId, () => addToolLine(n));
-window.onToolEnd       = () => {};
+window.onToolEnd       = (tabId, j) => withTab(tabId, () => applyToolResult(j));
 window.onSystemMessage = () => {};   /* backend system/init noise — ignored */
 window.onError         = (tabId, m) => withTab(tabId, () => { hideWorking(); endAssistant(); setStreaming(false); addSystem('⚠ ' + augmentError(m)); });
 window.onStatusUpdate  = () => {};

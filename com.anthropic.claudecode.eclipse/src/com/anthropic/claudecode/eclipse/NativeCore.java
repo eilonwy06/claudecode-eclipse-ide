@@ -61,11 +61,30 @@ public final class NativeCore {
     private static String nativeResourcePath() {
         String os   = System.getProperty("os.name",  "").toLowerCase(java.util.Locale.ROOT);
         String arch = System.getProperty("os.arch",  "").toLowerCase(java.util.Locale.ROOT);
-        String dir  = (arch.equals("aarch64") || arch.equals("arm64")) ? "aarch64" : "x86_64";
+        String dir  = nativeArchDir(arch);
+        if (dir == null) return null;
         if (os.contains("win"))   return "/native/windows/" + dir + "/claude_eclipse_core.dll";
         if (os.contains("linux")) return "/native/linux/"   + dir + "/libclaude_eclipse_core.so";
         if (os.contains("mac"))   return "/native/macos/"   + dir + "/libclaude_eclipse_core.dylib";
+        if (os.contains("freebsd")) return "/native/freebsd/" + dir + "/libclaude_eclipse_core.so";
         return null;
+    }
+
+    /**
+     * Maps {@code os.arch} onto a bundled native directory, or null when no
+     * build exists for that architecture.
+     *
+     * Returning null matters.  Defaulting an unrecognized architecture to
+     * x86_64 hands a ppc64le or riscv64 JVM an x86-64 binary that extracts
+     * successfully and then fails inside {@code System.load()}, instead of
+     * reporting the platform as unsupported.
+     */
+    private static String nativeArchDir(String arch) {
+        switch (arch) {
+            case "aarch64": case "arm64":  return "aarch64";
+            case "amd64":   case "x86_64": return "x86_64";
+            default:                       return null;
+        }
     }
 
     // ── Server lifecycle ──────────────────────────────────────────────────────
@@ -299,6 +318,14 @@ public final class NativeCore {
          * followed by {@code {"phase":"summary","text":…}}. Non-blocking.
          */
         default void onCompact(String json) {}
+        /**
+         * A tool finished: {@code {"id":…,"isError":bool,"text":…}}. {@code id} is
+         * the {@code tool_use_id} that {@link #onToolStart} carried, so the GUI can
+         * resolve THAT tool's dot; {@code text} is the one-line reason a failure
+         * gave (empty for successes, and for failures the user themselves caused —
+         * a declined tool keeps its red dot and says nothing). Non-blocking.
+         */
+        default void onToolEnd(String json) {}
     }
 
     // ── Embedded console (replaces PTY + xterm.js for the CLI view) ─────────

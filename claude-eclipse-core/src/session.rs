@@ -356,6 +356,10 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
     let mut tool_idx: HashMap<String, usize> = HashMap::new();
     // tool_use id → whether its tool_result reported an error (interrupt/reject).
     let mut result_error: HashMap<String, bool> = HashMap::new();
+    // tool_use id → the one-line reason a failed tool gave, for the muted line
+    // under its tool row. Only failures the user did not cause are recorded —
+    // see `tool_error_summary`, which returns None for their own decisions.
+    let mut result_text: HashMap<String, String> = HashMap::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -457,21 +461,19 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                         if !tuid.is_empty() {
                             let is_err = b["is_error"].as_bool().unwrap_or(false);
                             result_error.insert(tuid.to_string(), is_err);
+                            // Keep WHY it failed, not just that it did — reloading a
+                            // conversation used to leave a bare red dot with the reason
+                            // thrown away, so a past failure read as an unexplained stop.
+                            if is_err {
+                                if let Some(sum) = tool_error_summary(&flatten_result_content(b)) {
+                                    result_text.insert(tuid.to_string(), sum);
+                                }
+                            }
                         }
                         if !ask_ids.contains(tuid) {
                             continue;
                         }
-                        let mut rc = String::new();
-                        if let Some(s) = b["content"].as_str() {
-                            rc.push_str(s);
-                        } else if let Some(parts) = b["content"].as_array() {
-                            for rb in parts {
-                                if rb["type"].as_str() == Some("text") {
-                                    rc.push_str(rb["text"].as_str().unwrap_or(""));
-                                }
-                            }
-                        }
-                        let rc = strip_answer_prefix(&rc);
+                        let rc = strip_answer_prefix(&flatten_result_content(b));
                         if !rc.is_empty() {
                             items.push(serde_json::json!({ "t": "answered", "text": rc }));
                         }
@@ -585,10 +587,99 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
         };
         if let Some(obj) = items.get_mut(idx).and_then(|v| v.as_object_mut()) {
             obj.insert("status".into(), serde_json::Value::from(status));
+            // The reason, when the failure was the tool's own. A cut-off turn has
+            // no result and so no text — the red dot alone still says "stopped".
+            if let Some(txt) = result_text.get(id) {
+                obj.insert("errorText".into(), serde_json::Value::from(txt.as_str()));
+            }
         }
     }
 
     serde_json::to_string(&items).unwrap_or_else(|_| "[]".into())
+}
+
+/// Flattens a `tool_result` block's content to plain text. The CLI writes it
+/// either as a bare string or as `[{type:"text",…}]` blocks, so both shapes have
+/// to collapse to the same thing.
+pub(crate) fn flatten_result_content(b: &serde_json::Value) -> String {
+    let mut out = String::new();
+    if let Some(s) = b["content"].as_str() {
+        out.push_str(s);
+    } else if let Some(parts) = b["content"].as_array() {
+        for rb in parts {
+            if rb["type"].as_str() == Some("text") {
+                out.push_str(rb["text"].as_str().unwrap_or(""));
+            }
+        }
+    }
+    out
+}
+
+/// Longest error summary we surface. The full text stays in the transcript; the
+/// GUI shows one line, and real results run to 100+ lines.
+const ERROR_SUMMARY_MAX: usize = 160;
+
+/// Prefixes that mark a result as the USER'S OWN decision rather than a tool
+/// failure. The CLI reports "declined", "rejected" and "answered instead" through
+/// the same `is_error` channel a genuine failure uses, but the GUI already shows
+/// those through its decision cards — repeating the sentence under the tool row
+/// would be noise. Verified against 111 real `is_error` results: 23 are these.
+const DECISION_PREFIXES: [&str; 4] = [
+    "The user doesn't want to proceed",
+    "The user declined",
+    "The user dismissed",
+    "[User typed]:",
+];
+
+/// Condenses a failed tool's result into the single muted line shown beneath it,
+/// or `None` when nothing should be shown.
+///
+/// Returns `None` for the user's own decisions (see [`DECISION_PREFIXES`]) so a
+/// declined tool keeps its red dot and stays quiet.
+///
+/// A bare `Exit code N` first line is joined to the next real line: three
+/// quarters of genuine failures lead with it, and the number alone says nothing
+/// about what broke. The exit status is kept rather than dropped because 143
+/// (timeout) and 1 (ordinary failure) mean different things.
+pub(crate) fn tool_error_summary(raw: &str) -> Option<String> {
+    let mut t = raw.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if DECISION_PREFIXES.iter().any(|p| t.starts_with(p)) {
+        return None;
+    }
+    // Unwrap the CLI's own error envelope so the message reads plainly.
+    if let Some(inner) = t.strip_prefix("<tool_use_error>") {
+        t = inner.strip_suffix("</tool_use_error>").unwrap_or(inner).trim();
+    }
+    let mut lines = t.lines().map(str::trim).filter(|l| !l.is_empty());
+    let head = lines.next()?;
+    let mut summary = head.to_string();
+    if is_bare_exit_code(head) {
+        if let Some(next) = lines.next() {
+            summary.push_str(" · ");
+            summary.push_str(next);
+        }
+    }
+    if summary.is_empty() {
+        return None;
+    }
+    // char_indices, not byte slicing — these carry paths and prose that are not
+    // guaranteed ASCII, and a mid-codepoint cut would panic.
+    if summary.chars().count() > ERROR_SUMMARY_MAX {
+        let cut: String = summary.chars().take(ERROR_SUMMARY_MAX).collect();
+        summary = format!("{}…", cut.trim_end());
+    }
+    Some(summary)
+}
+
+/// True for a line that is exactly "Exit code <digits>" and nothing else.
+fn is_bare_exit_code(line: &str) -> bool {
+    match line.strip_prefix("Exit code ") {
+        Some(rest) => !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()),
+        None => false,
+    }
 }
 
 /// Drops a leading "The user answered: " (any case, any leading whitespace)
@@ -1054,6 +1145,16 @@ fn kill_pid(pid: u32) {
         .status();
 }
 
+/// Best-effort kill by pid, used only by the offline-rename watchdog.
+#[cfg(target_os = "freebsd")]
+fn kill_pid(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -1305,6 +1406,103 @@ mod tests {
             {"t":"error","text":"API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com."}
         ]"#).unwrap();
         assert_eq!(got, want, "api error render items");
+    }
+
+    /// The one-line reason shown under a failed tool. Every input below is a real
+    /// shape from local transcripts (111 `is_error` results were surveyed).
+    #[test]
+    fn tool_error_summary_condenses_real_failures() {
+        use super::tool_error_summary as sum;
+
+        // Three quarters of genuine failures lead with a bare exit code, which on
+        // its own says nothing — the next real line is what broke.
+        assert_eq!(
+            sum("Exit code 1\nTraceback (most recent call last):\r\n  File \"<string>\", line 4"),
+            Some("Exit code 1 · Traceback (most recent call last):".into())
+        );
+        // The status is kept, not dropped: 143 (timeout) ≠ 1 (ordinary failure).
+        assert_eq!(
+            sum("Exit code 143\nCommand timed out after 2m 0s"),
+            Some("Exit code 143 · Command timed out after 2m 0s".into())
+        );
+        // An exit code with nothing after it still beats showing nothing.
+        assert_eq!(sum("Exit code 2"), Some("Exit code 2".into()));
+        // "Exit code" that is NOT bare is a message in its own right — left alone.
+        assert_eq!(sum("Exit code 1 was returned"), Some("Exit code 1 was returned".into()));
+
+        // The CLI's own error envelope is unwrapped so the message reads plainly.
+        assert_eq!(
+            sum("<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>"),
+            Some("File has not been read yet. Read it first before writing to it.".into())
+        );
+
+        // A single-line failure passes through untouched.
+        assert_eq!(
+            sum("File does not exist. Note: your current working directory is C:\\ws"),
+            Some("File does not exist. Note: your current working directory is C:\\ws".into())
+        );
+
+        // The user's own decisions are NOT failures: the GUI already shows those
+        // through its decision cards, so the tool row stays quiet (red dot only).
+        assert_eq!(sum("The user doesn't want to proceed with this tool use. The tool use was rejected"), None);
+        assert_eq!(sum("The user declined this action in Eclipse."), None);
+        assert_eq!(sum("The user dismissed the prompt."), None);
+        assert_eq!(sum("[User typed]: okay do it differently"), None);
+
+        // Nothing to say → no line at all, rather than an empty one.
+        assert_eq!(sum(""), None);
+        assert_eq!(sum("   \n  \n"), None);
+    }
+
+    /// Long results are cut to one line's worth. The cut counts CHARACTERS, not
+    /// bytes — these carry Windows paths and prose, and slicing mid-codepoint
+    /// would panic the loader on a conversation that merely contains a failure.
+    #[test]
+    fn tool_error_summary_truncates_on_char_boundaries() {
+        let long = "é".repeat(400);
+        let got = super::tool_error_summary(&long).unwrap();
+        assert_eq!(got.chars().count(), 161, "160 chars plus the ellipsis");
+        assert!(got.ends_with('…'));
+
+        let ascii = "x".repeat(400);
+        let got = super::tool_error_summary(&ascii).unwrap();
+        assert!(got.starts_with("xxxx") && got.ends_with('…'));
+    }
+
+    /// A failed tool must carry WHY it failed onto its render item, so a reopened
+    /// conversation reads the same as it did live. A tool the user declined gets
+    /// the red dot but no text, and a successful one neither.
+    #[test]
+    fn load_session_attaches_error_text_to_failed_tools() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-toolerr-home");
+        let root = r"C:\toolerrws";
+        let dir = home.join(".claude").join("projects").join("C--toolerrws");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("sesst.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"go"},"timestamp":"2026-09-04T01:00:00.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_a","name":"Read","input":{"file_path":"C:\\nope.java"}}]},"timestamp":"2026-09-04T01:00:01.000Z"}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_a","is_error":true,"content":"File does not exist. Note: your current working directory is C:\\ws"}]},"timestamp":"2026-09-04T01:00:02.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_b","name":"Edit","input":{"file_path":"C:\\x.java"}}]},"timestamp":"2026-09-04T01:00:03.000Z"}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_b","is_error":true,"content":"The user doesn't want to proceed with this tool use. The tool use was rejected"}]},"timestamp":"2026-09-04T01:00:04.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_c","name":"Read","input":{"file_path":"C:\\ok.java"}}]},"timestamp":"2026-09-04T01:00:05.000Z"}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_c","content":"contents"}]},"timestamp":"2026-09-04T01:00:06.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let loaded = super::load_session_history(root, "sesst");
+        let _ = fs::remove_dir_all(&home);
+
+        let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
+        let want: serde_json::Value = serde_json::from_str(r#"[
+            {"t":"user","content":"go","ts":"2026-09-04T01:00:00.000Z"},
+            {"t":"tool","name":"Read","input":{"file_path":"C:\\nope.java"},"model":"claude-opus-4-8","status":"interrupted","errorText":"File does not exist. Note: your current working directory is C:\\ws"},
+            {"t":"tool","name":"Edit","input":{"file_path":"C:\\x.java"},"model":"claude-opus-4-8","status":"interrupted"},
+            {"t":"tool","name":"Read","input":{"file_path":"C:\\ok.java"},"model":"claude-opus-4-8","status":"done"}
+        ]"#).unwrap();
+        assert_eq!(got, want, "failed tools carry their reason; declined ones stay quiet");
     }
 
     #[test]

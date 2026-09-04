@@ -1069,8 +1069,8 @@ fn reader_loop(
             }
             "user" => {
                 // The one synthetic user echo right after a compact_boundary is the
-                // compact summary — everything else (command echoes, tool results)
-                // stays ignored.
+                // compact summary. Command echoes stay ignored; tool results fall
+                // through to process_event_value, which turns them into onToolEnd.
                 if awaiting_compact_summary
                     && event["isSynthetic"].as_bool().unwrap_or(false)
                 {
@@ -1409,6 +1409,38 @@ fn process_event_value(
                 fire_string(java_vm, callbacks, "onSystem", msg);
             }
         }
+        // Tool RESULTS come back on a "user" event (the CLI feeds them to the model
+        // as the user turn). Without this branch the GUI only ever heard that a tool
+        // STARTED, so markToolsDone greened every dot and a failed tool was rendered
+        // as a success — the transcript said is_error, the screen said fine.
+        "user" => {
+            if let Some(blocks) = event["message"]["content"].as_array() {
+                for b in blocks {
+                    if b["type"].as_str() != Some("tool_result") {
+                        continue;
+                    }
+                    let id = b["tool_use_id"].as_str().unwrap_or("");
+                    if id.is_empty() {
+                        continue; // nothing to match it to on the GUI side
+                    }
+                    let is_error = b["is_error"].as_bool().unwrap_or(false);
+                    // Successes fire too: the dot is then set from what actually
+                    // happened instead of inferred when the NEXT tool starts.
+                    let text = if is_error {
+                        crate::session::tool_error_summary(&crate::session::flatten_result_content(b))
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    let payload = serde_json::json!({
+                        "id": id,
+                        "isError": is_error,
+                        "text": text,
+                    });
+                    fire_string(java_vm, callbacks, "onToolEnd", &payload.to_string());
+                }
+            }
+        }
         // Actual Claude CLI --output-format stream-json format.
         // Partial events have cumulative text; compute deltas to avoid duplicates.
         "assistant" => {
@@ -1454,6 +1486,9 @@ fn process_event_value(
                                 let payload = serde_json::json!({
                                     "name": block["name"].as_str().unwrap_or("tool"),
                                     "input": block.get("input").cloned().unwrap_or(serde_json::json!({})),
+                                    // Carried so the matching tool_result (onToolEnd)
+                                    // can find THIS line again and resolve its dot.
+                                    "id": block["id"].as_str().unwrap_or(""),
                                 });
                                 fire_string(java_vm, callbacks, "onToolStart", &payload.to_string());
                             }

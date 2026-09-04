@@ -271,7 +271,17 @@ function toolLabel(name) {
 function planOutcomeText(rejected) {
   return rejected ? 'Stayed in plan mode' : 'User approved the plan';
 }
-function makeToolLine(name, input, status) {
+/* The muted one-liner under a failed tool ("⚠ File does not exist…"). Shared by the
+   live path (onToolEnd) and the reload path (makeToolLine) so a conversation renders
+   the same either way — the two disagreeing is the bug this fixes. Idempotent: a
+   second result for the same tool replaces the line instead of stacking another. */
+function setToolError(line, text) {
+  if (!line || !text) return;
+  let sub = line.querySelector(':scope > .tool-sub.err');
+  if (!sub) { sub = document.createElement('div'); sub.className = 'tool-sub err'; line.appendChild(sub); }
+  sub.textContent = '⚠ ' + text;
+}
+function makeToolLine(name, input, status, errorText) {
   input = input || {};
   const path = input.file_path || input.path || input.notebook_path || '';
   const detail = path || input.command || input.pattern || input.query || input.url || input.prompt || '';
@@ -293,6 +303,10 @@ function makeToolLine(name, input, status) {
     sub.textContent = planOutcomeText(status === 'interrupted');
     line.appendChild(sub);
   }
+  // Reload path: why it failed, when the loader kept a reason. A turn that was
+  // simply cut off has no result and no text — the red dot alone still reads
+  // "stopped", which is what it meant live.
+  if (status === 'interrupted') setToolError(line, errorText);
   return line;
 }
 function addToolLine(payload) {
@@ -300,12 +314,40 @@ function addToolLine(payload) {
   if (!ensureTurn()) return;
   markToolsDone(curTurn);   // a new tool starting means the previous one finished → green
   let info; try { info = JSON.parse(payload); } catch (e) { info = { name: payload, input: {} }; }
-  curTurn.appendChild(makeToolLine(info.name || 'tool', info.input || {}));
+  const line = makeToolLine(info.name || 'tool', info.input || {});
+  // The tool_use id, so this line can be found again when its result lands. An
+  // older core sends no id — the line then just keeps the inferred green dot.
+  if (info.id) line.dataset.tuid = info.id;
+  curTurn.appendChild(line);
   // End the current text body so any text Claude emits AFTER this tool starts a new
   // body BELOW the tool line (otherwise the closing "Done…" merges in above the edits).
   curBody = null; curText = '';
   relinkTurn(curTurn);
   scrollBottom();
+}
+/* A tool finished (live). Resolves THAT tool's dot from what actually happened
+   instead of the optimistic green markToolsDone would infer, and shows the reason
+   when it failed. Searches the whole pane, not just curTurn: a result can land
+   after the turn ended, by which point curTurn is null.
+   @param {string} payload {"id":…,"isError":bool,"text":…} */
+function applyToolResult(payload) {
+  let info; try { info = JSON.parse(payload); } catch (e) { return; }
+  if (!info || !info.id) return;
+  const pane = streamPane() || (activeTab() ? activeTab().pane : null);
+  if (!pane) return;
+  // Matched by walking the nodes rather than an attribute selector — tool ids come
+  // from the CLI and are never interpolated into a selector this way.
+  let line = null;
+  pane.querySelectorAll('.tool-line[data-tuid]').forEach(el => {
+    if (el.dataset.tuid === info.id) line = el;
+  });
+  if (!line) return;
+  // A tool still holding a decision card keeps its pending look until the card
+  // resolves it — that path sets its own colour.
+  if (line.classList.contains('pending')) return;
+  const dot = line.querySelector('.dot');
+  if (dot) dot.className = info.isError ? 'dot red' : 'dot done';
+  if (info.isError) setToolError(line, info.text);
 }
 /* Minimal LCS line diff (guarded against pathological sizes). */
 function lineDiff(oldStr, newStr) {

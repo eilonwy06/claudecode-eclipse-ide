@@ -182,6 +182,10 @@
 .tool-line .tname { font-weight: 600; color: var(--fg); }
 .tool-line .tpath { color: var(--fg-dim); word-break: break-all; }
 .tool-sub { font-size: 11.5px; color: var(--fg-faint); margin-top: 2px; margin-bottom: 6px; }
+/* Why a tool failed. Clamped to ONE line here as well as in the summariser: real
+   results run to 100+ lines, and the transcript stays scannable only if a failure
+   costs exactly one row. */
+.tool-sub.err { color: var(--red); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* inline code chip */
 code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; background: var(--ic-bg);

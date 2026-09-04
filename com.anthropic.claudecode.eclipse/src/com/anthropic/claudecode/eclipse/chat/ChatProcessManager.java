@@ -68,6 +68,7 @@ public class ChatProcessManager {
             }
             @Override public void onStatus(String json) { emit(ChatProcessManager.this.onStatus, json); }
             @Override public void onCompact(String json) { emit(ChatProcessManager.this.onCompact, json); }
+            @Override public void onToolEnd(String json) { emit(ChatProcessManager.this.onToolEnd, json); }
         });
     }
 

@@ -1648,6 +1648,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         m.setOnText(t -> display.asyncExec(() -> executeJS("window.onStreamText && window.onStreamText('" + tj + "','" + esc(t) + "')")));
         m.setOnStreamEnd(() -> display.asyncExec(() -> executeJS("window.onStreamEnd && window.onStreamEnd('" + tj + "')")));
         m.setOnToolStart(n -> display.asyncExec(() -> executeJS("window.onToolStart && window.onToolStart('" + tj + "','" + esc(n) + "')")));
+        m.setOnToolEnd(j -> display.asyncExec(() -> executeJS("window.onToolEnd && window.onToolEnd('" + tj + "','" + esc(j) + "')")));
         m.setOnThinking(t -> display.asyncExec(() -> executeJS("window.onThinking && window.onThinking('" + tj + "','" + esc(t) + "')")));
         m.setOnTokens(n -> display.asyncExec(() -> executeJS("window.onTokens && window.onTokens('" + tj + "','" + esc(n) + "')")));
         m.setOnRateLimit(j -> {

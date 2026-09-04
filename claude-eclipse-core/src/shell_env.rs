@@ -335,6 +335,94 @@ fn capture_impl() -> CapturedEnv {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// FreeBSD
+// ───────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "freebsd")]
+fn capture_impl() -> CapturedEnv {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    // /bin/sh is the base-system shell and the default for new accounts; bash
+    // lives in ports and is frequently absent.  Honor $SHELL when it is set.
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+    // csh is still root's shell in the base system and tcsh remains a common
+    // user choice, so this branch cannot assume a POSIX shell the way the
+    // macOS and Linux branches do.  Two consequences shape what follows:
+    //
+    //   1. We ask for `env` instead of a printf script.  `${HTTP_PROXY:-...}`
+    //      is a syntax error under csh, which would abort the script and leave
+    //      us silently capturing nothing.  `env` is an external command and
+    //      behaves identically under sh, csh and tcsh.
+    //   2. tcsh rejects `-l` unless it is the only flag, so csh-family shells
+    //      get a bare `-c`.  That still picks up PATH: csh sources ~/.cshrc for
+    //      non-interactive shells too, and FreeBSD's stock ~/.cshrc sets PATH.
+    let is_csh = std::path::Path::new(&shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n == "csh" || n == "tcsh")
+        .unwrap_or(false);
+    let args: &[&str] = if is_csh { &["-c", "env"] } else { &["-l", "-i", "-c", "env"] };
+
+    let mut child = match Command::new(&shell)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c)  => c,
+        Err(_) => return CapturedEnv::default(),
+    };
+
+    // 5s ceiling: a pathological rc file (blocks on network, waits for tty)
+    // must not freeze the first chat/CLI spawn forever.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return CapturedEnv::default();
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => return CapturedEnv::default(),
+        }
+    }
+
+    let output = match child.wait_with_output() {
+        Ok(o) if o.status.success() => o,
+        _ => return CapturedEnv::default(),
+    };
+
+    // `env` emits KEY=VALUE per line.  Uppercase wins over lowercase when a
+    // shell exports both spellings of a proxy var.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut captured = CapturedEnv::default();
+    for line in stdout.lines() {
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let slot = match key {
+            "PATH"                      => &mut captured.path,
+            "HTTP_PROXY"  | "http_proxy"  => &mut captured.http_proxy,
+            "HTTPS_PROXY" | "https_proxy" => &mut captured.https_proxy,
+            "NO_PROXY"    | "no_proxy"    => &mut captured.no_proxy,
+            _ => continue,
+        };
+        if slot.is_none() || key.starts_with(|c: char| c.is_ascii_uppercase()) {
+            *slot = Some(value.to_string());
+        }
+    }
+    captured
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Windows
 // ───────────────────────────────────────────────────────────────────────────
 
