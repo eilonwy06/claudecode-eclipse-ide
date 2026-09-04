@@ -19,9 +19,10 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 - Java 21 or later
 - [Claude Code CLI](https://claude.ai/code) installed and available on your PATH
 - A valid Anthropic API key
-- **Windows:** x86_64
+- **Windows:** x86_64 and aarch64 (ARM64)
 - **Linux:** x86_64 and aarch64 (ARM64)
 - **macOS:** aarch64 (Apple Silicon) and x86_64 (Intel)
+- **FreeBSD:** x86_64 and aarch64 (ARM64)
 
 ### Required Eclipse Terminal bundles
 
@@ -75,7 +76,7 @@ Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
 ### Opening the Views
 
 Go to **Window → Show View → Other → Claude Code** and open the views you want:
-- **Claude Code** — a VS Code-style graphical chat panel. A row of **directory tabs** sits on top, one per working folder, each with its own conversations and its own session history; beneath it, multiple conversation tabs run concurrently, each backed by its own Claude process. Model, reasoning effort, extended thinking and permission mode are set **per conversation**. Also: an in-panel status bar (live model, context usage, cost, session and weekly usage), inline permission / question / diff-review cards, live extended-thinking reveal, image paste, per-message fork / rewind / delete, session history, inline file diffs, Scroll Lock, and a light or dark palette that follows Eclipse's theme
+- **Claude Code** — a VS Code-style graphical chat panel. A row of **directory tabs** sits on top, one per working folder, each with its own conversations and its own session history; beneath it, multiple conversation tabs run concurrently, each backed by its own Claude process. Model, reasoning effort, extended thinking and permission mode are set **per conversation**. Also: an in-panel status bar (live model, context usage, cost, session and weekly usage), inline permission / question / diff-review cards, live extended-thinking reveal, image paste, per-message fork / rewind / delete, session history, inline file diffs, Scroll Lock, and a light or dark palette that follows Eclipse's theme — the conversation tab strip samples your editor tabs' own colors, so it matches whatever theme, OS or desktop environment you run
 - **Claude Terminal** — dedicated interactive terminal, built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, customizable colors, an optional Claude status line, and Ctrl/⌘-click navigation to file paths and links mentioned in Claude's answers
 
 
@@ -170,14 +171,47 @@ Go to **Window → Preferences → Claude Code** to configure:
 | Show context-window usage | On |
 | Show session cost (USD) | Off |
 | Show 5-hour (session) usage limit | On |
+| Show reset time for 5-hour (session) usage limit | On |
 | Show weekly (7-day) usage limit | On |
+| Show reset time for weekly (7-day) usage limit | On |
 | Status refresh interval (seconds) | 60 |
 
 **Network / Proxy** — `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`. Empty by default, in which case they are auto-detected from your shell.
 
 **Decision card timeouts** — how long an unanswered card waits before Claude Code assumes an answer and continues. Set independently for **Permission approval**, **Ask-user question** and **Diff review**; each is Default (30 minutes), Never, or a custom number of seconds.
 
-**Miscellaneous Configuration** — additional options, including which sets of working-indicator verbs the Claude Code view and the Terminal cycle through.
+**Miscellaneous Configuration** — options for the Claude Code view, plus the working-indicator verbs both it and the Terminal cycle through:
+
+| Setting | Default | Description |
+|---|---|---|
+| Show a timestamp above your own messages | Off | A small local-time line above each message you sent, in live conversations and in history loaded from disk |
+| Hide the root directories row | Off | Removes the working-folder picker, its collapsed stand-in and its toolbar toggle — for anyone who only ever works in one folder |
+| Working-indicator verb categories | *(varies)* | *deprecated*, *expansion pack one*, *expansion pack two*, *dank*, *vibecoder*, and **Use custom spinner verbs** — see [Custom Working-Indicator Verbs](#custom-working-indicator-verbs) |
+
+### Custom Working-Indicator Verbs
+
+While Claude is working, the Claude Code view and the Claude Terminal cycle through a list of gerunds — *Thinking…*, *Pondering…*, *Noodling…*. You can add your own words to that rotation, or replace it outright.
+
+1. **Open `~/.claude/settings.json`** — the Claude Code CLI's own user-scope settings file. Create it if it isn't there; it has to hold a single JSON object.
+2. **Add a `spinnerVerbs` object** with a `mode` and a `verbs` list:
+
+   ```json
+   {
+     "spinnerVerbs": {
+       "mode": "append",
+       "verbs": ["Refactoring", "Yak-shaving", "Overthinking"]
+     }
+   }
+   ```
+
+   - `"mode": "append"` — your words join the built-in rotation.
+   - `"mode": "replace"` — only your words are used, and the built-ins drop out entirely.
+   - `verbs` is a plain list of strings. Write them bare — the trailing `...` is added for you, so `"Refactoring"`, not `"Refactoring..."`.
+
+3. **Tick Window → Preferences → Claude Code → Miscellaneous Configuration → "Use custom spinner verbs"** (on by default). Unticking it takes your words out of the Claude Code view's rotation without you having to edit `settings.json` again.
+4. **Click back into the Claude Code view** and your change is live. The Claude Terminal reads the list when a session starts, so there it reaches the next tab you open.
+
+> **Known limitation:** words you put in `spinnerVerbs` always show up in the Claude Terminal's spinner, whether or not "Use custom spinner verbs" is ticked. That checkbox governs only the Claude Code view.
 
 ## Architecture
 
@@ -202,11 +236,19 @@ Claude CLI  <--NDJSON-->  Rust (chat.rs)  --JNI callbacks-->  Java (NativeCore �
 
 The Rust library must be compiled for each target platform:
 
-**Windows (native build):**
+**Windows x86_64 (native build):**
 ```bash
 cd claude-eclipse-core
 cargo build --release
 cp target/release/claude_eclipse_core.dll ../com.anthropic.claudecode.eclipse/native/windows/x86_64/
+```
+
+**Windows aarch64 (cross-compiled from an x86_64 Windows host):**
+```bash
+rustup target add aarch64-pc-windows-msvc
+cd claude-eclipse-core
+cargo build --release --target aarch64-pc-windows-msvc
+cp target/aarch64-pc-windows-msvc/release/claude_eclipse_core.dll    ../com.anthropic.claudecode.eclipse/native/windows/aarch64/
 ```
 
 **Linux (via Docker):**
@@ -242,6 +284,24 @@ docker run --rm -v "${PWD}:/src" -w /src --platform linux/arm64 rust:slim-bullse
 copy claude-eclipse-core\target\release\libclaude_eclipse_core.so `
      com.anthropic.claudecode.eclipse\native\linux\aarch64\
 ```
+
+**FreeBSD (cross-compiled via Docker):**
+
+FreeBSD is not a Linux kernel, so there is no "run the FreeBSD container" equivalent of the Linux builds. Instead the library is compiled on Debian with `clang`/`lld` aimed at a sysroot unpacked from FreeBSD's own release base archive — only the C runtime, libc and headers have to come from FreeBSD itself. A binary linked against a given FreeBSD major runs on that major's later point releases, so a 14.x build covers the whole 14 series.
+
+The two architectures differ in how much Rust gives you for free:
+
+- **x86_64** is tier 2 — prebuilt `std`, stable toolchain:
+  ```bash
+  cargo build --release --target x86_64-unknown-freebsd
+  ```
+- **aarch64** is tier 3 — no prebuilt `std`, so it needs nightly to build `std` from source, and its sysroot comes from the matching [`base.txz`](https://download.freebsd.org/releases/arm64/aarch64/), which is ~200 MB and is fetched manually:
+  ```bash
+  cargo +nightly build --release -Z build-std=std,panic_abort         --target aarch64-unknown-freebsd
+  ```
+
+Copy the resulting `libclaude_eclipse_core.so` into
+`com.anthropic.claudecode.eclipse/native/freebsd/x86_64/` or `.../aarch64/`.
 
 **macOS (native build — must be built on a Mac):**
 ```bash

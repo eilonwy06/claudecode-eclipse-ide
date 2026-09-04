@@ -4,7 +4,26 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.19] — 2026-09-04 *(current)*
+## [3.1.20] — 2026-09-05 *(current)*
+
+### Added
+- **A timestamp above each message you send**, in local time, in live conversations and in history alike — off by default, in Preferences ▸ Claude Code ▸ Miscellaneous Configuration ([@jmoraleda](https://github.com/jmoraleda), PR #107).
+- **Each usage meter can show when it resets**, as its own preference for the 5-hour and the weekly limit ([@jmoraleda](https://github.com/jmoraleda), PR #108).
+- **The working-directory row can be hidden entirely** — picker, collapsed stand-in and toolbar toggle included ([@jmoraleda](https://github.com/jmoraleda), PR #109).
+- **FreeBSD (x86_64 and ARM64) and Windows on ARM support.**
+
+### Changed
+- **The conversation tab strip takes its colors from your own editor tabs**, so it matches whatever theme, OS or desktop environment you run ([@jmoraleda](https://github.com/jmoraleda), PR #106).
+
+### Fixed
+- **A tool that failed now says why**, instead of showing the same green dot as one that succeeded — while it runs and when you reopen the conversation.
+- **A card waiting in one tab is no longer replaced by one opening in another**, which used to leave the first tab waiting forever ([@jmoraleda](https://github.com/jmoraleda), PR #104).
+- **The tab strip's active and inactive colors were inverted under light themes** ([@jmoraleda](https://github.com/jmoraleda), PR #106).
+- **An unsupported CPU architecture now reports itself as unsupported**, instead of failing deep inside the native library load.
+
+---
+
+## [3.1.19] — 2026-09-04
 
 ### Added
 - **"Use custom spinner verbs"** in Preferences ▸ Claude Code ▸ Miscellaneous Configuration ▸ "Use custom spinner verbs" — add your own words to `~/.claude/settings.json` (e.g. `"spinnerVerbs": {"mode": "append", "verbs": ["Example-ing", "Sampling"]}`; or `"mode": "replace"` to use only your own) and tick this box to mix them into the Claude Code view's rotation.
