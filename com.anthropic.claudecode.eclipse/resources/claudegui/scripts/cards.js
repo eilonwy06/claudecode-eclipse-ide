@@ -63,6 +63,11 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   const t = tabById(tabId);
   if (t && t.cancelled) { if (window._decide) window._decide(reqId, 'deny', ''); return; }  // stopped: auto-deny, no card
   if (t) loadRender(t);   // card belongs to this conversation
+  // The card's OWNER tab, for showBottomCard/clearBottomCard below — t if it
+  // resolved, else whatever loadRender last pointed at, same fallback order the
+  // pane lookup already used. Captured once so a later tab switch (rtab/activeTab
+  // changing) can't retarget which tab's card this decide() call clears.
+  const owner = t || rtab || activeTab();
   const pane = streamPane() || (activeTab() ? activeTab().pane : null);
   if (!pane) { if (window._decide) window._decide(reqId, 'deny', ''); return; }
   hideWorking();
@@ -158,7 +163,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
         && typeof adoptModeForTab === 'function') {
       adoptModeForTab(t, 'acceptEdits');
     }
-    clearBottomCard();                          // card disappears — composer returns
+    clearBottomCard(owner);                     // card disappears — composer returns
     if (d === 'deny' && msg) {
       // Keep the "User answered:" card: this is a decision the user made on a card,
       // and it reads as such. (A reload replays it from the transcript as a plain
@@ -221,12 +226,16 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
   // Number-key shortcuts map to the visible options in order; Esc cancels.
   function onKey(e) {
     if (resolved || document.activeElement === inp) return;
+    // A background tab's card (now that per-tab cards can coexist instead of
+    // evicting each other) isn't in the DOM — bail so its number/Esc shortcuts
+    // can't fire on whatever card the ACTIVE tab is actually showing.
+    if (!card.isConnected) { document.removeEventListener('keydown', onKey, true); return; }
     if (e.key === 'Escape') { e.preventDefault(); decide('deny', ''); return; }
     const n = parseInt(e.key, 10);
     if (n >= 1 && n <= opts.length) { e.preventDefault(); decide(opts[n - 1][0], ''); }
   }
   document.addEventListener('keydown', onKey, true);
-  registerCardCancel(() => decide('deny', ''));
+  registerCardCancel(() => decide('deny', ''), owner);
 
   // Java already answered "deny" to the CLI by the time this fires (its own
   // future.get(...) timed out) — this is presentation-only cleanup, so it must
@@ -246,7 +255,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
         pendingTool.appendChild(sub);
       }
     }
-    clearBottomCard();
+    clearBottomCard(owner);
     // addAnswered inserts a new sibling turn div; startFreshTurn must follow it
     // (curTurn = null) or the CLI's continuation streams into the turn ABOVE this
     // note instead of below it — the same pairing decide()'s message-deny branch
@@ -256,7 +265,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
     scrollBottom();
   });
 
-  showBottomCard(card);
+  showBottomCard(card, owner);
 };
 
 /* ---- AskUserQuestion card (single/multi question, options + Other) ---- */
@@ -271,6 +280,10 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   const t = tabById(tabId);
   if (t && t.cancelled) { if (window._answerQuestion) window._answerQuestion(reqId, '[]'); return; }  // stopped: no card
   if (t) loadRender(t);   // card belongs to this conversation
+  // Captured once, same reasoning as onApprovalRequest's owner: fixes which tab's
+  // card this closure's finish()/cancel() will show/clear, independent of rtab or
+  // activeTab() changing later (e.g. the user switches tabs before answering).
+  const owner = t || rtab || activeTab();
   const pane = streamPane() || (activeTab() ? activeTab().pane : null);
   let questions = [];
   try { questions = JSON.parse(questionsJson) || []; } catch (e) {}
@@ -313,7 +326,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
       question: q.question || '', answer: answeredText(i)
     }));
     if (window._answerQuestion) window._answerQuestion(reqId, JSON.stringify(answers));
-    clearBottomCard();
+    clearBottomCard(owner);
     const summary = answers.map(a => questions.length > 1 ? (a.header + ': ' + a.answer) : a.answer).join('\n');
     addAnswered(summary, pane); startFreshTurn(); scrollBottom();   // obeys Scroll Lock
   }
@@ -324,7 +337,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     document.removeEventListener('keydown', onKey, true);
     resolveDot(true);
     if (window._answerQuestion) window._answerQuestion(reqId, '[]');
-    clearBottomCard(); scrollBottom();   // obeys Scroll Lock
+    clearBottomCard(owner); scrollBottom();   // obeys Scroll Lock
   }
 
   function render() {
@@ -417,6 +430,10 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   }
   function onKey(e) {
     if (resolved) return;
+    // A background tab's card (now that per-tab cards can coexist instead of
+    // evicting each other) isn't in the DOM — bail so it can't intercept Esc
+    // meant for whatever card the ACTIVE tab is actually showing.
+    if (!card.isConnected) { document.removeEventListener('keydown', onKey, true); return; }
     // Capture-phase on document: runs before the Other field's own onkeydown, so
     // that handler's stopPropagation can't shield it — the tag check here is what
     // has to do it. Must accept TEXTAREA too now that Other is one (was INPUT-only
@@ -427,7 +444,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     if (e.key === 'Escape' && !inField) { e.preventDefault(); cancel(); }
   }
   document.addEventListener('keydown', onKey, true);
-  registerCardCancel(cancel);
+  registerCardCancel(cancel, owner);
 
   // Java already answered "[]" (dismissed) to the CLI by the time this fires — see
   // the matching comment on the approval card's registerCardTimeout for why this
@@ -437,7 +454,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     unregisterCardCancel();
     document.removeEventListener('keydown', onKey, true);
     resolveDot(true);
-    clearBottomCard();
+    clearBottomCard(owner);
     // Same pairing as finish(): addAnswered's new sibling turn div requires
     // startFreshTurn right after it (see the matching comment on the approval
     // card's timeout handler) so Claude's continuation lands below this note.
@@ -446,6 +463,6 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     scrollBottom();
   });
 
-  render(); showBottomCard(card);
+  render(); showBottomCard(card, owner);
 };
 

@@ -15,20 +15,28 @@ function padForBottomCard() {
 new ResizeObserver(() => {
   if (bottomCardEl.style.display === 'block') { padForBottomCard(); scrollBottom(); }
 }).observe(bottomCardEl);
-/* A pending card belongs to the conversation that raised it (its stream tab). It
-   only shows while THAT tab is active; switching away hides it (composer returns),
-   switching back re-shows it. */
-let pendingCard = null, pendingCardOwner = null;
-function showBottomCard(card) {
-  pendingCard = card;
-  pendingCardOwner = rtab || activeTab();   // set by loadRender in onApprovalRequest/onAskQuestion
+/* A pending card belongs to the conversation that raised it (its stream tab), and
+   is stored ON that Tab (Tab.pendingCard) rather than in one shared global — each
+   tab runs its own CLI process and can have its own card pending independently
+   (e.g. tab A is mid-AskUserQuestion when tab B's background process raises its
+   own approval prompt). A single shared slot would have the later card silently
+   evict the earlier one: the evicted tab's card vanishes from the DOM with no
+   cleanup (its keydown listener and timeout registration both leak, still armed
+   against a card no longer shown), and its Java-side future is orphaned — nothing
+   can ever answer it, so that tab hangs on its tool's "pending" state until the
+   timeout preference (or the user interrupting the session) ends it. Only shows
+   while its owning tab is active; switching away hides it (composer returns),
+   switching back re-shows THAT tab's own card, not whichever was raised last. */
+function showBottomCard(card, owner) {
+  owner.pendingCard = card;
   renderBottomCard();
 }
 function renderBottomCard() {
   const composer = document.getElementById('composer');
-  const show = pendingCard && pendingCardOwner && pendingCardOwner === activeTab();
-  if (show) {
-    if (bottomCardEl.firstChild !== pendingCard) { bottomCardEl.innerHTML = ''; bottomCardEl.appendChild(pendingCard); }
+  const t = activeTab();
+  const card = t && t.pendingCard;
+  if (card) {
+    if (bottomCardEl.firstChild !== card) { bottomCardEl.innerHTML = ''; bottomCardEl.appendChild(card); }
     bottomCardEl.style.display = 'block';
     composer.style.display = 'none';
     // Card only shows for the active tab → autoScroll, not scrollBottom, whose background
@@ -46,10 +54,11 @@ function renderBottomCard() {
     composer.style.display = '';
   }
 }
-function clearBottomCard() {
-  const owner = pendingCardOwner;
-  pendingCard = null; pendingCardOwner = null;
-  renderBottomCard();      // hides the card, restores the composer
+/** @param {Tab} owner the tab whose OWN card is being cleared — never inferred
+ *  from rtab/activeTab, so dismissing tab A's card can never touch tab B's. */
+function clearBottomCard(owner) {
+  if (owner) owner.pendingCard = null;
+  renderBottomCard();      // hides the card, restores the composer (if this was the active tab's)
   input.focus();
   // A blocking card (AskUserQuestion / approval) suspends the turn WITHOUT ending
   // it — dismissing the card resumes the same turn, so no onStreamStart fires to
@@ -71,7 +80,7 @@ function clearBottomCard() {
    advertise the truth instead of hardcoding "Esc". Empty means nothing is bound — the
    card then shows no hint at all rather than naming a key that does nothing. */
 let cancelHint = 'Esc';
-let activeCardCancel = null, activeCancelIsBottom = false;
+let activeCardCancel = null, activeCancelIsBottom = false, activeCancelOwner = null;
 
 /* Every hint on screen repaints itself when the binding changes, rather than waiting to be
    rebuilt. Java pushes a new label the moment Eclipse's BindingManager fires — switching
@@ -103,32 +112,43 @@ function cancelKeyName() { return cancelHint; }
 function cancelHintText() { return cancelHint ? cancelHint + ' to cancel' : ''; }
 
 /* Java-raised blocking cards: Java already activated the key context around its own
-   future.get(), so these must NOT notify it again. */
-function registerCardCancel(fn) { activeCardCancel = fn; activeCancelIsBottom = true; }
-function unregisterCardCancel() { activeCardCancel = null; activeCancelIsBottom = false; }
+   future.get(), so these must NOT notify it again. owner is the tab this card belongs
+   to (the same owner showBottomCard was given) — activeCardCancel is still ONE global
+   slot, so without it a card raised on a background tab would leave its cancel() as
+   the one that fires when the dismiss key is pressed over a DIFFERENT tab's own card. */
+function registerCardCancel(fn, owner) { activeCardCancel = fn; activeCancelIsBottom = true; activeCancelOwner = owner; }
+function unregisterCardCancel() { activeCardCancel = null; activeCancelIsBottom = false; activeCancelOwner = null; }
 
 /* Page-local overlays (advisor card, rewind picker, lightbox). Java cannot know these are
    open — nothing on its side raised them — so the page has to say so, or the key context
    never activates and the key stays dead however honest the hint is. _overlayOpen is
    edge-triggered on the Java side, so a missed unregister can only ever be one deep and the
-   next register/unregister corrects it. */
-function registerOverlayCancel(fn, isBottomCard) {
-  activeCardCancel = fn; activeCancelIsBottom = !!isBottomCard;
+   next register/unregister corrects it. owner: see registerCardCancel — only meaningful
+   when isBottomCard, since a non-bottom overlay isn't tab-owned. */
+function registerOverlayCancel(fn, isBottomCard, owner) {
+  activeCardCancel = fn; activeCancelIsBottom = !!isBottomCard; activeCancelOwner = owner || null;
   if (window._overlayOpen) window._overlayOpen(true);
 }
 function unregisterOverlayCancel() {
-  activeCardCancel = null; activeCancelIsBottom = false;
+  activeCardCancel = null; activeCancelIsBottom = false; activeCancelOwner = null;
   if (window._overlayOpen) window._overlayOpen(false);
 }
 
 window.cancelActiveCard = function() {
   if (!activeCardCancel) return;
   // Bottom cards only: one parked on a background tab must not vanish because a key was
-  // pressed over another conversation. Mirrors renderBottomCard's own visibility test.
+  // pressed over another conversation. Mirrors renderBottomCard's own visibility test,
+  // now split into two checks since each tab tracks its own pendingCard instead of one
+  // shared pendingCard/pendingCardOwner pair: the ACTIVE tab must actually have a card
+  // showing, AND it must be the same tab that registered this cancel — two different
+  // background tabs can each have their own card pending, so "some card is showing" is
+  // not enough on its own; it has to be THIS card's owner specifically, or switching to
+  // tab A while activeCardCancel is still tab B's would fire B's cancel from A's screen.
   // Overlays (rewind, lightbox) are not tab-owned, so the test does not apply to them.
-  if (activeCancelIsBottom && (!pendingCard || pendingCardOwner !== activeTab())) return;
+  const t = activeTab();
+  if (activeCancelIsBottom && (!t || !t.pendingCard || activeCancelOwner !== t)) return;
   const fn = activeCardCancel;
-  activeCardCancel = null; activeCancelIsBottom = false;
+  activeCardCancel = null; activeCancelIsBottom = false; activeCancelOwner = null;
   fn();
 };
 
