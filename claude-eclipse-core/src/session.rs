@@ -386,6 +386,14 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                                 item["id"] = serde_json::Value::from(u);
                             }
                         }
+                        // ISO 8601, same field list_sessions already reads for its own
+                        // sort key — forwarded so the GUI can show it above the bubble
+                        // (opt-in preference), not currently used for anything else here.
+                        if let Some(ts) = event["timestamp"].as_str() {
+                            if !ts.is_empty() {
+                                item["ts"] = serde_json::Value::from(ts);
+                            }
+                        }
                         items.push(item);
                     }
                 } else if let Some(blocks) = content.as_array() {
@@ -429,6 +437,11 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                         if let Some(u) = event["uuid"].as_str() {
                             if !u.is_empty() {
                                 item["id"] = serde_json::Value::from(u);
+                            }
+                        }
+                        if let Some(ts) = event["timestamp"].as_str() {
+                            if !ts.is_empty() {
+                                item["ts"] = serde_json::Value::from(ts);
                             }
                         }
                         items.push(item);
@@ -1146,7 +1159,7 @@ mod tests {
         // toolu_01 (askUserQuestion) has a non-error tool_result → status "done";
         // toolu_02 (Edit) has no tool_result in the fixture → status "interrupted".
         let want1: serde_json::Value = serde_json::from_str(r#"[
-            {"t":"user","content":"<ide_selection a=\"b\">sel junk</ide_selection>please fix the bug"},
+            {"t":"user","content":"<ide_selection a=\"b\">sel junk</ide_selection>please fix the bug","ts":"2026-07-01T10:00:00.000Z"},
             {"t":"thinking","model":"claude-fable-5","text":"hmm secret"},
             {"t":"text","text":"Here is my answer","model":"claude-fable-5"},
             {"t":"tool","name":"mcp__eclipse__askUserQuestion","input":{"q":"Which color?"},"model":"claude-fable-5","status":"done"},
@@ -1157,7 +1170,7 @@ mod tests {
 
         let got2: serde_json::Value = serde_json::from_str(&loaded2).unwrap();
         let want2: serde_json::Value = serde_json::from_str(r#"[
-            {"t":"user","content":"<command-name>/clear</command-name><command-message>clear</command-message><command-args>now</command-args>"}
+            {"t":"user","content":"<command-name>/clear</command-name><command-message>clear</command-message><command-args>now</command-args>","ts":"2026-07-03T08:00:00.000Z"}
         ]"#).unwrap();
         assert_eq!(got2, want2, "sess2: raw user kept, non-ask tool_result ignored");
 
@@ -1198,12 +1211,12 @@ mod tests {
 
         let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
         let want: serde_json::Value = serde_json::from_str(r#"[
-            {"t":"user","content":"tell me things"},
+            {"t":"user","content":"tell me things","ts":"2026-07-27T02:00:00.000Z"},
             {"t":"text","text":"things","model":"claude-haiku-4-5-20251001"},
             {"t":"compact","trigger":"manual","preTokens":23670,"postTokens":1682},
             {"t":"compact_summary","text":"This session is being continued from a previous conversation. Summary: things were told."},
-            {"t":"user","content":"<local-command-caveat>Caveat: ...</local-command-caveat>"},
-            {"t":"user","content":"<command-name>/compact</command-name>"}
+            {"t":"user","content":"<local-command-caveat>Caveat: ...</local-command-caveat>","ts":"2026-07-27T02:37:08.120Z"},
+            {"t":"user","content":"<command-name>/compact</command-name>","ts":"2026-07-27T02:37:08.130Z"}
         ]"#).unwrap();
         assert_eq!(got, want, "compacted session render items");
     }
@@ -1238,7 +1251,7 @@ mod tests {
         let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
         let want: serde_json::Value = serde_json::from_str(r#"[
             {"t":"user","content":"<ide_context openFile=\"C:\\a\\B.java\" />\n\nwhat is this",
-             "images":[{"media_type":"image/jpeg","data":"QUJD"}]},
+             "images":[{"media_type":"image/jpeg","data":"QUJD"}],"ts":"2026-07-30T01:00:00.000Z"},
             {"t":"tool","name":"Read","input":{"file_path":"a.txt"},"status":"done","model":"claude-opus-4-8"},
             {"t":"text","text":"a screenshot","model":"claude-opus-4-8"}
         ]"#).unwrap();
@@ -1286,7 +1299,7 @@ mod tests {
 
         let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
         let want: serde_json::Value = serde_json::from_str(r#"[
-            {"t":"user","content":"go"},
+            {"t":"user","content":"go","ts":"2026-08-26T01:00:00.000Z"},
             {"t":"text","text":"working on it","model":"claude-opus-4-8"},
             {"t":"error","text":"You've hit your session limit · resets 2:10am (Asia/Irkutsk)"},
             {"t":"error","text":"API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com."}

@@ -93,17 +93,45 @@ function scrollBottom(force) {
   }
   autoScroll();
 }
+/** The timestamp a LIVE send happens at — pass this explicitly at every send call
+ *  site (never inferred inside addUserMessage itself, see its own doc comment). */
+function nowIso() { return new Date().toISOString(); }
+/** Formats an ISO timestamp as a short local time for TODAY, or date+time otherwise —
+ *  same today/older split as history.js's own relTime(), so the two read consistently. */
+function absTime(iso) {
+  const t = Date.parse(iso); if (isNaN(t)) return '';
+  const d = new Date(t);
+  const timePart = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const today = new Date();
+  const isToday = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth()
+      && d.getDate() === today.getDate();
+  return isToday ? timePart : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' + timePart;
+}
 /**
  * @param {string} text @param {string|null} [ctx] context-chip label (file:lines)
  * @param {{url: string, name: string, w: number, h: number}[]} [images] pasted-image chips
  * @param {string} [id] transcript uuid — enables this bubble's hover actions. A
  *   live send has none yet (the CLI writes the line after us); backfillMessageIds
  *   fills it in once the turn ends.
+ * @param {string} [ts] ISO timestamp for the opt-in line above the bubble
+ *   (PREF_HISTORY_SHOW_TIMESTAMPS / window.__historyShowTimestamps). NOT defaulted to
+ *   "now" here on purpose: a caller reconstructing history that has no recorded
+ *   timestamp (an older session predating this field, or a line the CLI itself never
+ *   stamped) must pass nothing and get no line, rather than this function silently
+ *   rendering today's time on a message from last week. Every LIVE send site passes
+ *   `new Date().toISOString()` itself instead.
  */
-function addUserMessage(text, ctx, images, id) {
+function addUserMessage(text, ctx, images, id, ts) {
   const pane = activeTab() ? activeTab().pane : messagesEl;
   clearWelcome(pane);
   const turn = document.createElement('div'); turn.className = 'turn';
+  if (window.__historyShowTimestamps && ts) {
+    const label = absTime(ts);
+    if (label) {
+      const tsEl = document.createElement('div'); tsEl.className = 'msg-ts'; tsEl.textContent = label;
+      turn.appendChild(tsEl);
+    }
+  }
   const box = document.createElement('div'); box.className = 'user-msg';
   if (id) box.dataset.mid = id;
   box.appendChild(makeMsgActions());
@@ -427,7 +455,7 @@ function doSend() {
   const queueing = !!t.streaming;
   const withCtx = !!(ctxEnabled && ctxData && ctxData.fileName);
   const imagesJson = (typeof pendingImagesJson === 'function') ? pendingImagesJson(t) : '';
-  addUserMessage(text, withCtx ? ctxChipLabel() : null, imgs);
+  addUserMessage(text, withCtx ? ctxChipLabel() : null, imgs, null, nowIso());
   if (!t.titled && text) setTabTitle(t, text);   // title from text; an image-only first turn stays untitled
   input.value = ''; input.style.height = 'auto'; t.draft = ''; closeSlash();
   if (typeof clearPendingImages === 'function') clearPendingImages(t);   // consumed → clear the strip

@@ -84,7 +84,7 @@ function openAdvisorCard(echoText) {
     // The "/advisor" echo lands HERE, not when the card opened: the command only
     // becomes part of the conversation once a choice is made. Cancel/Esc runs
     // cancel() instead, which adds nothing at all.
-    if (echoText) addUserMessage(echoText);
+    if (echoText) addUserMessage(echoText, null, null, null, nowIso());
     // Target the active tab: addSystem() would follow the render tab instead.
     addSystemTo(activeTab(), value ? 'Advisor set to ' + label + '.' : 'Advisor disabled.');
     scrollBottom();

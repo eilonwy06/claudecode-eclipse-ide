@@ -70,6 +70,13 @@ public final class Constants {
     /** Claude's idle re-run timer for the statusLine command, in seconds. */
     public static final String PREF_STATUSLINE_REFRESH_SECONDS = "statuslineRefreshSeconds";
 
+    /** Show a small timestamp line above each of your own messages, in the Claude Code
+     *  view — live sends and loaded history both, in local time (the record itself is
+     *  UTC; see {@code load_session_history} in {@code session.rs}). Off by default:
+     *  the same information is already one hover away in the History panel's own
+     *  per-session time, so this trades a bit of vertical space for always-visible detail. */
+    public static final String PREF_HISTORY_SHOW_TIMESTAMPS = "historyShowTimestamps";
+
     // ── Spinner verbs ───────────────────────────────────────────────────────
     // Which optional slices of the working-indicator gerund list are in rotation.
     // Each names a membership set over the single master list in working.js

@@ -86,7 +86,7 @@ function handleSlashCommand(text) {
   // Clears the conversation IN THE CURRENT TAB, then echoes the command so it's
   // the only message left in the fresh session (joebiden7). Deliberately not
   // newSession() — VSCode stays on the tab /clear was invoked from.
-  if (cmd === '/clear') { clearSession(); addUserMessage(text); return true; }
+  if (cmd === '/clear') { clearSession(); addUserMessage(text, null, null, null, nowIso()); return true; }
   if (cmd === '/compact') { sendCompact(); return true; }          // echoes itself
   // Echo is deferred to the card's confirm() — cancel/Esc adds nothing.
   if (cmd === '/advisor') { openAdvisorCard(text); return true; }
@@ -94,7 +94,7 @@ function handleSlashCommand(text) {
   if (cmd === '/rewind') { openRewindDialog(); return true; }      // deliberately unchanged
   if (cmd === '/help') {
     const ht = activeTab();
-    addUserMessage(text);
+    addUserMessage(text, null, null, null, nowIso());
     addSystemTo(ht, 'Commands: /advisor — set up an advisor model · /clear — new conversation · /compact — compact the conversation into a summary · /model — switch model · /rewind — restore code and fork from an earlier message · /help — this list. Type / to see them.');
     return true;
   }
@@ -113,7 +113,7 @@ function handleModelCommand(text) {
   // one you typed in — a reply to a command you just ran belongs in the tab you
   // ran it in, so target it explicitly.
   const t = activeTab();
-  addUserMessage(text);
+  addUserMessage(text, null, null, null, nowIso());
   const arg = text.slice('/model'.length).trim();
   if (!arg) {
     addSystemTo(t, 'Current model: ' + modelLabelFor(curModel) + ' (effort: ' + effort + ')\n'
@@ -160,7 +160,7 @@ function sendSlashToCli(text) {
   t.cancelled = false;
   loadRender(t);
   const queueing = !!t.streaming;
-  addUserMessage(text);
+  addUserMessage(text, null, null, null, nowIso());
   closeSlash();
   if (!queueing) { setStreaming(true); showWorking(); }
   else if (!workingEl) showWorking();
@@ -177,7 +177,7 @@ function sendCompact() {
   t.cancelled = false;
   loadRender(t);
   const queueing = !!t.streaming;
-  addUserMessage('/compact');
+  addUserMessage('/compact', null, null, null, nowIso());
   input.value = ''; input.style.height = 'auto'; t.draft = ''; closeSlash();
   t.compacting = true;
   if (!queueing) { setStreaming(true); showWorking(); }

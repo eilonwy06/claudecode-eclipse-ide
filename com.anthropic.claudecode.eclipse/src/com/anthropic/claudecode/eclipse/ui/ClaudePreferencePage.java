@@ -254,6 +254,11 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
         miscLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
 
         addField(new BooleanFieldEditor(
+                Constants.PREF_HISTORY_SHOW_TIMESTAMPS,
+                "Show a timestamp above your own messages, in the Claude Code view",
+                getFieldEditorParent()));
+
+        addField(new BooleanFieldEditor(
                 Constants.PREF_SPINNER_DEPRECATED,
                 "Use deprecated spinner verbs",
                 getFieldEditorParent()));

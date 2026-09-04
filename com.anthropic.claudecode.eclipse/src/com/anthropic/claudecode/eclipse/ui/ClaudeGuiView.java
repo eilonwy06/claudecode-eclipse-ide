@@ -571,6 +571,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             pushCliModels();         // ditto for the installed binary's model support
             pushEditKeyHints();      // label the right-click menu with the user's real keys
             pushDebugMode();         // let the page report its keys while Debug mode is on
+            pushHistoryShowTimestamps(); // whether to show a timestamp above your own messages
             pushSpinnerVerbs();      // which gerund categories the working indicator cycles
             // An "Open Claude Code Here" that arrived while the view was still loading.
             String queuedRoot = pendingRootPath;
@@ -1295,6 +1296,19 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     }
 
     /**
+     * Tells the page whether to show a timestamp above each of your own messages.
+     * Re-pushed on activation (see {@link #setFocus()}), same as {@link #pushDebugMode()},
+     * so ticking the box in Preferences takes effect on the next focus rather than only
+     * the next page load — cheap since it is read once per render, not live-watched.
+     */
+    private void pushHistoryShowTimestamps() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        boolean show = Activator.getDefault().getPreferenceStore()
+                .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_HISTORY_SHOW_TIMESTAMPS);
+        browser.execute("window.__historyShowTimestamps = " + show + ";");
+    }
+
+    /**
      * Tells the page which optional slices of the working-indicator gerund list are in
      * rotation (Preferences &gt; Claude Code &gt; Miscellaneous Configuration). Sent as one
      * JSON object rather than positional booleans so adding a category later doesn't
@@ -1918,6 +1932,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         // change shows up in the right-click menu's hints on the next activation.
         pushEditKeyHints();
         pushDebugMode();
+        pushHistoryShowTimestamps();
         pushSpinnerVerbs();
     }
 
