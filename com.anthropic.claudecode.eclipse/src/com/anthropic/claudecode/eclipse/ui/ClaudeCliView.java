@@ -78,6 +78,7 @@ import org.eclipse.terminal.model.TerminalColor;
 import com.anthropic.claudecode.eclipse.Activator;
 import com.anthropic.claudecode.eclipse.Constants;
 import com.anthropic.claudecode.eclipse.NativeCore;
+import com.anthropic.claudecode.eclipse.SpinnerVerbs;
 import com.anthropic.claudecode.eclipse.resolvers.EntitiesRegistry;
 import com.anthropic.claudecode.eclipse.status.StandaloneStatusForwarder;
 
@@ -888,9 +889,10 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             }
             for (String a : extraArgs) argTokens.add(quoteArg(a));
 
-            // When enabled, injects the per-tab CLAUDE_TAB_TOKEN into `env` and appends
-            // --settings <shared file> to `argTokens` (no-op + untouched user statusLine if off).
-            configureStatusLine(env, argTokens);
+            // Writes the shared settings file — status line when enabled, spinner verbs
+            // always — and appends --settings <file> to `argTokens`, injecting the per-tab
+            // CLAUDE_TAB_TOKEN into `env` only when the status line made it in.
+            configureSettingsFile(env, argTokens);
 
             String[] environment = env.toArray(new String[0]);
             String arguments = String.join(" ", argTokens);
@@ -986,19 +988,51 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         }
 
         /**
-         * When the status-line preference is enabled, injects the per-tab CLAUDE_TAB_TOKEN
-         * into {@code env} and appends {@code --settings <shared file>} to {@code argTokens}.
-         * On any failure (no java.home, bundle/state-location error, read-only FS) it logs
-         * (debug-gated) and leaves both lists untouched, so the terminal still launches —
-         * just without the status line. When the preference is off it injects nothing, leaving
-         * the user's own statusLine (if any) untouched.
+         * Writes the shared settings file and appends {@code --settings <file>} to
+         * {@code argTokens}, injecting the per-tab CLAUDE_TAB_TOKEN into {@code env} when the
+         * status line is part of it.
+         *
+         * <p>Two independent passengers ride that file: the status line, only when its
+         * preference is on and its command could be resolved, and the spinner verbs, always.
+         * The verbs are therefore built first — every failure path in
+         * {@link #statusLineCommand} means "no status line", and none of them may take the
+         * verbs down on the way out. Since the CLI merges settings per top-level key, a file
+         * carrying only {@code spinnerVerbs} still leaves the user's own {@code statusLine}
+         * untouched.
+         *
+         * <p>If the file itself can't be written, both lists are left alone and the terminal
+         * launches with neither feature.
          */
-        private void configureStatusLine(List<String> env, List<String> argTokens) {
+        private void configureSettingsFile(List<String> env, List<String> argTokens) {
             IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
-            if (!prefs.getBoolean(Constants.PREF_STATUSLINE_ENABLED)) return;
+            JsonObject spinnerVerbs = SpinnerVerbs.settingsJson(prefs);
+
+            String command = prefs.getBoolean(Constants.PREF_STATUSLINE_ENABLED)
+                    ? statusLineCommand() : null;
+            int refresh = prefs.getInt(Constants.PREF_STATUSLINE_REFRESH_SECONDS);
+            if (refresh < 1) refresh = 1;
+
+            File settingsFile = writeSharedSettings(command, refresh, spinnerVerbs);
+            if (settingsFile == null) return;
+
+            // Mutate the lists only after the fallible work succeeded, so a partial
+            // failure never leaves a half-configured launch.
+            if (command != null) env.add("CLAUDE_TAB_TOKEN=" + tabToken);
+            argTokens.add("--settings");
+            argTokens.add(quoteArg(settingsFile.getAbsolutePath()));
+        }
+
+        /**
+         * The {@code statusLine.command} — a bare-JVM invocation of
+         * {@link StandaloneStatusForwarder} — or {@code null} when anything it needs is
+         * missing (no java.home, class not found on disk, bundle/state-location error).
+         * Returning null rather than throwing is what keeps the caller's other passenger,
+         * the spinner verbs, on board.
+         */
+        private String statusLineCommand() {
             try {
                 String javaHome = System.getProperty("java.home");
-                if (javaHome == null || javaHome.isEmpty()) return;
+                if (javaHome == null || javaHome.isEmpty()) return null;
                 // Forward slashes throughout: Java accepts them in paths/classpaths on every
                 // OS and they keep backslashes out of the JSON / off the command line.
                 String javaBin = (javaHome + (IS_WINDOWS ? "/bin/java.exe" : "/bin/java"))
@@ -1010,25 +1044,14 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                 Bundle bundle = Activator.getDefault().getBundle();
                 File bundleFile = FileLocator.getBundleFile(bundle);
                 File cpRoot = forwarderClasspathRoot(bundleFile, fqn);
-                if (cpRoot == null) return; // class not found on disk — skip rather than misfire
+                if (cpRoot == null) return null; // class not found on disk — skip rather than misfire
                 String cp = cpRoot.getAbsolutePath().replace('\\', '/');
 
-                String command = "\"" + javaBin + "\" -Xmx24m -Xms8m -Xss512k -cp \""
+                return "\"" + javaBin + "\" -Xmx24m -Xms8m -Xss512k -cp \""
                         + cp + "\" " + fqn;
-
-                int refresh = prefs.getInt(Constants.PREF_STATUSLINE_REFRESH_SECONDS);
-                if (refresh < 1) refresh = 1;
-
-                File settingsFile = writeSharedSettings(command, refresh);
-                if (settingsFile == null) return;
-
-                // Mutate the lists only after the fallible work succeeded, so a partial
-                // failure never leaves a half-configured launch.
-                env.add("CLAUDE_TAB_TOKEN=" + tabToken);
-                argTokens.add("--settings");
-                argTokens.add(quoteArg(settingsFile.getAbsolutePath()));
             } catch (Exception e) {
                 Activator.logError("Status line setup failed; launching without it", e);
+                return null;
             }
         }
 
@@ -1057,28 +1080,37 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
 
         /**
          * (Over)writes the single shared {@code statusline/settings.json} in the bundle state
-         * location and returns it. The content depends only on {@code command} and
-         * {@code refreshSeconds} (install-/preference-scoped, identical across tabs), so every
-         * launch rewrites byte-identical bytes except when the refresh preference changed —
-         * which is exactly how a refresh-interval change takes effect on the next launch.
+         * location and returns it. The content depends only on {@code command},
+         * {@code refreshSeconds} and {@code spinnerVerbs} — all install-/preference-scoped and
+         * identical across tabs (the verbs additionally fold in the user's own settings.json,
+         * which is likewise per-user) — so every launch rewrites byte-identical bytes except
+         * when one of those changed, which is exactly how such a change takes effect on the
+         * next launch.
+         *
+         * <p>A {@code null} {@code command} omits the {@code statusLine} key entirely rather
+         * than writing a broken one; the CLI merges per top-level key, so the user's own
+         * statusLine then stands.
          *
          * <p>No locking: {@code launch()} is confined to the SWT UI thread (the sole caller
          * defers it via {@code Display.asyncExec}), so writes never overlap. Returns
-         * {@code null} on I/O failure (caller then launches without the status line).
+         * {@code null} on I/O failure (caller then launches without either feature).
          */
-        private File writeSharedSettings(String command, int refreshSeconds) {
+        private File writeSharedSettings(String command, int refreshSeconds, JsonObject spinnerVerbs) {
             try {
                 File dir = Activator.getDefault().getStateLocation().append("statusline").toFile();
                 dir.mkdirs();
                 File file = new File(dir, "settings.json");
 
-                JsonObject statusLine = new JsonObject();
-                statusLine.addProperty("type", "command");
-                statusLine.addProperty("command", command);
-                statusLine.addProperty("padding", 0);
-                statusLine.addProperty("refreshInterval", refreshSeconds);
                 JsonObject root = new JsonObject();
-                root.add("statusLine", statusLine);
+                if (command != null) {
+                    JsonObject statusLine = new JsonObject();
+                    statusLine.addProperty("type", "command");
+                    statusLine.addProperty("command", command);
+                    statusLine.addProperty("padding", 0);
+                    statusLine.addProperty("refreshInterval", refreshSeconds);
+                    root.add("statusLine", statusLine);
+                }
+                if (spinnerVerbs != null) root.add("spinnerVerbs", spinnerVerbs);
 
                 // disableHtmlEscaping so <, >, &, =, ' survive verbatim (paths/FQN may contain them).
                 String json = new GsonBuilder().disableHtmlEscaping().create().toJson(root);

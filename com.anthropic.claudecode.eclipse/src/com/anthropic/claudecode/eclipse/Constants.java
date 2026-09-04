@@ -70,16 +70,29 @@ public final class Constants {
     /** Claude's idle re-run timer for the statusLine command, in seconds. */
     public static final String PREF_STATUSLINE_REFRESH_SECONDS = "statuslineRefreshSeconds";
 
-    // ── Claude Code view spinner verbs ──────────────────────────────────────
+    // ── Spinner verbs ───────────────────────────────────────────────────────
     // Which optional slices of the working-indicator gerund list are in rotation.
     // Each names a membership set over the single master list in working.js
     // (VERB_SETS there); a word rotates when it belongs to no set, or to at least
-    // one enabled set. Applied on page load and on view activation.
+    // one enabled set. The Claude Code view applies them on page load and on view
+    // activation; the Terminal mirrors the same choice into the CLI's own spinner
+    // through the spinnerVerbs key of the injected --settings file (SpinnerVerbs),
+    // which binds at launch, so a change there reaches the next tab.
     public static final String PREF_SPINNER_DEPRECATED = "spinnerVerbsDeprecated";
     public static final String PREF_SPINNER_PACK_ONE = "spinnerVerbsPackOne";
     public static final String PREF_SPINNER_PACK_TWO = "spinnerVerbsPackTwo";
     public static final String PREF_SPINNER_DANK = "spinnerVerbsDank";
     public static final String PREF_SPINNER_VIBECODER = "spinnerVerbsVibecoder";
+    /**
+     * Whether the user's own spinnerVerbs from ~/.claude/settings.json join the Claude Code
+     * view's rotation. Defaults on, matching what the Terminal does with them anyway.
+     * <p>
+     * The Claude Code view is the only place this can act. The Terminal's spinner belongs to
+     * the CLI, which unions the verbs array across every settings scope rather than letting
+     * the highest one win, so the user's own words are in that rotation whether we name them
+     * or not — verified in the CLI's merge customizer; see SpinnerVerbs#settingsJson.
+     */
+    public static final String PREF_SPINNER_CUSTOM = "spinnerVerbsCustom";
 
     public static final String DEFAULT_CLAUDE_CMD = "claude";
 

@@ -1413,44 +1413,52 @@ fn process_event_value(
         // Partial events have cumulative text; compute deltas to avoid duplicates.
         "assistant" => {
             let is_partial = event.get("partial").and_then(|v| v.as_bool()).unwrap_or(false);
-            if let Some(content) = event["message"]["content"].as_array() {
-                for block in content {
-                    match block["type"].as_str().unwrap_or("") {
-                        "text" => {
-                            if let Some(text) = block["text"].as_str() {
-                                let start = (*last_text_len).min(text.len());
-                                let new_part = &text[start..];
-                                if !new_part.is_empty() {
-                                    fire_string(java_vm, callbacks, "onText", new_part);
+            // A synthetic assistant message standing in for a backend error (rate
+            // limit, 529 overload, …) — the CLI marks it isApiErrorMessage and also
+            // ends the turn with a matching is_error result, which already fires
+            // onError (below, on the "result" branch) and renders the single muted
+            // line. Streaming this copy as ordinary text would show it twice.
+            let is_api_error = event["isApiErrorMessage"].as_bool().unwrap_or(false);
+            if !is_api_error {
+                if let Some(content) = event["message"]["content"].as_array() {
+                    for block in content {
+                        match block["type"].as_str().unwrap_or("") {
+                            "text" => {
+                                if let Some(text) = block["text"].as_str() {
+                                    let start = (*last_text_len).min(text.len());
+                                    let new_part = &text[start..];
+                                    if !new_part.is_empty() {
+                                        fire_string(java_vm, callbacks, "onText", new_part);
+                                    }
+                                    *last_text_len = text.len();
                                 }
-                                *last_text_len = text.len();
                             }
-                        }
-                        "thinking" => {
-                            // The CLI strips the reasoning text from stream-json output
-                            // (only an encrypted `signature` remains), so `thinking` is
-                            // usually an empty string. We still fire onThinking — even
-                            // empty — so the GUI shows a "Thought for Ns" marker for the
-                            // reasoning that happened (matches the VSCode panel). When the
-                            // text IS present we stream the delta as before.
-                            let t = block["thinking"].as_str().unwrap_or("");
-                            let start = (*last_thinking_len).min(t.len());
-                            let new_part = &t[start..];
-                            if !new_part.is_empty() || *last_thinking_len == 0 {
-                                fire_string(java_vm, callbacks, "onThinking", new_part);
+                            "thinking" => {
+                                // The CLI strips the reasoning text from stream-json output
+                                // (only an encrypted `signature` remains), so `thinking` is
+                                // usually an empty string. We still fire onThinking — even
+                                // empty — so the GUI shows a "Thought for Ns" marker for the
+                                // reasoning that happened (matches the VSCode panel). When the
+                                // text IS present we stream the delta as before.
+                                let t = block["thinking"].as_str().unwrap_or("");
+                                let start = (*last_thinking_len).min(t.len());
+                                let new_part = &t[start..];
+                                if !new_part.is_empty() || *last_thinking_len == 0 {
+                                    fire_string(java_vm, callbacks, "onThinking", new_part);
+                                }
+                                *last_thinking_len = t.len();
                             }
-                            *last_thinking_len = t.len();
+                            "tool_use" if !is_partial => {
+                                // Pass name + input so the GUI can show the target file/command
+                                // after the verb and render an inline diff for edits.
+                                let payload = serde_json::json!({
+                                    "name": block["name"].as_str().unwrap_or("tool"),
+                                    "input": block.get("input").cloned().unwrap_or(serde_json::json!({})),
+                                });
+                                fire_string(java_vm, callbacks, "onToolStart", &payload.to_string());
+                            }
+                            _ => {}
                         }
-                        "tool_use" if !is_partial => {
-                            // Pass name + input so the GUI can show the target file/command
-                            // after the verb and render an inline diff for edits.
-                            let payload = serde_json::json!({
-                                "name": block["name"].as_str().unwrap_or("tool"),
-                                "input": block.get("input").cloned().unwrap_or(serde_json::json!({})),
-                            });
-                            fire_string(java_vm, callbacks, "onToolStart", &payload.to_string());
-                        }
-                        _ => {}
                     }
                 }
             }
@@ -1921,5 +1929,41 @@ Last 7d · 1048 requests · 17 sessions
         assert_eq!(percent_used_in("Current session: 100% used"), Some(100));
         assert_eq!(percent_used_in("no digits % here"), None);
         assert_eq!(percent_used_in("nothing at all"), None);
+    }
+
+    // ---- isApiErrorMessage detection (assistant-branch dedup) -----------
+    // The object below is a VERBATIM capture of the synthetic "assistant" event
+    // the CLI emits for a session-limit-hit error (2.1.220, 2026-08-26) — it
+    // carries isApiErrorMessage:true so process_event_value can skip streaming
+    // it as ordinary text (the turn's is_error result already renders it once,
+    // via onError). If the CLI ever stops marking these, this test breaks
+    // instead of the duplicate line silently coming back.
+    const REAL_API_ERROR_EVENT: &str = r#"{
+        "type": "assistant",
+        "message": {
+            "model": "<synthetic>",
+            "role": "assistant",
+            "content": [
+                { "type": "text", "text": "You've hit your session limit · resets 2:10am (Asia/Irkutsk)" }
+            ]
+        },
+        "error": "rate_limit",
+        "isApiErrorMessage": true,
+        "apiErrorStatus": 429
+    }"#;
+
+    #[test]
+    fn is_api_error_flag_detected_on_real_event() {
+        let v: serde_json::Value = serde_json::from_str(REAL_API_ERROR_EVENT).unwrap();
+        assert_eq!(v["isApiErrorMessage"].as_bool().unwrap_or(false), true);
+    }
+
+    #[test]
+    fn is_api_error_flag_absent_on_ordinary_assistant_text() {
+        let v: serde_json::Value = serde_json::json!({
+            "type": "assistant",
+            "message": { "content": [{ "type": "text", "text": "Sure, here's the fix." }] }
+        });
+        assert_eq!(v["isApiErrorMessage"].as_bool().unwrap_or(false), false);
     }
 }

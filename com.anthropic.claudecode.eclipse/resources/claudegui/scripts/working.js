@@ -37,7 +37,9 @@ const GERUNDS = [
    master list above, not separate word lists: a word rotates when it belongs to no
    set at all, or to at least one ENABLED set. Written this way so a category can
    never silently disagree with the master list: a name here that isn't in GERUNDS
-   simply matches nothing, which the test asserts against.
+   simply matches nothing, which the test asserts against (SpinnerVerbsParityTest,
+   which also holds SpinnerVerbs.java — the Terminal's mirror of these sets — to
+   whatever this file says).
 
    The sets are pairwise DISJOINT — every word belongs to at most one category, so a
    checkbox is the sole owner of the words it names. Wewertsing and Zambasdting read
@@ -54,7 +56,7 @@ const VERB_SETS = {
     'Confabulating','Coruscating','Crocheting','Eclipsing','Effervescing','Encapsulating',
     'Evaporating','Felting','Fishmongering','Flabbergasting','Fluxing','Gerrymandering',
     'Gibbergaberring','Gravitating','Hypnotizing','Hyperenthusiasticating','Inheriting',
-    'Intellectualizing','Journaling','Perplexing','Polymorphing','Ratiocinating',
+    'Intellectualizing','Journaling','Meowing','Perplexing','Polymorphing','Ratiocinating',
     'Skitterscattering','Skylarking','Sous-viding','Susurrating','Transmogrifying',
     'Vulcanizing','Woolgathering','Xanthating','Xeriscaping','Xylographing','Zooming'
   ],
@@ -73,8 +75,14 @@ const VERB_SETS = {
    already correct in the window before the first onSpinnerVerbs push arrives — and
    stays correct if one never does (an older host that doesn't send it). */
 let verbSetsEnabled = { deprecated: true, pack1: true, pack2: true, dank: false, vibecoder: false };
+/* The user's own spinnerVerbs from ~/.claude/settings.json, sent alongside the categories
+   when "Use custom spinner verbs" is on. No default worth mirroring here — the host reads
+   that file, so before the first push we simply have none. */
+let customVerbs = [];
 /* The words currently in rotation: everything not claimed by any set, plus every
-   word claimed by at least one enabled set. */
+   word claimed by at least one enabled set, plus the user's own. A custom verb survives
+   a category that would have hidden it — the user named that word themselves — and the
+   dedup only stops it being listed twice, which would double how often it comes up. */
 function activeGerunds() {
   const claimed = new Set(), allowed = new Set();
   for (const key of Object.keys(VERB_SETS)) {
@@ -83,7 +91,10 @@ function activeGerunds() {
       if (verbSetsEnabled[key]) allowed.add(w);
     }
   }
-  return GERUNDS.filter(w => !claimed.has(w) || allowed.has(w));
+  const pool = GERUNDS.filter(w => !claimed.has(w) || allowed.has(w));
+  const seen = new Set(pool);
+  for (const w of customVerbs) if (!seen.has(w)) { seen.add(w); pool.push(w); }
+  return pool;
 }
 /* Preference push from ClaudeGuiView. Rebuilding the pool is not enough: the shuffle
    is only regenerated when gerundIdx wraps, and the hold grows a second per cycle, so
@@ -95,6 +106,10 @@ window.onSpinnerVerbs = function (json) {
   try { prefs = JSON.parse(json); } catch (e) { return; }
   for (const key of Object.keys(verbSetsEnabled))
     if (typeof prefs[key] === 'boolean') verbSetsEnabled[key] = prefs[key];
+  /* Its own branch: the loop above only accepts booleans, and an absent array must leave
+     the last-known list alone rather than clear it. */
+  if (Array.isArray(prefs.custom))
+    customVerbs = prefs.custom.filter(w => typeof w === 'string' && w.trim() !== '');
   shuffledGerunds = shuffleGerunds();
   gerundIdx = 0;
 };

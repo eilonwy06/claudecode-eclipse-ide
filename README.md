@@ -75,10 +75,8 @@ Set `ANTHROPIC_API_KEY` in your environment before launching Eclipse:
 ### Opening the Views
 
 Go to **Window → Show View → Other → Claude Code** and open the views you want:
-- **Claude Code** — a VS Code-style graphical chat panel: multiple concurrent conversation tabs (each backed by its own Claude process), a model picker with per-conversation model / reasoning effort / extended thinking, an in-panel status bar (live model, context usage, cost), inline permission and question cards, live extended-thinking reveal, session history, and inline file diffs
-- **Claude Terminal** — dedicated interactive terminal, built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, customizable colors, and Ctrl/⌘-click navigation to file paths and links mentioned in Claude's answers
-
-> **Claude IDE Server** — a server status / launch / restart view — is an advanced view hidden by default; it appears only when debug mode is enabled.
+- **Claude Code** — a VS Code-style graphical chat panel. A row of **directory tabs** sits on top, one per working folder, each with its own conversations and its own session history; beneath it, multiple conversation tabs run concurrently, each backed by its own Claude process. Model, reasoning effort, extended thinking and permission mode are set **per conversation**. Also: an in-panel status bar (live model, context usage, cost, session and weekly usage), inline permission / question / diff-review cards, live extended-thinking reveal, image paste, per-message fork / rewind / delete, session history, inline file diffs, Scroll Lock, and a light or dark palette that follows Eclipse's theme
+- **Claude Terminal** — dedicated interactive terminal, built on the Eclipse Terminal with full ANSI/24-bit color, scrollback, copy/paste, customizable colors, an optional Claude status line, and Ctrl/⌘-click navigation to file paths and links mentioned in Claude's answers
 
 
 ### Getting Started
@@ -100,24 +98,25 @@ Go to **Window → Show View → Other → Claude Code** and open the views you 
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+Shift+Alt+C` | Toggle Claude IDE Server view |
 | ``Ctrl+` ``    | Activate Claude Terminal view |
 | `Ctrl+Alt+S` | Send current editor selection to Claude |
 | `Ctrl+Alt+A` | Add current file to Claude's context |
+| `Esc` | Dismiss the card currently awaiting an answer (`Ctrl+G` on the Emacs scheme) |
 
-These are also available from the **Claude Code** menu in the menu bar and from the right-click context menu in any text editor.
+These are also available from the **Claude Code** menu in the menu bar and from the right-click context menu in any text editor. A project's context menu carries **Open Claude Here**, holding **Claude Code** and **Claude Terminal**, and **Show In ▸ Claude Code** opens the selected folder as a directory tab.
 
 ### Chat Controls
 
 In the **Claude Code** view:
 - **New Session** — opens a fresh conversation tab (multiple run concurrently)
+- **New Claude root directory** — adds a directory tab, so a conversation can run in any folder rather than only the workspace root
 - **Model picker** — sets the model, reasoning effort, and extended thinking for the current conversation
+- **Permission mode** — Manual, Edit automatically, Plan or Auto, remembered per conversation and applied immediately
 - **History** — browse, resume, or delete past conversations
+- **Scroll Lock** — holds your place while Claude writes; a **Jump to latest** button appears while you're held back
 - **Clear** — clears the current conversation's display
 
-From the **Claude Code** menu (or the Claude IDE Server view in debug mode):
-- **Resume Claude Code** — resumes the previous CLI session with `--resume`
-- **Restart Claude Code Server** — restarts the internal MCP server
+Hovering a message you sent reveals per-message actions: **Fork conversation from here**, **Rewind code to here**, **Fork conversation and rewind code**, and **Delete**, which removes that message from the conversation's history for every Claude Code client reading the project. Slash commands including `/compact`, `/rewind` and `/advisor` work from the composer, and a banner offers to run Claude Code's own updater when a newer CLI release is published.
 
 ### What Claude Can Do in Eclipse
 
@@ -134,7 +133,18 @@ Claude has access to the following MCP tools, which it invokes automatically:
 | `saveDocument` | Save a file |
 | `checkDocumentDirty` | Check if a file has unsaved changes |
 | `openDiff` | Show a diff view comparing proposed vs. current file content |
+| `acceptDiff` / `rejectDiff` | Apply or discard a diff being reviewed |
 | `closeAllDiffTabs` | Close all open diff tabs |
+| `refresh` | Refresh projects from the filesystem, so files changed outside Eclipse are picked up |
+| `clean` | Discard build output and problem markers |
+| `build` | Clean and/or rebuild projects and report the resulting compile errors |
+| `runAs` | Run a project the way **Run As** does, or a saved launch configuration by name |
+| `findReferences` † | Find every reference to a Java type or member |
+| `getSymbolInfo` † | Resolve the Java symbol at a position — kind, declaring type, signature |
+| `getTypeHierarchy` † | Show a Java type's supertypes and subtypes |
+| `runTests` † | Run JUnit tests and report the results |
+
+† Requires the Java Development Tools (JDT). The plugin never hard-depends on JDT — these tools are simply absent from the tool list when it isn't installed, and everything else works without it.
 
 ### Configuration
 
@@ -142,19 +152,39 @@ Go to **Window → Preferences → Claude Code** to configure:
 
 | Setting | Default | Description |
 |---|---|---|
-| Start server automatically | On | Auto-start the MCP server when Eclipse launches |
-| Track editor selection | On | Continuously track cursor/selection for Claude context |
+| Open new Claude Terminal automatically on Eclipse launch | Off | Opens a Claude Terminal tab when Eclipse starts |
+| Track editor selection in real-time | On | Continuously track cursor/selection for Claude context |
 | Claude command | `claude` | Path to the Claude CLI executable |
 | Arguments | *(empty)* | Additional CLI arguments (e.g., `--model claude-opus-4-7-20260418`) |
 | Port range (min/max) | 10000–65535 | Port range for the internal HTTP+SSE server |
 | Claude Terminal background / foreground | `#121314` / `#E5E5E5` | Terminal colors, independent of Eclipse's Terminal; apply immediately |
 
+**Claude status bar** — a status line for the Claude Terminal, assembled from the parts you choose:
+
+| Setting | Default |
+|---|---|
+| Show status bar (applies to newly launched sessions) | On |
+| Show model | On |
+| Show effort level | On |
+| Show thinking indicator | Off |
+| Show context-window usage | On |
+| Show session cost (USD) | Off |
+| Show 5-hour (session) usage limit | On |
+| Show weekly (7-day) usage limit | On |
+| Status refresh interval (seconds) | 60 |
+
+**Network / Proxy** — `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`. Empty by default, in which case they are auto-detected from your shell.
+
+**Decision card timeouts** — how long an unanswered card waits before Claude Code assumes an answer and continues. Set independently for **Permission approval**, **Ask-user question** and **Diff review**; each is Default (30 minutes), Never, or a custom number of seconds.
+
+**Miscellaneous Configuration** — additional options, including which sets of working-indicator verbs the Claude Code view and the Terminal cycle through.
+
 ## Architecture
 
-The plugin follows a **Rust-first** approach: the heavy logic — HTTP/SSE server, MCP/JSON-RPC protocol, chat process management, and lock-file handling — lives in a native Rust library (`claude-eclipse-core`) loaded via JNI. Java is a thin glue layer for Eclipse/SWT API calls.
+The plugin follows a **Rust-first** approach: the heavy logic — HTTP/SSE server, MCP/JSON-RPC protocol, chat process management, session-history reconstruction, shell and proxy environment detection, and lock-file handling — lives in a native Rust library (`claude-eclipse-core`) loaded via JNI. Java is a thin glue layer for Eclipse/SWT API calls.
 
 ```
-Claude CLI  <--NDJSON-->  Rust (chat.rs)  --JNI callbacks-->  Java (ClaudeChatView)
+Claude CLI  <--NDJSON-->  Rust (chat.rs)  --JNI callbacks-->  Java (NativeCore → ChatProcessManager)
                           Rust (mcp.rs)   --JNI tool call-->  Java (McpToolRegistry)
                           Rust (server.rs) --SSE-->           Claude CLI
 ```
@@ -226,29 +256,43 @@ cp target/x86_64-apple-darwin/release/libclaude_eclipse_core.dylib \
 ```
 > Cross-compiling to macOS from Windows/Linux requires Apple's SDK and is not supported — build on a Mac.
 
-## Updating the Plugin
+## Contributing
 
-After making changes and rebuilding the update site in Eclipse:
+Pull requests are welcome. For major changes, please open an issue first to discuss what
+you would like to change.
 
-```bash
-git add .
-git commit -m "vX.X.X - description of changes"
-git push
-```
+This repository also hosts the update site, so nobody pushes to it directly — a change
+reaches users through a pull request, and then through a release the maintainer publishes.
 
-GitHub Pages will redeploy within ~1 minute and the new version will be available to install.
+1. **Fork** the repository on GitHub and clone your fork.
+2. **Create a branch** for your change.
+3. **Import the projects** into Eclipse: *File ▸ Import ▸ Existing Projects into Workspace*,
+   pointing at the clone.
+4. **Make your change.** If it touches Rust, run `cargo test` in `claude-eclipse-core` and
+   rebuild the native library for your own platform (see
+   [Building the Native Library](#building-the-native-library)) so you can run what you wrote.
+5. **Try it** — *Run As ▸ Eclipse Application* launches a second Eclipse with the plugin
+   installed. Confirm the behaviour there before sending anything.
+6. **Push to your fork** and open a pull request against `master`, describing what changed
+   and how you tested it.
+
+Please leave these to the maintainer, and keep them out of your pull request:
+
+- the version numbers in `MANIFEST.MF`, `feature.xml` and `site.xml`
+- the `CHANGELOG.md` entry
+- the generated p2 artifacts under `com.anthropic.claudecode.eclipse.site/`
+- native libraries for platforms you cannot build and test on yourself
+
+Once a release is published, GitHub Pages redeploys the update site within about a minute
+and the new version becomes available to install.
 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
-## Contributing
-
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
-
 ## Credits
 
-Special thanks to [xgsa](https://github.com/xgsa) for helping fix some issues in Linux and for improving the plugin.
+Special thanks to [xgsa](https://github.com/xgsa) and [jmoraleda](https://github.com/jmoraleda) for the fixes and improvements they have contributed to the plugin.
 
 ## License
 

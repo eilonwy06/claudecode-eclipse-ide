@@ -4,7 +4,20 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.18] — 2026-09-03 *(current)*
+## [3.1.19] — 2026-09-04 *(current)*
+
+### Added
+- **"Use custom spinner verbs"** in Preferences ▸ Claude Code ▸ Miscellaneous Configuration ▸ "Use custom spinner verbs" — add your own words to `~/.claude/settings.json` (e.g. `"spinnerVerbs": {"mode": "append", "verbs": ["Example-ing", "Sampling"]}`; or `"mode": "replace"` to use only your own) and tick this box to mix them into the Claude Code view's rotation.
+  - *Known limitation:* Custom words added to `spinnerVerbs` in `~/.claude/settings.json` always show up in the Terminal's spinner, whether or not "Use custom spinner verbs" is ticked — that box only controls the Claude Code view.
+- **The Terminal's spinner follows the same verb choices as the Claude Code view.** The categories you tick apply to both; a change reaches the next tab you open.
+
+### Fixed
+- The `/compact` bubble and its "Compacted chat" summary no longer swap places when you close a conversation and open it again.
+- Minor UI fixes.
+
+---
+
+## [3.1.18] — 2026-09-03
 
 ### Changed
 - Persistent bridge relay ports.

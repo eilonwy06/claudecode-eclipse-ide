@@ -52,5 +52,6 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         store.setDefault(Constants.PREF_SPINNER_PACK_TWO, true);
         store.setDefault(Constants.PREF_SPINNER_DANK, false);
         store.setDefault(Constants.PREF_SPINNER_VIBECODER, false);
+        store.setDefault(Constants.PREF_SPINNER_CUSTOM, true);
     }
 }

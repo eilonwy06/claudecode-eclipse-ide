@@ -277,6 +277,11 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                 Constants.PREF_SPINNER_VIBECODER,
                 "Assert being a vibecoder",
                 getFieldEditorParent()));
+
+        addField(new BooleanFieldEditor(
+                Constants.PREF_SPINNER_CUSTOM,
+                "Use custom spinner verbs",
+                getFieldEditorParent()));
     }
 
     /**

@@ -1298,19 +1298,24 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
      * Tells the page which optional slices of the working-indicator gerund list are in
      * rotation (Preferences &gt; Claude Code &gt; Miscellaneous Configuration). Sent as one
      * JSON object rather than positional booleans so adding a category later doesn't
-     * change the signature on either side. Re-pushed on activation, like the theme and
-     * Debug mode, so ticking a box takes effect on the next click into the view.
+     * change the signature on either side — which is what let {@code custom} join as an
+     * array of the user's own verbs from ~/.claude/settings.json. Re-pushed on activation,
+     * like the theme and Debug mode, so ticking a box takes effect on the next click into
+     * the view.
      */
     private void pushSpinnerVerbs() {
         if (browser == null || browser.isDisposed() || !pageLoaded) return;
         org.eclipse.jface.preference.IPreferenceStore store =
                 Activator.getDefault().getPreferenceStore();
-        Map<String, Boolean> sets = new HashMap<>();
-        sets.put("deprecated", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_DEPRECATED));
-        sets.put("pack1", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_PACK_ONE));
-        sets.put("pack2", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_PACK_TWO));
-        sets.put("dank", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_DANK));
-        sets.put("vibecoder", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_VIBECODER));
+        com.google.gson.JsonObject sets = new com.google.gson.JsonObject();
+        sets.addProperty("deprecated", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_DEPRECATED));
+        sets.addProperty("pack1", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_PACK_ONE));
+        sets.addProperty("pack2", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_PACK_TWO));
+        sets.addProperty("dank", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_DANK));
+        sets.addProperty("vibecoder", store.getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SPINNER_VIBECODER));
+        com.google.gson.JsonArray custom = new com.google.gson.JsonArray();
+        for (String w : com.anthropic.claudecode.eclipse.SpinnerVerbs.customVerbs(store)) custom.add(w);
+        sets.add("custom", custom);
         browser.execute("window.onSpinnerVerbs && window.onSpinnerVerbs('"
                 + esc(new Gson().toJson(sets)) + "')");
     }

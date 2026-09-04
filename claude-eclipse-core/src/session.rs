@@ -474,6 +474,31 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                     Some(c) => c,
                     None => continue,
                 };
+                // A synthetic assistant message standing in for a backend error
+                // (529 overload, session-limit hit, …). The CLI flags it
+                // isApiErrorMessage — verified on disk for both of those texts —
+                // and live it renders as the muted "⚠ …" line via onError, never
+                // as a paragraph. Reload has to rebuild that same muted line, so
+                // surface it as its own item type rather than ordinary text.
+                if event["isApiErrorMessage"].as_bool().unwrap_or(false) {
+                    let mut text = String::new();
+                    for b in content {
+                        if b["type"].as_str() != Some("text") {
+                            continue;
+                        }
+                        let s = b["text"].as_str().unwrap_or("");
+                        if !s.is_empty() {
+                            if !text.is_empty() {
+                                text.push('\n');
+                            }
+                            text.push_str(s);
+                        }
+                    }
+                    if !text.is_empty() {
+                        items.push(serde_json::json!({ "t": "error", "text": text }));
+                    }
+                    continue;
+                }
                 // The model this turn ran on — attached to each item.
                 let model = event["message"]["model"].as_str().unwrap_or("");
                 for b in content {
@@ -1227,6 +1252,48 @@ mod tests {
     /// Tool dots are reconstructed from the transcript so a reloaded conversation
     /// keeps its green/red: a non-error tool_result ⇒ "done", an is_error result ⇒
     /// "interrupted", and a tool with no result at all ⇒ "interrupted".
+    /// A backend error the CLI stores as a SYNTHETIC assistant message flagged
+    /// isApiErrorMessage must come back as t:"error" (the muted "⚠ …" line the
+    /// live run showed via onError), never as t:"text" — otherwise reopening a
+    /// past session reads the outage as something the model said. Both fixture
+    /// lines are real shapes captured from local transcripts (a 429 session-limit
+    /// hit and a 529 overload); ordinary assistant text alongside them must stay
+    /// t:"text". If the CLI ever stops setting the flag this test breaks instead
+    /// of the errors silently turning back into paragraphs.
+    #[test]
+    fn load_session_surfaces_api_errors_as_muted_lines() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-apierr-home");
+        let root = r"C:\errws";
+        let dir = home.join(".claude").join("projects").join("C--errws");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("sesse.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"go"},"timestamp":"2026-08-26T01:00:00.000Z"}"#, "
+",
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"working on it"}]},"timestamp":"2026-08-26T01:00:02.000Z"}"#, "
+",
+            r#"{"type":"assistant","isApiErrorMessage":true,"apiErrorStatus":429,"error":"rate_limit","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your session limit · resets 2:10am (Asia/Irkutsk)"}]},"timestamp":"2026-08-26T01:00:03.000Z"}"#, "
+",
+            r#"{"type":"assistant","isApiErrorMessage":true,"apiErrorStatus":529,"error":"overloaded","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com."}]},"timestamp":"2026-08-26T01:00:04.000Z"}"#, "
+",
+        )).unwrap();
+
+        set_home(&home);
+        let loaded = super::load_session_history(root, "sesse");
+        let _ = fs::remove_dir_all(&home);
+
+        let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
+        let want: serde_json::Value = serde_json::from_str(r#"[
+            {"t":"user","content":"go"},
+            {"t":"text","text":"working on it","model":"claude-opus-4-8"},
+            {"t":"error","text":"You've hit your session limit · resets 2:10am (Asia/Irkutsk)"},
+            {"t":"error","text":"API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com."}
+        ]"#).unwrap();
+        assert_eq!(got, want, "api error render items");
+    }
+
     #[test]
     fn load_session_reconstructs_tool_status() {
         let _env = ENV_LOCK.lock().unwrap();

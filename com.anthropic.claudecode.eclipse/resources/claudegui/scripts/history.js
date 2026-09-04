@@ -262,7 +262,12 @@ function loadHistory(id, title) {
       aTurn = null;
       const p = parseUserContent(it.content || '');
       const isCompactCmd = p.text.trim() === '/compact';
-      if (!isCompactCmd) flushCompact();
+      // A line that paints nothing (e.g. the <local-command-caveat> the CLI
+      // inserts between the summary and the "/compact" echo) can't be the
+      // bubble the pending compact marker is waiting to render after.
+      const imgs = (it.images || []).map(imageFromBlock).filter(Boolean);
+      const invisible = !p.text && !p.chip && !imgs.length;
+      if (!isCompactCmd && !invisible) flushCompact();
       // Bracketed markers the CLI writes as user lines are not messages anyone
       // sent. Each pattern must match the WHOLE text: a real message that merely
       // QUOTES a marker ("[Request interrupted by user for tool use] still
@@ -281,13 +286,20 @@ function loadHistory(id, title) {
       if (/^\[Image:[^\]]*\]$/.test(marker)) return;
       // Messages sent with pasted images carry them as {media_type,data} blocks —
       // rebuild the same chips the live bubble showed.
-      const imgs = (it.images || []).map(imageFromBlock).filter(Boolean);
-      if (p.text || p.chip || imgs.length) addUserMessage(p.text, p.chip, imgs, it.id);
+      if (!invisible) addUserMessage(p.text, p.chip, imgs, it.id);
       if (isCompactCmd) flushCompact();
     } else if (ty === 'answered') {
       flushCompact();
       aTurn = null;
       addAnswered(it.text || '', pane);
+    } else if (ty === 'error') {
+      // A backend error (rate limit, 529 overload, …). Live it is the muted
+      // "⚠ …" line onError paints — a reload rebuilds exactly that, never an
+      // assistant paragraph, so a past session reads the way it ran.
+      flushCompact();
+      aTurn = null;
+      const em = it.text || '';
+      addSystemToPane(pane, '⚠ ' + (typeof augmentError === 'function' ? augmentError(em) : em));
     } else if (ty === 'thinking') {
       flushCompact();
       appendThinkStatic(assistantTurn(), it.text || '');
