@@ -70,6 +70,14 @@ public final class Constants {
     /** Claude's idle re-run timer for the statusLine command, in seconds. */
     public static final String PREF_STATUSLINE_REFRESH_SECONDS = "statuslineRefreshSeconds";
 
+    /** Hide the root ("supertab") directory row entirely, in the Claude Code view —
+     *  no picker, no per-session show/hide toggle (supertabsVisible), nothing. For a
+     *  user who only ever works in one folder, the row (plus the toggle's own collapsed
+     *  #cwd-row stand-in) is pure vertical space spent on a feature they never use. Off
+     *  by default: multi-root conversations are the new upstream behavior, and this is
+     *  an opt-out, not the other way around. */
+    public static final String PREF_HIDE_ROOT_DIRECTORIES_ROW = "hideRootDirectoriesRow";
+
     // ── Spinner verbs ───────────────────────────────────────────────────────
     // Which optional slices of the working-indicator gerund list are in rotation.
     // Each names a membership set over the single master list in working.js

@@ -150,6 +150,8 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     private ClaudeStatusBar statusBar;
     // Live-applies PREF_STATUSLINE_* changes (enable/toggles/refresh) without a restart.
     private org.eclipse.jface.util.IPropertyChangeListener statusPrefListener;
+    // Live-applies PREF_HIDE_ROOT_DIRECTORIES_ROW changes without a restart or page reload.
+    private org.eclipse.jface.util.IPropertyChangeListener hideRootRowPrefListener;
     // Re-pushes light/dark to the webview when the Eclipse workbench theme changes.
     private org.eclipse.jface.util.IPropertyChangeListener themeChangeListener;
     // Re-pushes the right-click menu's key hints when the user's bindings change.
@@ -220,6 +222,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         // this view sees them without having to send a turn first (issue #99).
         fetchUsageAsync();
         registerStatusPrefListener();
+        registerHideRootRowPrefListener();
         registerThemeListener();
         registerBindingListener();
         registerEditHandlers();
@@ -571,6 +574,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             pushCliModels();         // ditto for the installed binary's model support
             pushEditKeyHints();      // label the right-click menu with the user's real keys
             pushDebugMode();         // let the page report its keys while Debug mode is on
+            pushHideRootDirectoriesRow(); // whether the root directories row is hidden entirely
             pushSpinnerVerbs();      // which gerund categories the working indicator cycles
             // An "Open Claude Code Here" that arrived while the view was still loading.
             String queuedRoot = pendingRootPath;
@@ -953,6 +957,16 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         Activator.getDefault().getPreferenceStore().addPropertyChangeListener(statusPrefListener);
     }
 
+    /** Live-applies a Preferences change to "hide root directories row" without needing a
+     *  page reload — mirrors {@link #registerStatusPrefListener()}. */
+    private void registerHideRootRowPrefListener() {
+        hideRootRowPrefListener = event -> {
+            if (!com.anthropic.claudecode.eclipse.Constants.PREF_HIDE_ROOT_DIRECTORIES_ROW.equals(event.getProperty())) return;
+            Display.getDefault().asyncExec(this::pushHideRootDirectoriesRow);
+        };
+        Activator.getDefault().getPreferenceStore().addPropertyChangeListener(hideRootRowPrefListener);
+    }
+
     /**
      * Live theme refresh driven by the JFace {@link org.eclipse.jface.resource.ColorRegistry},
      * the SAME signal that recolors the shared status bar the instant the Eclipse theme changes
@@ -1292,6 +1306,20 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     private void pushDebugMode() {
         if (browser == null || browser.isDisposed() || !pageLoaded) return;
         browser.execute("window.__ccDebug = " + DebugModeUi.isDebugEnabled() + ";");
+    }
+
+    /**
+     * Tells the page whether to hide the root ("supertab") directory row entirely.
+     * Re-pushed on activation and on every live Preferences change (see
+     * {@link #registerHideRootRowPrefListener()}). Calls into the page's own
+     * {@code renderSupertabs()} area rather than just setting a flag, since hiding the
+     * row has to take effect immediately — see {@code window.onHideRootDirectoriesRow}.
+     */
+    private void pushHideRootDirectoriesRow() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        boolean hide = Activator.getDefault().getPreferenceStore()
+                .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_HIDE_ROOT_DIRECTORIES_ROW);
+        browser.execute("window.onHideRootDirectoriesRow && window.onHideRootDirectoriesRow(" + hide + ")");
     }
 
     /**
@@ -1918,6 +1946,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         // change shows up in the right-click menu's hints on the next activation.
         pushEditKeyHints();
         pushDebugMode();
+        pushHideRootDirectoriesRow();
         pushSpinnerVerbs();
     }
 
@@ -2384,6 +2413,11 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(statusPrefListener); }
             catch (Throwable ignored) {}
             statusPrefListener = null;
+        }
+        if (hideRootRowPrefListener != null) {
+            try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(hideRootRowPrefListener); }
+            catch (Throwable ignored) {}
+            hideRootRowPrefListener = null;
         }
         if (themeChangeListener != null) {
             try {

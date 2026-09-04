@@ -24,6 +24,17 @@
 /** @type {Root[]} */
 let roots = [], activeRootId = null, rootSeq = 0;
 let supertabsVisible = true;
+// PREF_HIDE_ROOT_DIRECTORIES_ROW (Preferences > Claude Code): hides the root row AND
+// its collapsed #cwd-row stand-in AND the toolbar's "show it again" chevron — the whole
+// feature disappears, not just the row supertabsVisible already toggles per-session.
+// Distinct from supertabsVisible: that one still leaves a way back (the collapsed
+// chevron); this one is a deliberate "I only ever use one folder" opt-out with no
+// in-page way to bring it back, matching a real preference rather than a session toggle.
+let rootDirectoriesRowHidden = false;
+window.onHideRootDirectoriesRow = function(hide) {
+  rootDirectoriesRowHidden = !!hide;
+  renderSupertabs();
+};
 
 /** @returns {Root|null} */
 function activeRoot() { return roots.find(r => r.id === activeRootId) || null; }
@@ -172,12 +183,14 @@ function moveRoot(fromId, toId, after) {
 }
 function renderSupertabs() {
   const row = document.getElementById('supertab-row');
-  if (row) row.style.display = supertabsVisible ? '' : 'none';
+  if (row) row.style.display = (supertabsVisible && !rootDirectoriesRowHidden) ? '' : 'none';
   // Exactly one of the two is up at any time, so both are driven from here — giving
   // the strip its own toggle path is how they end up both visible or both hidden.
+  // Both stay hidden when the preference is on: the whole feature is gone, not just
+  // collapsed to its "which folder am I in" stand-in.
   const cwd = document.getElementById('cwd-row');
   if (cwd) {
-    cwd.style.display = supertabsVisible ? 'none' : 'flex';
+    cwd.style.display = (!supertabsVisible && !rootDirectoriesRowHidden) ? 'flex' : 'none';
     const ar = activeRoot();
     cwd.querySelector('.ct').textContent = ar ? ar.name : '';
     cwd.title = ar ? ar.path : '';
@@ -247,7 +260,9 @@ function syncSupertabToggle() {
   if (inBar) {
     inBar.innerHTML = ICONS.CHEVUP;                   // hidden → points up
     inBar.title = 'Show root directories';
-    inBar.style.display = supertabsVisible ? 'none' : '';
+    // Never shown at all when the preference hides the feature outright — there is
+    // deliberately no in-page way back (see rootDirectoriesRowHidden's own comment).
+    inBar.style.display = (supertabsVisible || rootDirectoriesRowHidden) ? 'none' : '';
   }
 }
 function toggleSupertabs() {
