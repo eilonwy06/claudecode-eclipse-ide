@@ -20,7 +20,7 @@ An Eclipse IDE plugin that integrates [Claude Code](https://claude.ai/code) — 
 - [Claude Code CLI](https://claude.ai/code) installed and available on your PATH
 - A valid Anthropic API key
 - **Windows:** x86_64 and aarch64 (ARM64)
-- **Linux:** x86_64 and aarch64 (ARM64)
+- **Linux:** x86_64, aarch64 (ARM64) and riscv64 (RISC-V)
 - **macOS:** aarch64 (Apple Silicon) and x86_64 (Intel)
 - **FreeBSD:** x86_64 and aarch64 (ARM64)
 
@@ -284,6 +284,39 @@ docker run --rm -v "${PWD}:/src" -w /src --platform linux/arm64 rust:slim-bullse
 copy claude-eclipse-core\target\release\libclaude_eclipse_core.so `
      com.anthropic.claudecode.eclipse\native\linux\aarch64\
 ```
+
+**Linux riscv64 (cross-compiled via Docker):**
+
+This one cannot use the trick above: the official `rust` image publishes no
+`linux/riscv64` variant, so there is nothing to run under emulation. It is
+cross-compiled instead, which is also faster — no QEMU. Debian supplies the
+whole toolchain (compiler, glibc, headers) as ordinary cross packages, so no
+sysroot has to be fetched.
+
+Use a recent Debian: the ISA string rustc emits for riscv64 names Z-extensions
+that older `ld` releases reject outright (`Invalid or unknown z ISA extension:
+'zifencei'`), which fails every object including `libcore`. Bookworm's binutils
+is borderline; trixie's (2.44) links it cleanly.
+
+```dockerfile
+FROM rust:slim-trixie
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-riscv64-linux-gnu libc6-dev-riscv64-cross \
+ && rm -rf /var/lib/apt/lists/*
+RUN rustup target add riscv64gc-unknown-linux-gnu
+ENV CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER=riscv64-linux-gnu-gcc
+```
+
+```powershell
+docker build -f Dockerfile.riscv64 -t claude-riscv64-builder .
+docker run --rm -v "${PWD}:/src" -w /src claude-riscv64-builder `
+    cargo build --release --target riscv64gc-unknown-linux-gnu
+copy claude-eclipse-core\target\riscv64gc-unknown-linux-gnu\release\libclaude_eclipse_core.so `
+     com.anthropic.claudecode.eclipse\native\linux\riscv64\
+```
+
+`riscv64gc-unknown-linux-gnu` is tier 2, so `rustup target add` is enough — no
+nightly and no `-Z build-std`.
 
 **FreeBSD (cross-compiled via Docker):**
 
