@@ -54,10 +54,17 @@ function parseUserContent(s) {
 let histSessions = [], histLoading = false, histLoaded = false;
 function setHistoryLoading(v) { histLoading = v; }   // list shows "Loading…"; button stays the clock
 
-/* Content search toggle: titles-only (default) vs. titles + message text. Persisted
-   across panel opens/restarts — the user's chosen search scope, not a session detail. */
-let contentSearchEnabled = false;
-try { contentSearchEnabled = localStorage.getItem('claude.histContentSearch') === '1'; } catch (e) {}
+/* Search scope: 'title' (default) → 'own' (titles + the user's own messages) →
+   'all' (titles + the full conversation, including Claude's replies) → back to
+   'title'. Persisted across panel opens/restarts — the user's chosen search
+   scope, not a session detail. */
+const SEARCH_SCOPES = ['title', 'own', 'all'];
+const SEARCH_SCOPE_LABEL = { title: 'Search: titles only', own: 'Search: titles + my messages', all: 'Search: titles + full conversation' };
+let searchScope = 'title';
+try {
+  const saved = localStorage.getItem('claude.histSearchScope');
+  if (SEARCH_SCOPES.includes(saved)) searchScope = saved;
+} catch (e) {}
 // Bumped on every content search kicked off; a result whose requestId doesn't match
 // the current value is stale (the user kept typing) and is discarded on arrival.
 let searchRequestId = 0;
@@ -66,18 +73,27 @@ let searchInFlight = false;
 // Cleared at the start of each new search — never appended to across searches.
 let contentMatches = {};
 
-function toggleContentSearch() {
-  contentSearchEnabled = !contentSearchEnabled;
-  try { localStorage.setItem('claude.histContentSearch', contentSearchEnabled ? '1' : '0'); } catch (e) {}
+function cycleSearchScope() {
+  searchScope = SEARCH_SCOPES[(SEARCH_SCOPES.indexOf(searchScope) + 1) % SEARCH_SCOPES.length];
+  try { localStorage.setItem('claude.histSearchScope', searchScope); } catch (e) {}
+  updateSearchScopeButton();
+  onHistorySearchInput();
+}
+const SEARCH_SCOPE_ICON = { title: 'SEARCH', own: 'SEARCHOWN', all: 'SEARCHALL' };
+function updateSearchScopeButton() {
   const btn = document.getElementById('hist-search-scope');
-  if (btn) btn.classList.toggle('active', contentSearchEnabled);
-  renderHistoryList();
+  if (!btn) return;
+  btn.classList.toggle('active', searchScope !== 'title');
+  btn.title = SEARCH_SCOPE_LABEL[searchScope];
+  btn.innerHTML = ICONS[SEARCH_SCOPE_ICON[searchScope]];
 }
 
 function runContentSearch(query) {
   const myId = ++searchRequestId;
   contentMatches = {};
-  if (!query || !window._searchSessionContentAsync) { searchInFlight = false; updateSearchBusy(); return; }
+  if (!query || searchScope === 'title' || !window._searchSessionContentAsync) {
+    searchInFlight = false; updateSearchBusy(); return;
+  }
   // Only the sessions the title filter didn't already catch — a title match is
   // shown regardless, so there's no reason to also grep that session's body.
   const q = query.toLowerCase();
@@ -87,7 +103,7 @@ function runContentSearch(query) {
   if (!idsToScan.length) { searchInFlight = false; updateSearchBusy(); return; }
   searchInFlight = true;
   updateSearchBusy();
-  window._searchSessionContentAsync(JSON.stringify(idsToScan), query, String(myId));
+  window._searchSessionContentAsync(JSON.stringify(idsToScan), query, String(myId), searchScope === 'own');
 }
 window.onSessionSearchResult = function(json, requestId) {
   if (Number(requestId) !== searchRequestId) return;   // superseded by a later keystroke
@@ -143,8 +159,7 @@ function openHistoryPanel(resumeInPlace) {
   // request from the last time it was open.
   searchRequestId++; searchInFlight = false; contentMatches = {};
   updateSearchBusy();
-  const scopeBtn = document.getElementById('hist-search-scope');
-  if (scopeBtn) scopeBtn.classList.toggle('active', contentSearchEnabled);
+  updateSearchScopeButton();
   // Open the panel immediately; show cached results if we have them, otherwise a
   // "Loading…" state — and (re)load in the background either way.
   renderHistoryList();
@@ -234,7 +249,7 @@ function histTab(which) {
    its matches get merged in via onSessionSearchResult as they arrive. */
 function onHistorySearchInput() {
   renderHistoryList();
-  if (contentSearchEnabled) {
+  if (searchScope !== 'title') {
     const q = document.getElementById('hist-search').value;
     runContentSearch(q);
   }
@@ -246,7 +261,7 @@ function renderHistoryList() {
   if (histLoading && !histLoaded) { list.innerHTML = '<div class="h-empty">Loading…</div>'; return; }
   const items = histSessions.filter(s =>
     (s.display || '').toLowerCase().includes(q) ||
-    (contentSearchEnabled && Object.prototype.hasOwnProperty.call(contentMatches, s.sessionId)));
+    (searchScope !== 'title' && Object.prototype.hasOwnProperty.call(contentMatches, s.sessionId)));
   if (!items.length) {
     const empty = !histSessions.length ? 'No past conversations yet.' : (searchInFlight ? 'Searching…' : 'No matches.');
     list.innerHTML = '<div class="h-empty">' + empty + '</div>';

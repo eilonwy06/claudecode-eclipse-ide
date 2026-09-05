@@ -323,8 +323,13 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             final String sessionIdsJson = a.length > 0 && a[0] instanceof String s ? s : "[]";
             final String query = a.length > 1 && a[1] instanceof String s ? s : "";
             final String requestId = a.length > 2 && a[2] instanceof String s ? s : "";
+            final boolean ownMessagesOnly = a.length > 3 && a[3] instanceof Boolean b && b;
+            // Same ordinal as requestId — reused as the cancellation generation Rust
+            // checks between session files (see NativeCore#sessionSearchContent).
+            long gen; try { gen = Long.parseLong(requestId); } catch (NumberFormatException e) { gen = 0; }
+            final long generation = gen;
             new Thread(() -> {
-                String json = safeSessionSearchContent(root, sessionIdsJson, query);
+                String json = safeSessionSearchContent(root, sessionIdsJson, query, ownMessagesOnly, generation);
                 Display.getDefault().asyncExec(() -> {
                     if (b != null && !b.isDisposed() && pageLoaded) {
                         b.execute("window.onSessionSearchResult && window.onSessionSearchResult('"
@@ -2066,8 +2071,8 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
 
     /** @param root captured on the UI thread before the scan, same reason as
      *  {@link #safeSessionList(String)}. */
-    private String safeSessionSearchContent(String root, String sessionIdsJson, String query) {
-        try { return NativeCore.sessionSearchContent(root, sessionIdsJson, query); }
+    private String safeSessionSearchContent(String root, String sessionIdsJson, String query, boolean ownMessagesOnly, long generation) {
+        try { return NativeCore.sessionSearchContent(root, sessionIdsJson, query, ownMessagesOnly, generation); }
         catch (Throwable t) { return "[]"; }
     }
 

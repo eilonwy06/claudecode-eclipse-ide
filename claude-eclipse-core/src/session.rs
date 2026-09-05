@@ -3,6 +3,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -327,9 +328,27 @@ pub fn list_sessions(workspace_root: &str) -> String {
 // wins: the file is read line-by-line and abandoned the moment a match is
 // found, so a session's cost is bounded by how early the match falls, not by
 // its total length.
+//
+// Cooperative cancellation: every call publishes its own `generation` as the
+// latest one requested (SEARCH_GENERATION), then checks before starting each
+// session file whether a NEWER call has since arrived — the caller fires one
+// search per keystroke, so a slow typist's Nth keystroke would otherwise still
+// be scanning file #1 while the (N+1)th keystroke's results are already what
+// the UI wants. A superseded scan exits at the next file boundary rather than
+// running to completion for a result the UI is about to discard anyway.
 // ---------------------------------------------------------------------------
 
-pub fn search_session_content(workspace_root: &str, session_ids: &[String], query: &str) -> String {
+static SEARCH_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// @param generation this call's ordinal (the caller increments a per-session-search
+///   counter each time the query changes) — used only for cancellation, unrelated to
+///   the requestId round-tripped back to JS for discarding stale results.
+/// @param own_messages_only restrict the scan to `type:"user"` events (the user's own
+///   messages), skipping assistant turns entirely — a cheaper, narrower scope than
+///   the full conversation.
+pub fn search_session_content(workspace_root: &str, session_ids: &[String], query: &str, own_messages_only: bool, generation: u64) -> String {
+    SEARCH_GENERATION.fetch_max(generation, Ordering::Relaxed);
+
     let dir = match projects_dir(workspace_root) {
         Some(d) => d,
         None => return "[]".into(),
@@ -342,6 +361,9 @@ pub fn search_session_content(workspace_root: &str, session_ids: &[String], quer
     let mut results: Vec<serde_json::Value> = Vec::new();
 
     for session_id in session_ids {
+        if SEARCH_GENERATION.load(Ordering::Relaxed) != generation {
+            break;   // superseded by a newer keystroke's search — stop wasted I/O
+        }
         let path = dir.join(format!("{session_id}.jsonl"));
         let file = match fs::File::open(&path) {
             Ok(f) => f,
@@ -350,6 +372,11 @@ pub fn search_session_content(workspace_root: &str, session_ids: &[String], quer
         let reader = BufReader::new(file);
 
         for line in reader.lines() {
+            // Checked every line, not just every file: one large session shouldn't
+            // stall a supersede until its whole file is read.
+            if SEARCH_GENERATION.load(Ordering::Relaxed) != generation {
+                return serde_json::to_string(&results).unwrap_or_else(|_| "[]".into());
+            }
             let line = match line {
                 Ok(l) if !l.is_empty() => l,
                 _ => continue,
@@ -358,6 +385,9 @@ pub fn search_session_content(workspace_root: &str, session_ids: &[String], quer
                 Ok(v) => v,
                 Err(_) => continue,
             };
+            if own_messages_only && event["type"].as_str() != Some("user") {
+                continue;
+            }
 
             let mut texts: Vec<String> = Vec::new();
             if let Some(content) = event["message"]["content"].as_str() {
@@ -1320,7 +1350,10 @@ mod tests {
 
         set_home(&home);
         let ids = vec!["aaaa1111".to_string(), "bbbb2222".to_string()];
-        let json = super::search_session_content(root, &ids, "quilt");
+        // Each test uses its own generation band, well clear of the others', so the
+        // shared process-wide SEARCH_GENERATION ratchet (parallel test threads) can't
+        // make one test's call see itself as superseded by another's.
+        let json = super::search_session_content(root, &ids, "quilt", false, 1_000);
         let _ = fs::remove_dir_all(&home);
 
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1328,6 +1361,36 @@ mod tests {
         assert_eq!(arr.len(), 1, "only aaaa1111 matches within the requested subset: {json}");
         assert_eq!(arr[0]["sessionId"].as_str().unwrap(), "aaaa1111");
         assert!(arr[0]["snippet"].as_str().unwrap().to_lowercase().contains("quilt"));
+    }
+
+    /// A query that only appears in an assistant turn matches with the full-conversation
+    /// scope but not with own_messages_only — proving the scope actually excludes
+    /// assistant text rather than just being ignored.
+    #[test]
+    fn search_session_content_own_messages_only_excludes_assistant_text() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-search-own-home");
+        let root = r"C:\searchownt";
+        let dir = home.join(".claude").join("projects").join("C--searchownt");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("aaaa1111.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"please help me"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"the quilt patch system works like this"}]},"timestamp":"2026-07-01T10:00:05.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let ids = vec!["aaaa1111".to_string()];
+        // Own generation band — see the comment in the sibling test above.
+        let full = super::search_session_content(root, &ids, "quilt", false, 2_000);
+        let own_only = super::search_session_content(root, &ids, "quilt", true, 2_000);
+        let _ = fs::remove_dir_all(&home);
+
+        let full_v: serde_json::Value = serde_json::from_str(&full).unwrap();
+        assert_eq!(full_v.as_array().unwrap().len(), 1, "full-conversation scope finds the assistant match: {full}");
+        let own_v: serde_json::Value = serde_json::from_str(&own_only).unwrap();
+        assert_eq!(own_v.as_array().unwrap().len(), 0, "own_messages_only must not match assistant text: {own_only}");
     }
 
     /// Verified against the reference reader on 2026-07-10: the fixture below was

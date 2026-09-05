@@ -780,6 +780,8 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionS
     workspace_root: JString,
     session_ids_json: JString,
     query: JString,
+    own_messages_only: jboolean,
+    generation: jlong,
 ) -> jstring {
     let root: String = if workspace_root.is_null() {
         String::new()
@@ -797,7 +799,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionS
         env.get_string(&query).ok().map(|s| s.into()).unwrap_or_default()
     };
     let ids: Vec<String> = serde_json::from_str(&ids_json).unwrap_or_default();
-    let json = session::search_session_content(&root, &ids, &q);
+    let json = session::search_session_content(&root, &ids, &q, own_messages_only != 0, generation as u64);
     env.new_string(json).unwrap_or_else(|_| env.new_string("[]").unwrap()).into_raw()
 }
 

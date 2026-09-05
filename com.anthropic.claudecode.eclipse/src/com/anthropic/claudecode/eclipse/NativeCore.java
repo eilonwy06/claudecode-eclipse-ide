@@ -474,8 +474,14 @@ public final class NativeCore {
      * match per session wins. Returns a JSON array of {@code {sessionId, snippet}}
      * for sessions that matched. Meant to run only over sessions whose title didn't
      * already match — the caller filters those out first.
+     *
+     * @param ownMessagesOnly restrict the scan to the user's own messages, skipping
+     *     assistant turns — a narrower scope than the full conversation.
+     * @param generation this search's ordinal in the caller's own sequence (bump on
+     *     every new query). Lets an in-progress scan notice a newer one has since
+     *     started and stop early instead of finishing a scan the UI will discard.
      */
-    public static native String sessionSearchContent(String workspaceRoot, String sessionIdsJson, String query);
+    public static native String sessionSearchContent(String workspaceRoot, String sessionIdsJson, String query, boolean ownMessagesOnly, long generation);
 
     /**
      * Deletes one local session jsonl (id guarded against escaping the projects
