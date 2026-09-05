@@ -22,11 +22,25 @@ public final class NativeCore {
     }
 
     /**
-     * Loads the native library.  Tries OSGi's Bundle-NativeCode resolution first
-     * (which requires java.library.path to be set correctly), then falls back to
-     * extracting the library from the bundle's classpath resources to a temp file.
-     * The fallback is the reliable path on Linux/macOS where Bundle-NativeCode
-     * resolution may fail when the class is initialized on a non-OSGi worker thread.
+     * Loads the native library.  Tries OSGi's Bundle-NativeCode resolution
+     * first, then falls back to extracting the library out of the bundle's
+     * classpath resources into a temp file.
+     *
+     * This comment used to say the fallback was the reliable path on Linux and
+     * macOS because resolution "may fail when the class is initialized on a
+     * non-OSGi worker thread".  That was the wrong diagnosis of a real symptom.
+     * Every Bundle-NativeCode clause ended in a \ borrowed from Java source
+     * style; manifests continue on a newline plus one space and treat no
+     * character as an escape, so unfolding left the \ inside the value.  The
+     * osname attribute therefore parsed under the name "\ osname" and came back
+     * null on all nine clauses, matching fell to processor alone, the first
+     * x86-64 clause won on every OS, and a Linux or macOS JVM was handed the
+     * Windows .dll -- which failed here, silently, leaving the fallback to do
+     * the real work.  The header was corrected 2026-09-05.
+     *
+     * The fallback stays, and is still load-bearing: it is what serves any
+     * caller outside a running framework, such as a test harness loading this
+     * class straight off the classpath.
      */
     private static void loadNativeLibrary() {
         try {

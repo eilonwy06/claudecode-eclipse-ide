@@ -36,24 +36,24 @@ Require-Bundle: org.eclipse.ui,
  org.eclipse.e4.ui.model.workbench,
  com.google.gson
 Bundle-ClassPath: .
-Bundle-NativeCode: native/windows/x86_64/claude_eclipse_core.dll;\
-  osname=Win32;processor=x86-64,\
-  native/windows/aarch64/claude_eclipse_core.dll;\
-  osname=Win32;processor=aarch64,\
-  native/linux/x86_64/libclaude_eclipse_core.so;\
-  osname=Linux;processor=x86-64,\
-  native/linux/aarch64/libclaude_eclipse_core.so;\
-  osname=Linux;processor=aarch64,\
-  native/linux/riscv64/libclaude_eclipse_core.so;\
-  osname=Linux;processor=riscv64,\
-  native/macos/x86_64/libclaude_eclipse_core.dylib;\
-  osname=MacOS X;processor=x86-64,\
-  native/macos/aarch64/libclaude_eclipse_core.dylib;\
-  osname=MacOS X;processor=aarch64,\
-  native/freebsd/x86_64/libclaude_eclipse_core.so;\
-  osname=FreeBSD;processor=x86-64,\
-  native/freebsd/aarch64/libclaude_eclipse_core.so;\
-  osname=FreeBSD;processor=aarch64
+Bundle-NativeCode: native/windows/x86_64/claude_eclipse_core.dll;
+ osname=Win32;processor=x86-64,
+ native/windows/aarch64/claude_eclipse_core.dll;
+ osname=Win32;processor=aarch64,
+ native/linux/x86_64/libclaude_eclipse_core.so;
+ osname=Linux;processor=x86-64,
+ native/linux/aarch64/libclaude_eclipse_core.so;
+ osname=Linux;processor=aarch64,
+ native/linux/riscv64/libclaude_eclipse_core.so;
+ osname=Linux;processor=riscv64,
+ native/macos/x86_64/libclaude_eclipse_core.dylib;
+ osname=MacOS X;processor=x86-64,
+ native/macos/aarch64/libclaude_eclipse_core.dylib;
+ osname=MacOS X;processor=aarch64,
+ native/freebsd/x86_64/libclaude_eclipse_core.so;
+ osname=FreeBSD;processor=x86-64,
+ native/freebsd/aarch64/libclaude_eclipse_core.so;
+ osname=FreeBSD;processor=aarch64
 Bundle-RequiredExecutionEnvironment: JavaSE-21
 Automatic-Module-Name: com.anthropic.claudecode.eclipse
 Bundle-ActivationPolicy: lazy
