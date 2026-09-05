@@ -165,7 +165,10 @@
       <div class="hist-tab active" id="hist-tab-local" onclick="histTab('local')">__MONITOR__ Local</div>
       <div class="hist-tab" id="hist-tab-web" onclick="histTab('web')">__GLOBE__ Web</div>
     </div>
-    <div class="hist-search"><input id="hist-search" type="text" placeholder="Search sessions…" oninput="renderHistoryList()"></div>
+    <div class="hist-search">
+      <input id="hist-search" type="text" placeholder="Search sessions…" oninput="onHistorySearchInput()">
+      <span class="hist-search-scope" id="hist-search-scope" title="Also search conversation content" onclick="toggleContentSearch()">__SEARCH__</span>
+    </div>
     <div id="history-list"></div>
     <div id="history-web"><div class="h-empty">Web history isn't available yet.</div></div>
   </div>

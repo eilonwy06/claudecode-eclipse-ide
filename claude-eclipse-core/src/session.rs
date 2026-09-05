@@ -320,6 +320,80 @@ pub fn list_sessions(workspace_root: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// search_session_content — grep a caller-supplied subset of sessions for a
+// query string, message text only (not titles — the caller already knows how
+// to match those instantly from the cached list_sessions result, so it only
+// asks this for the sessions whose title didn't match). First hit per file
+// wins: the file is read line-by-line and abandoned the moment a match is
+// found, so a session's cost is bounded by how early the match falls, not by
+// its total length.
+// ---------------------------------------------------------------------------
+
+pub fn search_session_content(workspace_root: &str, session_ids: &[String], query: &str) -> String {
+    let dir = match projects_dir(workspace_root) {
+        Some(d) => d,
+        None => return "[]".into(),
+    };
+    let needle = query.to_lowercase();
+    if needle.is_empty() {
+        return "[]".into();
+    }
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    for session_id in session_ids {
+        let path = dir.join(format!("{session_id}.jsonl"));
+        let file = match fs::File::open(&path) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = match line {
+                Ok(l) if !l.is_empty() => l,
+                _ => continue,
+            };
+            let event: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let mut texts: Vec<String> = Vec::new();
+            if let Some(content) = event["message"]["content"].as_str() {
+                texts.push(strip_ide_preamble(content));
+            } else if let Some(blocks) = event["message"]["content"].as_array() {
+                for b in blocks {
+                    if b["type"].as_str() == Some("text") {
+                        texts.push(strip_ide_preamble(b["text"].as_str().unwrap_or("")));
+                    }
+                }
+            }
+
+            let mut found: Option<String> = None;
+            for text in &texts {
+                if let Some(pos) = text.to_lowercase().find(&needle) {
+                    let start = text[..pos].char_indices().rev().nth(39).map(|(i, _)| i).unwrap_or(0);
+                    let end = (pos + needle.len() + 40).min(text.len());
+                    found = Some(text[start..end].trim().to_string());
+                    break;
+                }
+            }
+
+            if let Some(snippet) = found {
+                results.push(serde_json::json!({
+                    "sessionId": session_id,
+                    "snippet": snippet,
+                }));
+                break;   // one match is enough — move to the next session
+            }
+        }
+    }
+
+    serde_json::to_string(&results).unwrap_or_else(|_| "[]".into())
+}
+
+// ---------------------------------------------------------------------------
 // load_session_history — read a specific session's JSONL and return the
 // conversation as an ordered list of render items so the GUI can reconstruct
 // EXACTLY how the live session looked:
@@ -1218,6 +1292,42 @@ mod tests {
             vec!["title-only stub", "real question text", "USER RENAMED TITLE"],
             "titles + last-activity order must match the PHP reader"
         );
+    }
+
+    /// Covers: a match on the first session found + snippet returned, no match on a
+    /// second, an id NOT in the search list skipped even though its file would match
+    /// (proving the caller-supplied subset is honored, not re-derived), and matching
+    /// is case-insensitive.
+    #[test]
+    fn search_session_content_finds_first_match_and_skips_others() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-search-home");
+        let root = r"C:\searchtest";
+        let dir = home.join(".claude").join("projects").join("C--searchtest");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("aaaa1111.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"talking about the quilt patch system"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+        )).unwrap();
+        fs::write(dir.join("bbbb2222.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"nothing relevant here"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+        )).unwrap();
+        // Would match too, but deliberately left out of the search list below.
+        fs::write(dir.join("cccc3333.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"QUILT also appears here"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let ids = vec!["aaaa1111".to_string(), "bbbb2222".to_string()];
+        let json = super::search_session_content(root, &ids, "quilt");
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "only aaaa1111 matches within the requested subset: {json}");
+        assert_eq!(arr[0]["sessionId"].as_str().unwrap(), "aaaa1111");
+        assert!(arr[0]["snippet"].as_str().unwrap().to_lowercase().contains("quilt"));
     }
 
     /// Verified against the reference reader on 2026-07-10: the fixture below was

@@ -96,6 +96,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     @SuppressWarnings("unused") private BrowserFunction newSessionFn;
     @SuppressWarnings("unused") private BrowserFunction listSessionsFn;
     @SuppressWarnings("unused") private BrowserFunction listSessionsAsyncFn;
+    @SuppressWarnings("unused") private BrowserFunction searchSessionContentFn;
     @SuppressWarnings("unused") private BrowserFunction loadSessionFn;
     @SuppressWarnings("unused") private BrowserFunction deleteSessionFn;
     @SuppressWarnings("unused") private BrowserFunction renameSessionFn;
@@ -311,6 +312,26 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                     }
                 });
             }, "claude-history-load").start();
+            return null;
+        });
+        // Content search: greps the given sessions' message text off the UI thread.
+        // requestId round-trips so JS can discard a result that arrived after a
+        // newer search superseded it (the user kept typing).
+        searchSessionContentFn = new SimpleFunction(browser, "_searchSessionContentAsync", a -> {
+            final Browser b = browser;
+            final String root = activeRoot();
+            final String sessionIdsJson = a.length > 0 && a[0] instanceof String s ? s : "[]";
+            final String query = a.length > 1 && a[1] instanceof String s ? s : "";
+            final String requestId = a.length > 2 && a[2] instanceof String s ? s : "";
+            new Thread(() -> {
+                String json = safeSessionSearchContent(root, sessionIdsJson, query);
+                Display.getDefault().asyncExec(() -> {
+                    if (b != null && !b.isDisposed() && pageLoaded) {
+                        b.execute("window.onSessionSearchResult && window.onSessionSearchResult('"
+                                + esc(json) + "', '" + esc(requestId) + "')");
+                    }
+                });
+            }, "claude-history-search").start();
             return null;
         });
         loadSessionFn  = new SimpleFunction(browser, "_loadSession", a ->
@@ -2040,6 +2061,13 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
 
     private String safeSessionLoad(String id) {
         try { return NativeCore.sessionLoad(activeRoot(), id); }
+        catch (Throwable t) { return "[]"; }
+    }
+
+    /** @param root captured on the UI thread before the scan, same reason as
+     *  {@link #safeSessionList(String)}. */
+    private String safeSessionSearchContent(String root, String sessionIdsJson, String query) {
+        try { return NativeCore.sessionSearchContent(root, sessionIdsJson, query); }
         catch (Throwable t) { return "[]"; }
     }
 

@@ -774,6 +774,34 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionL
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionSearchContent(
+    mut env: JNIEnv,
+    _class: JClass,
+    workspace_root: JString,
+    session_ids_json: JString,
+    query: JString,
+) -> jstring {
+    let root: String = if workspace_root.is_null() {
+        String::new()
+    } else {
+        env.get_string(&workspace_root).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let ids_json: String = if session_ids_json.is_null() {
+        "[]".to_string()
+    } else {
+        env.get_string(&session_ids_json).ok().map(|s| s.into()).unwrap_or_else(|| "[]".to_string())
+    };
+    let q: String = if query.is_null() {
+        String::new()
+    } else {
+        env.get_string(&query).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    let ids: Vec<String> = serde_json::from_str(&ids_json).unwrap_or_default();
+    let json = session::search_session_content(&root, &ids, &q);
+    env.new_string(json).unwrap_or_else(|_| env.new_string("[]").unwrap()).into_raw()
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_sessionLoad(
     mut env: JNIEnv,
     _class: JClass,

@@ -53,6 +53,55 @@ function parseUserContent(s) {
 
 let histSessions = [], histLoading = false, histLoaded = false;
 function setHistoryLoading(v) { histLoading = v; }   // list shows "Loading…"; button stays the clock
+
+/* Content search toggle: titles-only (default) vs. titles + message text. Persisted
+   across panel opens/restarts — the user's chosen search scope, not a session detail. */
+let contentSearchEnabled = false;
+try { contentSearchEnabled = localStorage.getItem('claude.histContentSearch') === '1'; } catch (e) {}
+// Bumped on every content search kicked off; a result whose requestId doesn't match
+// the current value is stale (the user kept typing) and is discarded on arrival.
+let searchRequestId = 0;
+let searchInFlight = false;
+// sessionId -> snippet, for the content matches found by the CURRENT search only.
+// Cleared at the start of each new search — never appended to across searches.
+let contentMatches = {};
+
+function toggleContentSearch() {
+  contentSearchEnabled = !contentSearchEnabled;
+  try { localStorage.setItem('claude.histContentSearch', contentSearchEnabled ? '1' : '0'); } catch (e) {}
+  const btn = document.getElementById('hist-search-scope');
+  if (btn) btn.classList.toggle('active', contentSearchEnabled);
+  renderHistoryList();
+}
+
+function runContentSearch(query) {
+  const myId = ++searchRequestId;
+  contentMatches = {};
+  if (!query || !window._searchSessionContentAsync) { searchInFlight = false; updateSearchBusy(); return; }
+  // Only the sessions the title filter didn't already catch — a title match is
+  // shown regardless, so there's no reason to also grep that session's body.
+  const q = query.toLowerCase();
+  const idsToScan = histSessions
+    .filter(s => !(s.display || '').toLowerCase().includes(q))
+    .map(s => s.sessionId);
+  if (!idsToScan.length) { searchInFlight = false; updateSearchBusy(); return; }
+  searchInFlight = true;
+  updateSearchBusy();
+  window._searchSessionContentAsync(JSON.stringify(idsToScan), query, String(myId));
+}
+window.onSessionSearchResult = function(json, requestId) {
+  if (Number(requestId) !== searchRequestId) return;   // superseded by a later keystroke
+  searchInFlight = false;
+  updateSearchBusy();
+  let matches = [];
+  try { matches = JSON.parse(json || '[]'); } catch (e) {}
+  matches.forEach(m => { contentMatches[m.sessionId] = m.snippet; });
+  renderHistoryList();
+};
+function updateSearchBusy() {
+  const btn = document.getElementById('hist-search-scope');
+  if (btn) btn.classList.toggle('busy', searchInFlight);
+}
 /* Load the session list off the UI thread (the first call extracts the bundled
    PHP runtime + spawns php, which would otherwise freeze the click). */
 function loadHistoryAsync() {
@@ -90,6 +139,12 @@ function openHistoryPanel(resumeInPlace) {
   historyResumeInPlace = resumeInPlace;
   histTab('local');
   const s = document.getElementById('hist-search'); if (s) s.value = '';
+  // A fresh search each time the panel opens — no stale matches or in-flight
+  // request from the last time it was open.
+  searchRequestId++; searchInFlight = false; contentMatches = {};
+  updateSearchBusy();
+  const scopeBtn = document.getElementById('hist-search-scope');
+  if (scopeBtn) scopeBtn.classList.toggle('active', contentSearchEnabled);
   // Open the panel immediately; show cached results if we have them, otherwise a
   // "Loading…" state — and (re)load in the background either way.
   renderHistoryList();
@@ -174,14 +229,27 @@ function histTab(which) {
   document.querySelector('.hist-search').style.display = local ? '' : 'none';
   document.getElementById('history-web').style.display = local ? 'none' : '';
 }
+/* oninput handler for #hist-search: title matches render instantly from the
+   already-cached list; a content search (if enabled) runs in the background and
+   its matches get merged in via onSessionSearchResult as they arrive. */
+function onHistorySearchInput() {
+  renderHistoryList();
+  if (contentSearchEnabled) {
+    const q = document.getElementById('hist-search').value;
+    runContentSearch(q);
+  }
+}
 function renderHistoryList() {
   const q = (document.getElementById('hist-search') ? document.getElementById('hist-search').value : '').toLowerCase();
   const list = document.getElementById('history-list');
   list.innerHTML = '';
   if (histLoading && !histLoaded) { list.innerHTML = '<div class="h-empty">Loading…</div>'; return; }
-  const items = histSessions.filter(s => (s.display || '').toLowerCase().includes(q));
+  const items = histSessions.filter(s =>
+    (s.display || '').toLowerCase().includes(q) ||
+    (contentSearchEnabled && Object.prototype.hasOwnProperty.call(contentMatches, s.sessionId)));
   if (!items.length) {
-    list.innerHTML = '<div class="h-empty">' + (histSessions.length ? 'No matches.' : 'No past conversations yet.') + '</div>';
+    const empty = !histSessions.length ? 'No past conversations yet.' : (searchInFlight ? 'Searching…' : 'No matches.');
+    list.innerHTML = '<div class="h-empty">' + empty + '</div>';
     return;
   }
   items.forEach(s => {
@@ -190,6 +258,12 @@ function renderHistoryList() {
     const title = document.createElement('div'); title.className = 'h-title'; title.textContent = stripContext(s.display) || '(untitled)';
     const time = document.createElement('div'); time.className = 'h-time'; time.textContent = relTime(s.timestamp);
     main.appendChild(title); main.appendChild(time);
+    const titleMatched = (s.display || '').toLowerCase().includes(q);
+    if (q && !titleMatched && contentMatches[s.sessionId]) {
+      const snippet = document.createElement('div'); snippet.className = 'h-snippet';
+      snippet.textContent = contentMatches[s.sessionId];
+      main.appendChild(snippet);
+    }
     const actions = document.createElement('div'); actions.className = 'h-actions';
     const rename = document.createElement('span'); rename.className = 'h-action h-rename'; rename.title = 'Rename';
     rename.innerHTML = ICONS.PENCIL;
