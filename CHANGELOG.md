@@ -10,7 +10,7 @@ All notable changes to Claude Code for Eclipse are documented here.
 - **A timestamp above each message you send**, in local time, in live conversations and in history alike — off by default, in Preferences ▸ Claude Code ▸ Miscellaneous Configuration ([@jmoraleda](https://github.com/jmoraleda), PR #107).
 - **Each usage meter can show when it resets**, as its own preference for the 5-hour and the weekly limit ([@jmoraleda](https://github.com/jmoraleda), PR #108).
 - **The working-directory row can be hidden entirely** — picker, collapsed stand-in and toolbar toggle included ([@jmoraleda](https://github.com/jmoraleda), PR #109).
-- **FreeBSD (x86_64 and ARM64) and Windows on ARM support.**
+- **FreeBSD (x86_64 and ARM64), Linux on RISC-V (riscv64) and Windows on ARM support.**
 
 ### Changed
 - **The conversation tab strip takes its colors from your own editor tabs**, so it matches whatever theme, OS or desktop environment you run ([@jmoraleda](https://github.com/jmoraleda), PR #106).

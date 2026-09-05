@@ -63,9 +63,17 @@ public final class NativeCore {
         String arch = System.getProperty("os.arch",  "").toLowerCase(java.util.Locale.ROOT);
         String dir  = nativeArchDir(arch);
         if (dir == null) return null;
-        if (os.contains("win"))   return "/native/windows/" + dir + "/claude_eclipse_core.dll";
-        if (os.contains("linux")) return "/native/linux/"   + dir + "/libclaude_eclipse_core.so";
-        if (os.contains("mac"))   return "/native/macos/"   + dir + "/libclaude_eclipse_core.dylib";
+        if (os.contains("linux")) return "/native/linux/" + dir + "/libclaude_eclipse_core.so";
+
+        // Linux is the only riscv64 build, because Eclipse itself publishes a
+        // riscv64 IDE for Linux and for nothing else.  Without this guard a
+        // riscv64 JVM on any other OS resolves to a path that cannot exist --
+        // native/windows/riscv64/ and friends -- and fails in System.load()
+        // rather than reporting the platform as unsupported.
+        if ("riscv64".equals(dir)) return null;
+
+        if (os.contains("win"))     return "/native/windows/" + dir + "/claude_eclipse_core.dll";
+        if (os.contains("mac"))     return "/native/macos/"   + dir + "/libclaude_eclipse_core.dylib";
         if (os.contains("freebsd")) return "/native/freebsd/" + dir + "/libclaude_eclipse_core.so";
         return null;
     }
@@ -75,14 +83,18 @@ public final class NativeCore {
      * build exists for that architecture.
      *
      * Returning null matters.  Defaulting an unrecognized architecture to
-     * x86_64 hands a ppc64le or riscv64 JVM an x86-64 binary that extracts
+     * x86_64 hands a ppc64le or s390x JVM an x86-64 binary that extracts
      * successfully and then fails inside {@code System.load()}, instead of
      * reporting the platform as unsupported.
+     *
+     * This maps the architecture alone; which OS/arch pairs actually ship is
+     * decided by the caller, which is where riscv64 is confined to Linux.
      */
     private static String nativeArchDir(String arch) {
         switch (arch) {
             case "aarch64": case "arm64":  return "aarch64";
             case "amd64":   case "x86_64": return "x86_64";
+            case "riscv64":                return "riscv64";
             default:                       return null;
         }
     }

@@ -44,6 +44,8 @@ Bundle-NativeCode: native/windows/x86_64/claude_eclipse_core.dll;\
   osname=Linux;processor=x86-64,\
   native/linux/aarch64/libclaude_eclipse_core.so;\
   osname=Linux;processor=aarch64,\
+  native/linux/riscv64/libclaude_eclipse_core.so;\
+  osname=Linux;processor=riscv64,\
   native/macos/x86_64/libclaude_eclipse_core.dylib;\
   osname=MacOS X;processor=x86-64,\
   native/macos/aarch64/libclaude_eclipse_core.dylib;\
