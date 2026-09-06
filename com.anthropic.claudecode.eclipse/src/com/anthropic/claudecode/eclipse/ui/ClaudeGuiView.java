@@ -323,7 +323,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             final String sessionIdsJson = a.length > 0 && a[0] instanceof String s ? s : "[]";
             final String query = a.length > 1 && a[1] instanceof String s ? s : "";
             final String requestId = a.length > 2 && a[2] instanceof String s ? s : "";
-            final boolean ownMessagesOnly = a.length > 3 && a[3] instanceof Boolean b && b;
+            final boolean ownMessagesOnly = a.length > 3 && a[3] instanceof Boolean own && own;
             // Same ordinal as requestId — reused as the cancellation generation Rust
             // checks between session files (see NativeCore#sessionSearchContent).
             long gen; try { gen = Long.parseLong(requestId); } catch (NumberFormatException e) { gen = 0; }
