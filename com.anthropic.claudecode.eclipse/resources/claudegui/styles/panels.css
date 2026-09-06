@@ -59,14 +59,20 @@
 .hist-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 8px;
   border-radius: 5px; color: var(--fg-dim); font-size: 12px; cursor: pointer; }
 .hist-tab.active { background: var(--bg-hover); color: var(--fg); }
-.hist-search { margin-bottom: 4px; }
-.hist-search input { width: 100%; background: var(--bg-code); border: 1px solid var(--border); border-radius: 6px;
+.hist-search { margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.hist-search input { flex: 1; min-width: 0; background: var(--bg-code); border: 1px solid var(--border); border-radius: 6px;
   padding: 6px 9px; color: var(--fg); font-size: 12px; outline: none; }
 .hist-search input:focus { border-color: var(--accent); }
+.hist-search-scope { display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 22px; height: 22px; border-radius: 5px; color: var(--fg-faint); cursor: pointer; }
+.hist-search-scope:hover { color: var(--fg); background: var(--bg-hover); }
+.hist-search-scope.active { color: var(--accent); background: var(--bg-hover); }
+.hist-search-scope.busy { animation: spin .8s linear infinite; }
 #history-list { overflow-y: auto; }
 #history-list .item { align-items: center; gap: 6px; }
 #history-list .h-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 #history-list .h-title { color: var(--fg); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#history-list .h-snippet { color: var(--fg-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #history-list .h-time { color: var(--fg-faint); font-size: 10.5px; }
 #history-list .h-actions { display: flex; gap: 2px; flex-shrink: 0; }
 #history-list .h-action { color: var(--fg-faint); padding: 4px; border-radius: 4px; visibility: hidden; cursor: pointer; }

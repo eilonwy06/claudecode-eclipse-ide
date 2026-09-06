@@ -3,6 +3,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -317,6 +318,153 @@ pub fn list_sessions(workspace_root: &str) -> String {
     sessions.truncate(100);
 
     serde_json::to_string(&sessions).unwrap_or_else(|_| "[]".into())
+}
+
+// ---------------------------------------------------------------------------
+// search_session_content — grep a caller-supplied subset of sessions for a
+// query string, message text only (not titles — the caller already knows how
+// to match those instantly from the cached list_sessions result, so it only
+// asks this for the sessions whose title didn't match). First hit per file
+// wins: the file is read line-by-line and abandoned the moment a match is
+// found, so a session's cost is bounded by how early the match falls, not by
+// its total length.
+//
+// Cooperative cancellation: every call publishes its own `generation` as the
+// latest one requested (SEARCH_GENERATION), then checks before starting each
+// session file whether a NEWER call has since arrived — the caller fires one
+// search per keystroke, so a slow typist's Nth keystroke would otherwise still
+// be scanning file #1 while the (N+1)th keystroke's results are already what
+// the UI wants. A superseded scan exits at the next file boundary rather than
+// running to completion for a result the UI is about to discard anyway.
+// ---------------------------------------------------------------------------
+
+static SEARCH_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Nearest valid UTF-8 char boundary at or BEFORE `idx` (never past it) — a portable
+/// stand-in for the standard library's floor_char_boundary, which is still
+/// nightly-only. Used to safely widen/narrow a byte-offset window computed against a
+/// DIFFERENT string's positions (see search_session_content's snippet extraction).
+fn floor_char_boundary(s: &str, idx: usize) -> usize {
+    let mut i = idx.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Nearest valid UTF-8 char boundary at or AFTER `idx` (never past the string's end).
+fn ceil_char_boundary(s: &str, idx: usize) -> usize {
+    let mut i = idx.min(s.len());
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+/// @param generation this call's ordinal (the caller increments a per-session-search
+///   counter each time the query changes) — used only for cancellation, unrelated to
+///   the requestId round-tripped back to JS for discarding stale results.
+/// @param own_messages_only restrict the scan to `type:"user"` events (the user's own
+///   messages), skipping assistant turns entirely — a cheaper, narrower scope than
+///   the full conversation.
+pub fn search_session_content(workspace_root: &str, session_ids: &[String], query: &str, own_messages_only: bool, generation: u64) -> String {
+    // A plain store, not fetch_max: semantically, every call IS the latest request,
+    // full stop — "the latest caller wins" is the actual rule, not "the highest number
+    // wins". fetch_max ratcheted this upward forever, so once ANY higher generation had
+    // ever been seen, a legitimately newer but lower-numbered request (e.g. after
+    // searchRequestId resets to 0 on a webview reload, while this native library and
+    // its process-lifetime static stay loaded) could never win again and would silently
+    // return zero matches — caught by a test failure whose real cause turned out to be
+    // exactly this, not test-order flakiness.
+    SEARCH_GENERATION.store(generation, Ordering::Relaxed);
+
+    let dir = match projects_dir(workspace_root) {
+        Some(d) => d,
+        None => return "[]".into(),
+    };
+    let needle = query.to_lowercase();
+    if needle.is_empty() {
+        return "[]".into();
+    }
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    for session_id in session_ids {
+        if SEARCH_GENERATION.load(Ordering::Relaxed) != generation {
+            break;   // superseded by a newer keystroke's search — stop wasted I/O
+        }
+        let path = dir.join(format!("{session_id}.jsonl"));
+        let file = match fs::File::open(&path) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            // Checked every line, not just every file: one large session shouldn't
+            // stall a supersede until its whole file is read.
+            if SEARCH_GENERATION.load(Ordering::Relaxed) != generation {
+                return serde_json::to_string(&results).unwrap_or_else(|_| "[]".into());
+            }
+            let line = match line {
+                Ok(l) if !l.is_empty() => l,
+                _ => continue,
+            };
+            let event: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if own_messages_only && event["type"].as_str() != Some("user") {
+                continue;
+            }
+
+            let mut texts: Vec<String> = Vec::new();
+            if let Some(content) = event["message"]["content"].as_str() {
+                texts.push(strip_ide_preamble(content));
+            } else if let Some(blocks) = event["message"]["content"].as_array() {
+                for b in blocks {
+                    if b["type"].as_str() == Some("text") {
+                        texts.push(strip_ide_preamble(b["text"].as_str().unwrap_or("")));
+                    }
+                }
+            }
+
+            let mut found: Option<String> = None;
+            for text in &texts {
+                // pos/needle.len() are byte offsets into text.to_lowercase(), NOT into
+                // `text` itself — case-folding some characters changes their UTF-8 byte
+                // length (e.g. Turkish İ, German ẞ), so a straight `text[pos..]` slice
+                // using the LOWERCASED string's offsets can land mid-character in the
+                // ORIGINAL string and panic (confirmed: "ẞẞxquilt" searching "quilt"
+                // panics with "byte index 5 is not a char boundary"). Across the JNI
+                // boundary a Rust panic is undefined behavior (unwinding into a JVM
+                // frame), not a catchable Java exception — this crashed the whole
+                // Eclipse process with no JVM crash dump and nothing in dmesg, exactly
+                // matching a real user report. Snapping start/end to the nearest valid
+                // char boundary in `text` (not truncating to the lowercased string,
+                // which would need re-deriving positions entirely) keeps the fix local
+                // and the snippet's casing exactly as the user typed it.
+                if let Some(pos) = text.to_lowercase().find(&needle) {
+                    let raw_start = pos.saturating_sub(40).min(text.len());
+                    let raw_end = (pos + needle.len() + 40).min(text.len());
+                    let start = floor_char_boundary(text, raw_start);
+                    let end = ceil_char_boundary(text, raw_end);
+                    found = Some(text[start..end].trim().to_string());
+                    break;
+                }
+            }
+
+            if let Some(snippet) = found {
+                results.push(serde_json::json!({
+                    "sessionId": session_id,
+                    "snippet": snippet,
+                }));
+                break;   // one match is enough — move to the next session
+            }
+        }
+    }
+
+    serde_json::to_string(&results).unwrap_or_else(|_| "[]".into())
 }
 
 // ---------------------------------------------------------------------------
@@ -1218,6 +1366,109 @@ mod tests {
             vec!["title-only stub", "real question text", "USER RENAMED TITLE"],
             "titles + last-activity order must match the PHP reader"
         );
+    }
+
+    /// Covers: a match on the first session found + snippet returned, no match on a
+    /// second, an id NOT in the search list skipped even though its file would match
+    /// (proving the caller-supplied subset is honored, not re-derived), and matching
+    /// is case-insensitive.
+    #[test]
+    fn search_session_content_finds_first_match_and_skips_others() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-search-home");
+        let root = r"C:\searchtest";
+        let dir = home.join(".claude").join("projects").join("C--searchtest");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("aaaa1111.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"talking about the quilt patch system"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+        )).unwrap();
+        fs::write(dir.join("bbbb2222.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"nothing relevant here"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+        )).unwrap();
+        // Would match too, but deliberately left out of the search list below.
+        fs::write(dir.join("cccc3333.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"QUILT also appears here"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let ids = vec!["aaaa1111".to_string(), "bbbb2222".to_string()];
+        let json = super::search_session_content(root, &ids, "quilt", false, 1);
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "only aaaa1111 matches within the requested subset: {json}");
+        assert_eq!(arr[0]["sessionId"].as_str().unwrap(), "aaaa1111");
+        assert!(arr[0]["snippet"].as_str().unwrap().to_lowercase().contains("quilt"));
+    }
+
+    /// A query that only appears in an assistant turn matches with the full-conversation
+    /// scope but not with own_messages_only — proving the scope actually excludes
+    /// assistant text rather than just being ignored.
+    #[test]
+    fn search_session_content_own_messages_only_excludes_assistant_text() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-search-own-home");
+        let root = r"C:\searchownt";
+        let dir = home.join(".claude").join("projects").join("C--searchownt");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("aaaa1111.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"please help me"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"the quilt patch system works like this"}]},"timestamp":"2026-07-01T10:00:05.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let ids = vec!["aaaa1111".to_string()];
+        let full = super::search_session_content(root, &ids, "quilt", false, 1);
+        let own_only = super::search_session_content(root, &ids, "quilt", true, 1);
+        let _ = fs::remove_dir_all(&home);
+
+        let full_v: serde_json::Value = serde_json::from_str(&full).unwrap();
+        assert_eq!(full_v.as_array().unwrap().len(), 1, "full-conversation scope finds the assistant match: {full}");
+        let own_v: serde_json::Value = serde_json::from_str(&own_only).unwrap();
+        assert_eq!(own_v.as_array().unwrap().len(), 0, "own_messages_only must not match assistant text: {own_only}");
+    }
+
+    /// Regression test for a real crash: certain characters (German ẞ, Turkish İ, …)
+    /// change UTF-8 byte length when lowercased, so a match position found via
+    /// text.to_lowercase().find() does not correspond to the same byte offset in the
+    /// ORIGINAL text — slicing the original at that offset can land mid-character and
+    /// panic ("byte index N is not a char boundary"). Across the JNI boundary that
+    /// panic is undefined behavior (an unwind into a JVM-owned native frame), which
+    /// crashed a live user's whole Eclipse process with no JVM crash dump and nothing
+    /// in dmesg — exactly the kind of failure that looks like it isn't ours. Confirmed
+    /// via a standalone repro before this test existed: "ẞẞxquilt" searching "quilt"
+    /// panicked at the exact line this function now guards.
+    #[test]
+    fn search_session_content_snippet_survives_case_folding_byte_length_change() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-search-unicode-home");
+        let root = r"C:\searchunicode";
+        let dir = home.join(".claude").join("projects").join("C--searchunicode");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        // ẞ (U+1E9E, LATIN CAPITAL LETTER SHARP S) lowercases to "ß" — same character
+        // count but a different UTF-8 byte length, which is what desynchronizes the
+        // lowercased string's match offset from the original string's byte layout.
+        fs::write(dir.join("aaaa1111.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"ẞẞxquilt talk"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let ids = vec!["aaaa1111".to_string()];
+        // Must not panic — that's the entire point of this test.
+        let json = super::search_session_content(root, &ids, "quilt", false, 1);
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "the match is still found despite the preceding multibyte characters: {json}");
+        assert!(arr[0]["snippet"].as_str().unwrap().to_lowercase().contains("quilt"));
     }
 
     /// Verified against the reference reader on 2026-07-10: the fixture below was
