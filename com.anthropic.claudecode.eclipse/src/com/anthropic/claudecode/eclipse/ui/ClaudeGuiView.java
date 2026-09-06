@@ -783,8 +783,9 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
      */
     private void pushTheme() {
         if (browser == null || browser.isDisposed() || !pageLoaded) return;
-        String mode = isDarkTheme() ? "dark" : "light";
-        String[] tabColors = findEditorAreaTabColors();
+        boolean isDark = isDarkTheme();
+        String mode = isDark ? "dark" : "light";
+        String[] tabColors = findEditorAreaTabColors(isDark);
         if (tabColors != null) lastEditorAreaTabColors = tabColors;
         // Falls back to the last successfully sampled colors (not the CSS default)
         // when the editor area is momentarily unreachable (e.g. zero editors open),
@@ -818,14 +819,21 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
      * type and manually disposing the Color objects it allocates — extra risk for a
      * value the widget already holds. Returns {@code {inactiveHex, activeHex}}, or
      * {@code null} if the editor area isn't in the model yet, isn't rendered as a
-     * CTabFolder (e.g. zero editors open), or the colors aren't readable.
+     * CTabFolder (e.g. zero editors open), the colors aren't readable, or (Cocoa only)
+     * the sampled active-tab color is implausible for {@code isDark} — see the
+     * Bugzilla-470168-class workaround inline below.
+     *
+     * @param isDark whether the workbench is currently in dark theme, per {@link
+     *               #isDarkTheme()} — passed in rather than re-derived so the Cocoa
+     *               sanity check compares against the same theme decision the caller
+     *               already made, not a possibly-racing second read.
      */
-    /** Set by {@link #findEditorAreaTabColors()} on every call — which step it got to,
-     *  for the debug-mode log line in {@link #pushTheme()} (this method itself only
-     *  returns null/non-null, so this is the only way to see WHERE it failed). */
+    /** Set by {@link #findEditorAreaTabColors(boolean)} on every call — which step it
+     *  got to, for the debug-mode log line in {@link #pushTheme()} (this method itself
+     *  only returns null/non-null, so this is the only way to see WHERE it failed). */
     private String lastTabColorsDiagnostic = "not yet run";
 
-    private String[] findEditorAreaTabColors() {
+    private String[] findEditorAreaTabColors(boolean isDark) {
         try {
             org.eclipse.ui.IWorkbench wb = org.eclipse.ui.PlatformUI.getWorkbench();
             org.eclipse.e4.ui.workbench.modeling.EModelService modelService =
@@ -882,8 +890,28 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                 lastTabColorsDiagnostic = "inactive=" + inactive + " active=" + active + " (disposed or null)";
                 return null;
             }
+            org.eclipse.swt.graphics.RGB activeRgb = active.getRGB();
+            // Cocoa-only workaround (Eclipse Bugzilla 470168 / 480788 / 559312): the E4 CSS
+            // theme engine reliably themes CTabFolder#getBackground() on every platform, but
+            // getSelectionBackground() has a long-standing gap on the Cocoa peer where the
+            // dark-theme rule for the SELECTED tab doesn't reach native paint code, so it comes
+            // back a plain white regardless of the workbench being in dark theme (confirmed live
+            // on macOS: inactive sampled correctly as #48484c while active came back #ffffff).
+            // GTK/Win32 don't have this gap, so this is deliberately scoped to macOS only.
+            // Detected as: sampled active-tab luminance falls on the opposite side of the dark
+            // threshold from the theme we already know we're in — e.g. white in dark mode.
+            // When that happens the sample is discarded (return null) in favor of the CSS
+            // default / last-known-good color already handled by pushTheme()'s caller.
+            if ("cocoa".equals(org.eclipse.swt.SWT.getPlatform())) {
+                boolean activeLooksDark = ColorUtils.luminance(activeRgb) < DARK_BG_LUMINANCE_THRESHOLD;
+                if (isDark != activeLooksDark) {
+                    lastTabColorsDiagnostic = "cocoa active-tab sample " + ColorUtils.toHex(activeRgb)
+                            + " implausible for mode=" + (isDark ? "dark" : "light") + " (Bugzilla 470168-class); discarded";
+                    return null;
+                }
+            }
             lastTabColorsDiagnostic = "ok";
-            return new String[]{ ColorUtils.toHex(inactive.getRGB()), ColorUtils.toHex(active.getRGB()) };
+            return new String[]{ ColorUtils.toHex(inactive.getRGB()), ColorUtils.toHex(activeRgb) };
         } catch (Exception e) {
             lastTabColorsDiagnostic = "threw " + e;
             return null;
