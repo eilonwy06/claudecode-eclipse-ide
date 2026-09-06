@@ -4,7 +4,24 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.1.20] — 2026-09-05 *(current)*
+## [3.1.21] — 2026-09-06 *(current)*
+
+### Added
+- **Scroll Lock can start switched on**, as a preference shared by the Claude Code and Claude Terminal views ([@jmoraleda](https://github.com/jmoraleda), PR #111).
+- **"Smart" Scroll Lock**, Claude Code view only: the lock still holds your place while you read, but sending a message, answering a card, and a new card arriving each jump you to the bottom ([@jmoraleda](https://github.com/jmoraleda), PR #111).
+
+### Changed
+- **New Session and Session History moved to the Eclipse view toolbar**. Renaming moved onto the tabs themselves: hover a tab for its pencil, or double-click its name, in both views ([@jmoraleda](https://github.com/jmoraleda), PR #112).
+- **Session History opens your pick in a new tab** instead of replacing the conversation you were in; `/resume` loads it into the current one instead ([@jmoraleda](https://github.com/jmoraleda), PR #112).
+- **Escape closes the Session History panel** ([@jmoraleda](https://github.com/jmoraleda), PR #112).
+
+### Fixed
+- **On Linux, macOS and FreeBSD the plugin loads its native library straight from the bundle**, instead of quietly falling back to a temporary copy because every platform was being handed the Windows one.
+- Minor UI/UX improvements.
+
+---
+
+## [3.1.20] — 2026-09-05
 
 ### Added
 - **A timestamp above each message you send**, in local time, in live conversations and in history alike — off by default, in Preferences ▸ Claude Code ▸ Miscellaneous Configuration ([@jmoraleda](https://github.com/jmoraleda), PR #107).
