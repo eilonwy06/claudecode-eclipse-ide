@@ -30,6 +30,12 @@
  */
 /** @type {Tab[]} */
 let tabs = [], activeId = null, tabSeq = 0;
+// id of the tab currently mid-rename (double-clicked .tt), or null. renderTabs() runs
+// on every tab add/remove/reorder/retitle — including a BACKGROUND tab's stream
+// naming itself — so a bare rebuild would blow away whatever's typed into another
+// tab's input mid-edit. Tracked here so renderTabs() can re-create that one input
+// (with its value/selection preserved) instead of just losing it.
+let editingTabId = null;
 // Defaults a NEW conversation starts with (not inherited from the last-viewed tab).
 const DEFAULT_EFFORT_IDX = 2;      // "high"
 const DEFAULT_THINKING = false;    // thinking off
@@ -120,7 +126,6 @@ function switchTab(id) {
   const ar = activeRoot && activeRoot();
   if (ar) ar.activeTabId = id;
   if (t) {
-    document.getElementById('convo-title').textContent = t.title;
     applyTabSettings(t);   // restore this conversation's model/effort/thinking
     input.value = t.draft || '';                                    // restore this tab's draft
     input.style.height = 'auto';
@@ -228,16 +233,28 @@ function moveTab(fromId, toId, after) {
 }
 function renderTabs() {
   const c = document.getElementById('tabs'); if (!c) return;
+  // Snapshot the in-progress edit (if any) so the rebuild below can restore it —
+  // the input element itself is about to be destroyed along with the rest of #tabs.
+  let editSnapshot = null;
+  if (editingTabId) {
+    const liveInp = c.querySelector('.tab.editing .title-input');
+    if (liveInp) editSnapshot = { value: liveInp.value, selStart: liveInp.selectionStart, selEnd: liveInp.selectionEnd };
+  }
   c.innerHTML = '';
   // Only the active root's conversations. The array stays flat and globally ordered,
   // so a filtered view keeps each root's tabs in the order the user dragged them into.
   tabs.filter(t => t.rootId === activeRootId).forEach(t => {
-    const el = document.createElement('div'); el.className = 'tab' + (t.id === activeId ? ' active' : '');
-    el.draggable = true; el.dataset.id = t.id;
+    const editing = t.id === editingTabId;
+    const el = document.createElement('div'); el.className = 'tab' + (t.id === activeId ? ' active' : '') + (editing ? ' editing' : '');
+    el.draggable = !editing;   // a draggable ancestor steals mousedown-drag from an input's own text selection
+    el.dataset.id = t.id;
     el.innerHTML = '<span class="ti">' + ICONS.SUNBURST + '</span><span class="tt"></span><span class="tab-close">' + ICONS.X + '</span>';
-    el.querySelector('.tt').textContent = t.title;
+    const tt = el.querySelector('.tt');
     el.title = t.title;
-    el.onclick = (e) => { if (e.target.closest('.tab-close')) closeTab(t.id); else switchTab(t.id); };
+    el.onclick = (e) => { if (e.target.closest('.tab-close')) closeTab(t.id); else if (!editing) switchTab(t.id); };
+    tt.ondblclick = (e) => { e.stopPropagation(); startTitleEdit(t.id); };
+    if (editing) startTabEditInput(el, tt, t, editSnapshot);
+    else tt.textContent = t.title;
     // Drag-to-reorder with a drop-line indicator (best-practice: line before/after).
     el.addEventListener('dragstart', (e) => {
       dragTabId = t.id; el.classList.add('dragging');
@@ -279,57 +296,64 @@ function renderTabs() {
 function setTabTitle(t, raw) {
   const title = ((stripContext(raw) || raw || '').trim().slice(0, 40)) || 'Claude Code';
   t.title = title; t.titled = true;
-  if (t.id === activeId) document.getElementById('convo-title').textContent = title;
   renderTabs();
 }
-function startTitleEdit() {
-  const t = activeTab(); if (!t) return;
-  const wrap = document.getElementById('title-wrap'); if (!wrap) return;
-  // Already editing → clicking the input again does nothing (no re-open, no clone).
-  if (wrap.querySelector('.title-input')) return;
-  const titleEl = document.getElementById('convo-title');
-  const editBtn = document.getElementById('title-edit');
-  if (!titleEl || !editBtn) return;
-  const curTitle = t.title || 'Claude Code';
-  titleEl.style.display = 'none';
-  editBtn.style.display = 'none';
+/* Renders the <input> for the tab currently being renamed, called from renderTabs()
+ * both on first open (resume === null) and on every subsequent rebuild while the edit
+ * is still open (resume carries over the value/selection a rebuild would otherwise
+ * wipe — see editingTabId's comment). */
+function startTabEditInput(el, tt, t, resume) {
   const inp = document.createElement('input');
-  inp.type = 'text'; inp.className = 'title-input'; inp.value = curTitle;
-  wrap.appendChild(inp);
-  // Size the field to its content via a hidden mirror span (inputs don't shrink-wrap).
-  // border-box width = text width + the space the pencil used to take (gap+icon ≈ 19px),
-  // which (a) matches the hovered pill's width and (b) is the allowance that keeps the
-  // text from ever being clipped — the input's own padding/border overhead lives inside it.
-  const EDIT_ALLOWANCE = 20;
-  const meas = document.createElement('span');
-  meas.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-size:13px;font-weight:600;';
-  document.body.appendChild(meas);
-  const sizer = () => { meas.textContent = inp.value || ' '; inp.style.width = Math.min(324, meas.offsetWidth + EDIT_ALLOWANCE) + 'px'; };
-  inp.oninput = sizer; sizer();
-  inp.focus(); inp.select();
+  inp.type = 'text'; inp.className = 'title-input'; inp.value = resume ? resume.value : (t.title || 'Claude Code');
+  tt.replaceWith(inp);
+  inp.focus();
+  if (resume) inp.setSelectionRange(resume.selStart, resume.selEnd);
+  else inp.select();
   let done = false;
   function finish(save) {
     if (done) return; done = true;
     const newTitle = inp.value.trim() || 'Claude Code';
-    inp.remove(); meas.remove();
-    titleEl.style.display = '';
-    editBtn.style.display = '';
-    if (save && newTitle !== curTitle) {
+    editingTabId = null;
+    if (save && newTitle !== t.title) {
       t.title = newTitle; t.titled = true;
-      titleEl.textContent = newTitle;
-      renderTabs();
       if (t.sessionId && window._renameSession) window._renameSession(t.sessionId, newTitle);
     }
+    renderTabs();
   }
-  inp.onclick = (e) => e.stopPropagation();   // don't bubble to the wrap's onclick
+  inp.onclick = (e) => e.stopPropagation();   // don't bubble to the tab's onclick (switchTab)
   inp.onblur = () => finish(true);
   inp.onkeydown = (e) => {
+    e.stopPropagation();   // don't let Enter/Escape reach anything else while renaming
     if (e.key === 'Enter') { e.preventDefault(); finish(true); }
     else if (e.key === 'Escape') { e.preventDefault(); inp.onblur = null; finish(false); }
   };
 }
+function startTitleEdit(tabId) {
+  const t = tabById(tabId); if (!t) return;
+  if (editingTabId === tabId) return;   // already editing this tab → no-op
+  editingTabId = tabId;
+  renderTabs();
+}
 /* New conversation in the ACTIVE root — a new FOLDER is newRootDirectory(). */
 function newSession() { closeMenus(); createTab({ rootId: activeRootId }); input.focus(); }
+
+/* True when t has no conversation AND nothing typed/attached that a reuse would lose —
+ * checked before silently repurposing a tab instead of opening a new one (see
+ * loadHistory's toolbar branch in history.js). Active-tab only: reads the composer live
+ * from #input rather than t.draft, which is only synced on switchTab (see its own
+ * comment) and so can be stale for the tab currently on screen.
+ *
+ * t.sessionId === '' alone is NOT enough — /help echoes a user bubble + a system message
+ * without ever sending anything to the CLI (slash.js), and /clear echoes its own command
+ * bubble back into an emptied pane, so both leave a sessionId-less tab with real content
+ * on screen. addUserMessage()/addSystem() both append into t.pane, and createTab() seeds
+ * it with WELCOME_HTML's placeholder and nothing else — so the pane itself, not sessionId,
+ * is what actually answers "is there something here a reuse would silently discard". */
+function isTabEmpty(t) {
+  return !!t && t === activeTab() && !t.sessionId && !t.streaming && !t.pendingCard
+      && !(t.images && t.images.length) && !input.value.trim()
+      && !t.pane.querySelector('.turn');
+}
 
 /* /clear — start a fresh conversation IN PLACE. VSCode stays on the tab the
    command was invoked from rather than opening another one, so the tab, its
@@ -362,7 +386,6 @@ function clearSession() {
   t.followTail = true; t.scrollTop = 0;
   followTail = true;
   if (typeof updateJumpToLatest === 'function') updateJumpToLatest();
-  document.getElementById('convo-title').textContent = t.title;
   renderTabs();
   if (typeof renderPendingImages === 'function') renderPendingImages();
   if (typeof syncComposer === 'function') syncComposer();

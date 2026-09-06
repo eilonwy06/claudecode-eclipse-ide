@@ -7,6 +7,7 @@ const SLASH_COMMANDS = [
   { cmd: '/clear',   desc: 'Start a new session (tab)' },
   { cmd: '/compact', desc: 'Clear conversation history but keep a summary in context' },
   { cmd: '/model',   desc: 'Switch model' },
+  { cmd: '/resume',  desc: 'Open session history' },
   { cmd: '/rewind',  desc: 'Restore code and fork from an earlier message' },
   { cmd: '/help',    desc: 'Show available commands' },
 ];
@@ -92,6 +93,15 @@ function handleSlashCommand(text) {
   if (cmd === '/advisor') { openAdvisorCard(text); return true; }
   if (cmd === '/model') { handleModelCommand(text); return true; }
   if (cmd === '/rewind') { openRewindDialog(); return true; }      // deliberately unchanged
+  // Opens the SAME history panel the toolbar's Session History button does, but via
+  // openHistoryForResume (not openHistoryFromToolbar) — picking a session here loads
+  // it into the CURRENT tab in place, matching the CLI's own /resume typed at an
+  // existing Claude Terminal prompt (see history.js's historyResumeInPlace). The CLI's
+  // real /resume is an interactive picker (local-jsx) that only exists in its terminal
+  // TUI; this headless process (-p --input-format stream-json) has no such thing to
+  // send it to, same reason /model is reproduced locally above rather than forwarded.
+  // No echo: nothing was actually sent, just a panel opened, like /rewind.
+  if (cmd === '/resume') { openHistoryForResume(); return true; }
   if (cmd === '/help') {
     const ht = activeTab();
     addUserMessage(text, null, null, null, nowIso());
