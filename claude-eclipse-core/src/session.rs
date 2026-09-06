@@ -347,7 +347,15 @@ static SEARCH_GENERATION: AtomicU64 = AtomicU64::new(0);
 ///   messages), skipping assistant turns entirely — a cheaper, narrower scope than
 ///   the full conversation.
 pub fn search_session_content(workspace_root: &str, session_ids: &[String], query: &str, own_messages_only: bool, generation: u64) -> String {
-    SEARCH_GENERATION.fetch_max(generation, Ordering::Relaxed);
+    // A plain store, not fetch_max: semantically, every call IS the latest request,
+    // full stop — "the latest caller wins" is the actual rule, not "the highest number
+    // wins". fetch_max ratcheted this upward forever, so once ANY higher generation had
+    // ever been seen, a legitimately newer but lower-numbered request (e.g. after
+    // searchRequestId resets to 0 on a webview reload, while this native library and
+    // its process-lifetime static stay loaded) could never win again and would silently
+    // return zero matches — caught by a test failure whose real cause turned out to be
+    // exactly this, not test-order flakiness.
+    SEARCH_GENERATION.store(generation, Ordering::Relaxed);
 
     let dir = match projects_dir(workspace_root) {
         Some(d) => d,
@@ -1350,10 +1358,7 @@ mod tests {
 
         set_home(&home);
         let ids = vec!["aaaa1111".to_string(), "bbbb2222".to_string()];
-        // Each test uses its own generation band, well clear of the others', so the
-        // shared process-wide SEARCH_GENERATION ratchet (parallel test threads) can't
-        // make one test's call see itself as superseded by another's.
-        let json = super::search_session_content(root, &ids, "quilt", false, 1_000);
+        let json = super::search_session_content(root, &ids, "quilt", false, 1);
         let _ = fs::remove_dir_all(&home);
 
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1382,9 +1387,8 @@ mod tests {
 
         set_home(&home);
         let ids = vec!["aaaa1111".to_string()];
-        // Own generation band — see the comment in the sibling test above.
-        let full = super::search_session_content(root, &ids, "quilt", false, 2_000);
-        let own_only = super::search_session_content(root, &ids, "quilt", true, 2_000);
+        let full = super::search_session_content(root, &ids, "quilt", false, 1);
+        let own_only = super::search_session_content(root, &ids, "quilt", true, 1);
         let _ = fs::remove_dir_all(&home);
 
         let full_v: serde_json::Value = serde_json::from_str(&full).unwrap();
