@@ -340,6 +340,27 @@ pub fn list_sessions(workspace_root: &str) -> String {
 
 static SEARCH_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// Nearest valid UTF-8 char boundary at or BEFORE `idx` (never past it) — a portable
+/// stand-in for the standard library's floor_char_boundary, which is still
+/// nightly-only. Used to safely widen/narrow a byte-offset window computed against a
+/// DIFFERENT string's positions (see search_session_content's snippet extraction).
+fn floor_char_boundary(s: &str, idx: usize) -> usize {
+    let mut i = idx.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Nearest valid UTF-8 char boundary at or AFTER `idx` (never past the string's end).
+fn ceil_char_boundary(s: &str, idx: usize) -> usize {
+    let mut i = idx.min(s.len());
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
 /// @param generation this call's ordinal (the caller increments a per-session-search
 ///   counter each time the query changes) — used only for cancellation, unrelated to
 ///   the requestId round-tripped back to JS for discarding stale results.
@@ -410,9 +431,24 @@ pub fn search_session_content(workspace_root: &str, session_ids: &[String], quer
 
             let mut found: Option<String> = None;
             for text in &texts {
+                // pos/needle.len() are byte offsets into text.to_lowercase(), NOT into
+                // `text` itself — case-folding some characters changes their UTF-8 byte
+                // length (e.g. Turkish İ, German ẞ), so a straight `text[pos..]` slice
+                // using the LOWERCASED string's offsets can land mid-character in the
+                // ORIGINAL string and panic (confirmed: "ẞẞxquilt" searching "quilt"
+                // panics with "byte index 5 is not a char boundary"). Across the JNI
+                // boundary a Rust panic is undefined behavior (unwinding into a JVM
+                // frame), not a catchable Java exception — this crashed the whole
+                // Eclipse process with no JVM crash dump and nothing in dmesg, exactly
+                // matching a real user report. Snapping start/end to the nearest valid
+                // char boundary in `text` (not truncating to the lowercased string,
+                // which would need re-deriving positions entirely) keeps the fix local
+                // and the snippet's casing exactly as the user typed it.
                 if let Some(pos) = text.to_lowercase().find(&needle) {
-                    let start = text[..pos].char_indices().rev().nth(39).map(|(i, _)| i).unwrap_or(0);
-                    let end = (pos + needle.len() + 40).min(text.len());
+                    let raw_start = pos.saturating_sub(40).min(text.len());
+                    let raw_end = (pos + needle.len() + 40).min(text.len());
+                    let start = floor_char_boundary(text, raw_start);
+                    let end = ceil_char_boundary(text, raw_end);
                     found = Some(text[start..end].trim().to_string());
                     break;
                 }
@@ -1395,6 +1431,44 @@ mod tests {
         assert_eq!(full_v.as_array().unwrap().len(), 1, "full-conversation scope finds the assistant match: {full}");
         let own_v: serde_json::Value = serde_json::from_str(&own_only).unwrap();
         assert_eq!(own_v.as_array().unwrap().len(), 0, "own_messages_only must not match assistant text: {own_only}");
+    }
+
+    /// Regression test for a real crash: certain characters (German ẞ, Turkish İ, …)
+    /// change UTF-8 byte length when lowercased, so a match position found via
+    /// text.to_lowercase().find() does not correspond to the same byte offset in the
+    /// ORIGINAL text — slicing the original at that offset can land mid-character and
+    /// panic ("byte index N is not a char boundary"). Across the JNI boundary that
+    /// panic is undefined behavior (an unwind into a JVM-owned native frame), which
+    /// crashed a live user's whole Eclipse process with no JVM crash dump and nothing
+    /// in dmesg — exactly the kind of failure that looks like it isn't ours. Confirmed
+    /// via a standalone repro before this test existed: "ẞẞxquilt" searching "quilt"
+    /// panicked at the exact line this function now guards.
+    #[test]
+    fn search_session_content_snippet_survives_case_folding_byte_length_change() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-search-unicode-home");
+        let root = r"C:\searchunicode";
+        let dir = home.join(".claude").join("projects").join("C--searchunicode");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        // ẞ (U+1E9E, LATIN CAPITAL LETTER SHARP S) lowercases to "ß" — same character
+        // count but a different UTF-8 byte length, which is what desynchronizes the
+        // lowercased string's match offset from the original string's byte layout.
+        fs::write(dir.join("aaaa1111.jsonl"), concat!(
+            r#"{"type":"user","message":{"role":"user","content":"ẞẞxquilt talk"},"timestamp":"2026-07-01T10:00:00.000Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let ids = vec!["aaaa1111".to_string()];
+        // Must not panic — that's the entire point of this test.
+        let json = super::search_session_content(root, &ids, "quilt", false, 1);
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "the match is still found despite the preceding multibyte characters: {json}");
+        assert!(arr[0]["snippet"].as_str().unwrap().to_lowercase().contains("quilt"));
     }
 
     /// Verified against the reference reader on 2026-07-10: the fixture below was
