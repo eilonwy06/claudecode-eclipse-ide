@@ -154,6 +154,8 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     private org.eclipse.jface.util.IPropertyChangeListener historyShowTimestampsPrefListener;
     // Live-applies PREF_HIDE_ROOT_DIRECTORIES_ROW changes without a restart or page reload.
     private org.eclipse.jface.util.IPropertyChangeListener hideRootRowPrefListener;
+    // Live-applies PREF_SMART_SCROLL_LOCK changes without a restart or page reload.
+    private org.eclipse.jface.util.IPropertyChangeListener smartScrollLockPrefListener;
     // Re-pushes light/dark to the webview when the Eclipse workbench theme changes.
     private org.eclipse.jface.util.IPropertyChangeListener themeChangeListener;
     // Re-pushes the right-click menu's key hints when the user's bindings change.
@@ -226,6 +228,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         registerStatusPrefListener();
         registerHistoryShowTimestampsPrefListener();
         registerHideRootRowPrefListener();
+        registerSmartScrollLockPrefListener();
         registerThemeListener();
         registerBindingListener();
         registerEditHandlers();
@@ -584,6 +587,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             String queuedRoot = pendingRootPath;
             if (queuedRoot != null) { pendingRootPath = null; openRootDirectory(queuedRoot); }
             pushScrollLock();        // the toolbar toggle outlives the page — re-apply it
+            pushSmartScrollLock();   // ditto for the Smart Scroll Lock preference
             for (int ms : new int[]{50, 200, 500, 1000, 1500}) {
                 Display.getCurrent().timerExec(ms, this::activateInput);
                 // Re-push the theme too: the root composite's CSS-themed background may not
@@ -696,6 +700,10 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         scrollLockAction.setToolTipText("Scroll Lock");
         scrollLockAction.setImageDescriptor(Activator.getImageDescriptor(
                 com.anthropic.claudecode.eclipse.Constants.IMG_SCROLL_LOCK));
+        // A configured default for a newly created view instance (Preferences > Claude
+        // Code), not a remembered last state — every new view starts from this setting.
+        scrollLockAction.setChecked(Activator.getDefault().getPreferenceStore()
+                .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SCROLL_LOCK_DEFAULT));
         toolBar.add(scrollLockAction);
     }
 
@@ -717,6 +725,17 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         if (browser == null || browser.isDisposed() || !pageLoaded) return;
         boolean locked = scrollLockAction != null && scrollLockAction.isChecked();
         browser.execute("window.onScrollLock && window.onScrollLock(" + locked + ")");
+    }
+
+    /** Pushes the Smart Scroll Lock preference into the webview. Called on page load
+     *  AND on every live Preferences change (see {@link #registerSmartScrollLockPrefListener()}) —
+     *  a Preferences dialog OK doesn't reload the page, so without the live push a mid-session
+     *  toggle wouldn't take effect until the view was recreated. */
+    private void pushSmartScrollLock() {
+        if (browser == null || browser.isDisposed() || !pageLoaded) return;
+        boolean smart = Activator.getDefault().getPreferenceStore()
+                .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_SMART_SCROLL_LOCK);
+        browser.execute("window.onSmartScrollLock && window.onSmartScrollLock(" + smart + ")");
     }
 
     /** Resolves installed-vs-latest CLI versions and pushes the result to the webview. */
@@ -1130,6 +1149,16 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             Display.getDefault().asyncExec(this::pushHideRootDirectoriesRow);
         };
         Activator.getDefault().getPreferenceStore().addPropertyChangeListener(hideRootRowPrefListener);
+    }
+
+    /** Live-applies a Preferences change to Smart Scroll Lock without needing a page
+     *  reload — mirrors {@link #registerStatusPrefListener()}. */
+    private void registerSmartScrollLockPrefListener() {
+        smartScrollLockPrefListener = event -> {
+            if (!com.anthropic.claudecode.eclipse.Constants.PREF_SMART_SCROLL_LOCK.equals(event.getProperty())) return;
+            Display.getDefault().asyncExec(this::pushSmartScrollLock);
+        };
+        Activator.getDefault().getPreferenceStore().addPropertyChangeListener(smartScrollLockPrefListener);
     }
 
     /**
@@ -2610,6 +2639,11 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(hideRootRowPrefListener); }
             catch (Throwable ignored) {}
             hideRootRowPrefListener = null;
+        }
+        if (smartScrollLockPrefListener != null) {
+            try { Activator.getDefault().getPreferenceStore().removePropertyChangeListener(smartScrollLockPrefListener); }
+            catch (Throwable ignored) {}
+            smartScrollLockPrefListener = null;
         }
         if (themeChangeListener != null) {
             try {

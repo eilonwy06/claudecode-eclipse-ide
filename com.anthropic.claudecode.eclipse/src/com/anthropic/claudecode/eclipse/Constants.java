@@ -26,6 +26,24 @@ public final class Constants {
     public static final String PREF_TERMINAL_POSITION = "terminalPosition";
     public static final String PREF_DEBUG_MODE = "debugMode";
 
+    /** Initial state of the Scroll Lock toolbar toggle for a newly created view instance —
+     *  a configured default, not a remembered last state. Shared by both the Claude Code
+     *  (GUI) view (ClaudeGuiView#createToolBar, one view-wide toggle) and the Claude
+     *  Terminal view (ClaudeCliView#configureActionBars, applied to each new tab's own
+     *  TerminalSession — see the per-tab isScrollLock/setScrollLock there). */
+    public static final String PREF_SCROLL_LOCK_DEFAULT = "scrollLockDefault";
+
+    /** In the Claude Code (GUI) view, while Scroll Lock is armed, still jump to the bottom
+     *  for the user's OWN deliberate actions (sending a message, answering an approval or
+     *  question card) and when Claude raises a NEW approval or question card, rather than
+     *  holding through those too. A card timing out on its own is NOT one of these — that
+     *  was never forced even before Scroll Lock existed. Off matches the plugin's current
+     *  upstream behavior.
+     *
+     *  <p>GUI view only by design — Terminal's Scroll Lock is TM Terminal's own viewport
+     *  freeze, with no "user sent input" seam to hook a bypass onto. */
+    public static final String PREF_SMART_SCROLL_LOCK = "smartScrollLock";
+
     /** Set once the user dismisses the Ctrl+Click hint bar in the Claude Terminal view (per-workspace). */
     public static final String PREF_CLI_CTRLCLICK_HINT_DISMISSED = "cliCtrlClickHintDismissed";
 

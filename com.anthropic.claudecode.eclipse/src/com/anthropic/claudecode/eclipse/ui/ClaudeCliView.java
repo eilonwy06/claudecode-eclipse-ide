@@ -538,6 +538,12 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         };
         scrollLockAction.setToolTipText("Scroll Lock");
         scrollLockAction.setImageDescriptor(Activator.getImageDescriptor(Constants.IMG_SCROLL_LOCK));
+        // A configured default for a newly created view instance (Preferences > Claude
+        // Code; shared with ClaudeGuiView#createToolBar), not a remembered last state.
+        // Every session created afterwards (openNewSession) reads THIS action's checked
+        // state, not the preference directly, so setting it here alone covers them all.
+        scrollLockAction.setChecked(Activator.getDefault().getPreferenceStore()
+                .getBoolean(Constants.PREF_SCROLL_LOCK_DEFAULT));
         toolBar.add(scrollLockAction);
     }
 
