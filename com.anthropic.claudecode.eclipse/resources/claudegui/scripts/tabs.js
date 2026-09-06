@@ -238,9 +238,19 @@ function renderTabs() {
   let editSnapshot = null;
   if (editingTabId) {
     const liveInp = c.querySelector('.tab.editing .title-input');
-    if (liveInp) editSnapshot = { value: liveInp.value, selStart: liveInp.selectionStart, selEnd: liveInp.selectionEnd };
+    if (liveInp) {
+      editSnapshot = { value: liveInp.value, selStart: liveInp.selectionStart, selEnd: liveInp.selectionEnd };
+      // Detach commit-on-blur BEFORE the rebuild destroys this input. Browsers disagree
+      // on whether removing a focused element fires blur at all, so leaving it attached
+      // makes an unrelated rebuild (a BACKGROUND tab naming itself mid-stream) sometimes
+      // commit and close the edit and sometimes not — the exact "sometimes it closes,
+      // sometimes it doesn't" inconsistency. The edit is being restored below, not ended.
+      liveInp.onblur = null;
+    }
   }
   c.innerHTML = '';
+  // The restored input, focused only once it is actually in the document — see below.
+  let editInput = null;
   // Only the active root's conversations. The array stays flat and globally ordered,
   // so a filtered view keeps each root's tabs in the order the user dragged them into.
   tabs.filter(t => t.rootId === activeRootId).forEach(t => {
@@ -248,12 +258,26 @@ function renderTabs() {
     const el = document.createElement('div'); el.className = 'tab' + (t.id === activeId ? ' active' : '') + (editing ? ' editing' : '');
     el.draggable = !editing;   // a draggable ancestor steals mousedown-drag from an input's own text selection
     el.dataset.id = t.id;
-    el.innerHTML = '<span class="ti">' + ICONS.SUNBURST + '</span><span class="tt"></span><span class="tab-close">' + ICONS.X + '</span>';
+    // Rename + close share one action group, the same shape (and 2px gap) the history
+    // list's own row actions use — see .tab-actions in layout.css for why they can't
+    // just be siblings of the title.
+    el.innerHTML = '<span class="ti">' + ICONS.SUNBURST + '</span><span class="tt"></span>'
+      + '<span class="tab-actions">'
+      +   '<span class="tab-edit" title="Rename">' + ICONS.PENCIL + '</span>'
+      +   '<span class="tab-close">' + ICONS.X + '</span>'
+      + '</span>';
     const tt = el.querySelector('.tt');
     el.title = t.title;
-    el.onclick = (e) => { if (e.target.closest('.tab-close')) closeTab(t.id); else if (!editing) switchTab(t.id); };
+    // Routed here rather than as the pencil's own handler, for the same reason .tab-close
+    // is: one listener on the tab owns every click inside it, so there is a single place
+    // that decides what a click on this tab means.
+    el.onclick = (e) => {
+      if (e.target.closest('.tab-close')) closeTab(t.id);
+      else if (e.target.closest('.tab-edit')) startTitleEdit(t.id);
+      else if (!editing) switchTab(t.id);
+    };
     tt.ondblclick = (e) => { e.stopPropagation(); startTitleEdit(t.id); };
-    if (editing) startTabEditInput(el, tt, t, editSnapshot);
+    if (editing) editInput = startTabEditInput(el, tt, t, editSnapshot);
     else tt.textContent = t.title;
     // Drag-to-reorder with a drop-line indicator (best-practice: line before/after).
     el.addEventListener('dragstart', (e) => {
@@ -284,6 +308,17 @@ function renderTabs() {
     });
     c.appendChild(el);
   });
+  // Focus the rename field only NOW, once its tab is actually in the document.
+  // focus() on a detached element is a no-op, so doing this inside the loop (where the
+  // tab is still being built) left the box unfocused: you had to click it before typing,
+  // and because it had never been focused it never fired blur either, which is what made
+  // clicking away sometimes end the edit and sometimes not. Same ordering as
+  // startHistoryRename in history.js, which appends to a live element and then focuses.
+  if (editInput) {
+    editInput.focus();
+    if (editSnapshot) editInput.setSelectionRange(editSnapshot.selStart, editSnapshot.selEnd);
+    else editInput.select();
+  }
   // Scroll the active tab into view so a newly created session (off the right edge
   // on a narrow view) is always reachable.
   const a = c.querySelector('.tab.active');
@@ -301,14 +336,15 @@ function setTabTitle(t, raw) {
 /* Renders the <input> for the tab currently being renamed, called from renderTabs()
  * both on first open (resume === null) and on every subsequent rebuild while the edit
  * is still open (resume carries over the value/selection a rebuild would otherwise
- * wipe — see editingTabId's comment). */
+ * wipe — see editingTabId's comment). Returns the input WITHOUT focusing it: the tab
+ * it lives in is still detached at this point, so renderTabs() does that after append.
+ *
+ * Dismissal matches startHistoryRename (history.js) exactly, so the two renames in this
+ * app behave identically: Enter commits, Escape reverts, clicking away commits. */
 function startTabEditInput(el, tt, t, resume) {
   const inp = document.createElement('input');
   inp.type = 'text'; inp.className = 'title-input'; inp.value = resume ? resume.value : (t.title || 'Claude Code');
   tt.replaceWith(inp);
-  inp.focus();
-  if (resume) inp.setSelectionRange(resume.selStart, resume.selEnd);
-  else inp.select();
   let done = false;
   function finish(save) {
     if (done) return; done = true;
@@ -320,13 +356,19 @@ function startTabEditInput(el, tt, t, resume) {
     }
     renderTabs();
   }
-  inp.onclick = (e) => e.stopPropagation();   // don't bubble to the tab's onclick (switchTab)
+  // Both stopped, same as startHistoryRename: click so it never reaches the tab's own
+  // onclick (switchTab), and mousedown so a drag inside the field selects TEXT instead of
+  // being claimed by the tab strip's drag-to-reorder — the tab is already draggable=false
+  // while editing, but stopping it here is what makes that independent of this one.
+  inp.onclick = (e) => e.stopPropagation();
+  inp.onmousedown = (e) => e.stopPropagation();
   inp.onblur = () => finish(true);
   inp.onkeydown = (e) => {
     e.stopPropagation();   // don't let Enter/Escape reach anything else while renaming
     if (e.key === 'Enter') { e.preventDefault(); finish(true); }
     else if (e.key === 'Escape') { e.preventDefault(); inp.onblur = null; finish(false); }
   };
+  return inp;
 }
 function startTitleEdit(tabId) {
   const t = tabById(tabId); if (!t) return;

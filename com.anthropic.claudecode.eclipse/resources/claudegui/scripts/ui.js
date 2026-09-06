@@ -59,26 +59,26 @@ function toggleMenu(id, anchor) {
    below) is the closest approximation to "under those buttons" available without Java
    pushing the toolbar's actual screen coordinates across the bridge — not true
    anchoring, just a fixed spot that reads as coming from up there.
-   No openAnchor is set (there's nothing to re-anchor to): clampOpenMenu's anchorless
-   branch already keeps a fixed-position menu on-screen through a resize on its own. */
+   No openAnchor is set (there's nothing to re-anchor to) — clampOpenMenu re-runs THIS
+   instead, keyed off the data-fixed-top marker set below. */
 function positionMenuFixed(menu, rightGap) {
   if (!menu) return;
   const mw = menu.offsetWidth;
-  const left = Math.max(8, window.innerWidth - mw - (rightGap != null ? rightGap : 8));
-  // The native toolbar button that opens this (Eclipse view toolbar's "Session
-  // history") sits directly above the webview, at the SAME screen level as #toolbar
-  // (the tab strip) — not above it. So the panel drops from #toolbar's TOP edge,
-  // reading as "right below the button", rather than clearing the tab strip's own
-  // 35px height first. #update-banner sits below #toolbar and only shows when the
-  // installed CLI is outdated; on those days the panel would otherwise land on top
-  // of it, so it takes over as the anchor while shown. Read live, not hardcoded, so
-  // the banner appearing/disappearing still clears correctly.
-  const banner = document.getElementById('update-banner');
-  const bannerShown = banner && banner.classList.contains('show');
-  const toolbar = document.getElementById('toolbar');
-  const top = bannerShown ? banner.getBoundingClientRect().bottom + 6
-    : (toolbar ? toolbar.getBoundingClientRect().top : 8);
-  menu.style.left = left + 'px'; menu.style.top = top + 'px';
+  const gap = rightGap != null ? rightGap : 8;
+  const left = Math.max(8, window.innerWidth - mw - gap);
+  // The very top edge of the page, NOT the top of #toolbar or any other in-page row.
+  // The button that opens this is in Eclipse's own view toolbar, ABOVE the entire
+  // webview, so the panel should read as hanging straight off it. Anchoring to a row
+  // inside the page instead started the panel below whichever chrome rows happened to
+  // be visible (#supertab-row, #cwd-row) — moving it for reasons that have nothing to
+  // do with where its button is. As an overlay it just covers those rows, and
+  // #update-banner along with them, which is why the banner needs no special case here.
+  // The reset in tokens.css zeroes the body margin, so #app (this menu's offset parent)
+  // starts at the viewport's own origin and 0 really is the top edge.
+  // Remembered so clampOpenMenu can re-run this on resize rather than falling into its
+  // generic anchorless clamp, whose 8px minimum would nudge the panel back down.
+  menu.dataset.fixedTop = String(gap);
+  menu.style.left = left + 'px'; menu.style.top = '0px';
 }
 
 // Disable the browser right-click context menu (no "Inspect element" in the plugin).
@@ -107,11 +107,30 @@ function openLinkExternally(e) {
 document.addEventListener('click', openLinkExternally, true);
 document.addEventListener('auxclick', (e) => { if (e.button === 1) openLinkExternally(e); }, true);
 
+/* Where the pointer gesture in progress STARTED. A click event's target is the nearest
+   common ancestor of its mousedown and its mouseup, so a drag that begins inside an open
+   menu and ends outside it reports a target OUTSIDE the menu — indistinguishable, to the
+   close-on-click-outside rule below, from a real click outside. That is what closed the
+   whole history panel when you pressed inside its rename field and drag-selected past the
+   field's edge before releasing.
+   Capture phase, so it is recorded before anything can stopPropagation() it — the history
+   rename input does exactly that on mousedown (see startHistoryRename). */
+let gestureStartTarget = null;
+document.addEventListener('mousedown', (e) => { gestureStartTarget = e.target; }, true);
+
 document.addEventListener('click', (e) => {
+  // Consumed here, so a later click carrying no mousedown of its own (a keyboard-activated
+  // button, say) can't inherit this gesture's origin and suppress a close it should do.
+  const startedAt = gestureStartTarget;
+  gestureStartTarget = null;
+  // A gesture that STARTED inside the open menu is not a click outside it, however far the
+  // pointer travelled before release. A press that starts outside still closes as always,
+  // so genuine click-outside-to-dismiss is untouched.
+  const startedInsideMenu = openMenuEl && startedAt && openMenuEl.contains(startedAt);
   // #history-btn is gone (moved to the native toolbar, see openHistoryFromToolbar in
   // history.js) — its trigger is now outside the page entirely, so there's no in-page
   // button click for this listener to exempt; nothing else changes here.
-  if (openMenuEl && !openMenuEl.contains(e.target) &&
+  if (openMenuEl && !startedInsideMenu && !openMenuEl.contains(e.target) &&
       !e.target.closest('#plus-btn,#slash-btn,#modes-btn')) closeMenus();
   // The slash menu isn't tracked by openMenuEl — close it on any click outside it,
   // the input, or the slash button.
@@ -146,6 +165,13 @@ function clampOpenMenu() {
   if (!openMenuEl || !openMenuEl.classList.contains('open')) return;
   // Re-anchor to the trigger element so the menu tracks it (X and Y) as the view resizes.
   if (openAnchor && document.body.contains(openAnchor)) { positionMenu(openMenuEl, openAnchor); return; }
+  // Placed by positionMenuFixed (a native-toolbar trigger, so no in-page anchor exists):
+  // re-run it, which re-right-aligns for the new width AND keeps the panel on the top
+  // edge — the generic clamp below would push it down to its 8px minimum instead.
+  if (openMenuEl.dataset.fixedTop !== undefined) {
+    positionMenuFixed(openMenuEl, parseFloat(openMenuEl.dataset.fixedTop));
+    return;
+  }
   // Anchorless popups (e.g. the inline / autocomplete): just keep them on-screen.
   const m = openMenuEl, mw = m.offsetWidth, mh = m.offsetHeight;
   const left = Math.max(8, Math.min(parseFloat(m.style.left) || 0, window.innerWidth - mw - 8));
