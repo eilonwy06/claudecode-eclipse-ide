@@ -73,9 +73,15 @@ let searchInFlight = false;
 // Cleared at the start of each new search — never appended to across searches.
 let contentMatches = {};
 
-function cycleSearchScope() {
+function cycleSearchScope(e) {
+  // Without this, the click bubbles from the __SEARCH__-substituted <svg> the user
+  // actually clicked — updateSearchScopeButton()'s innerHTML swap below detaches
+  // that svg from the document before the event finishes bubbling, so ui.js's
+  // document-level click-outside check sees a detached e.target, reads it as
+  // "outside the panel", and closes History along with the scope change.
+  if (e) e.stopPropagation();
   searchScope = SEARCH_SCOPES[(SEARCH_SCOPES.indexOf(searchScope) + 1) % SEARCH_SCOPES.length];
-  try { localStorage.setItem('claude.histSearchScope', searchScope); } catch (e) {}
+  try { localStorage.setItem('claude.histSearchScope', searchScope); } catch (err) {}
   updateSearchScopeButton();
   onHistorySearchInput();
 }
