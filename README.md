@@ -393,7 +393,4 @@ Special thanks to [xgsa](https://github.com/xgsa) and [jmoraleda](https://github
 
 ## Copyright
 
-Copyright (c) 2026 Carlo Louis Felipe (eilonwy06). Not affiliated with Anthropic.
-
-NOTICE: This project is an unofficial, community-made Eclipse IDE plugin. It is not affiliated with, endorsed by, or maintained by Anthropic, PBC.
-"Claude" and "Claude Code" are trademarks of Anthropic, PBC.
+Copyright (c) 2026 Carlo Louis Felipe (eilonwy06). Not affiliated with, endorsed by, or maintained by Anthropic, PBC. "Claude" and "Claude Code" are trademarks of Anthropic, PBC.
