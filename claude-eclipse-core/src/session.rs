@@ -507,6 +507,167 @@ pub fn search_session_content(workspace_root: &str, session_ids: &[String], quer
 // the conversation with its last-used model and show it in the status bar.
 // ---------------------------------------------------------------------------
 
+/// A subagent's (Task/Agent tool) own accumulated nested transcript — the on-disk
+/// counterpart of chat.js's live `agentLogs` entries, so a reopened conversation's agents
+/// keep their duration/tokens/prompt/tool-call list/"Open transcript" instead of losing it
+/// the moment the webview holding the live version is torn down.
+///
+/// NOT reconstructed from the top-level transcript file: a subagent's own conversation is
+/// NEVER multiplexed into its parent's `.jsonl` (confirmed on disk — there is no
+/// parent_tool_use_id/parentToolUseId anywhere in it, live-stream-only). It gets its OWN
+/// file instead, at `<projects_dir>/<session_id>/subagents/agent-<id>.jsonl`, with an
+/// `agent-<id>.meta.json` sidecar whose `toolUseId` field is the top-level Agent tool_use's
+/// own id — see `read_agent_log`, which finds and parses that file directly.
+///
+/// `items` matches chat.js's own shape exactly ({"kind":"text"|"thinking"|"tool", ...}) so
+/// history.js can hand it to buildAgentLogItemEl with no translation. Unlike the live
+/// version, an item's text/thinking blocks never need delta accumulation — every assistant
+/// line in a SAVED transcript is already the complete, final message (`partial:true` lines
+/// are skipped, same as the top-level reconstruction already does).
+struct AgentLogAccum {
+    items: Vec<serde_json::Value>,
+    /// The subagent's OWN tool_use ids → index into `items`, so ITS tool_results (from
+    /// the SAME dedicated file) can stamp the right step — a separate id space from the
+    /// top-level `tool_idx` used elsewhere in this function.
+    tool_idx: HashMap<String, usize>,
+    tokens: u64,
+    model: String,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+}
+
+/// Finds and parses a subagent's own dedicated transcript file, given the PARENT
+/// session's own projects directory/id and the Agent tool_use's own id (matched against
+/// each `agent-*.meta.json`'s `toolUseId` field — see AgentLogAccum's doc comment for the
+/// directory layout this assumes). Returns `None` when no matching subagent file exists
+/// (an older conversation predating this feature, or a tool call that was never an
+/// Agent/Task in the first place).
+fn read_agent_log(projects_dir: &std::path::Path, session_id: &str, tool_use_id: &str) -> Option<AgentLogAccum> {
+    let subagents_dir = projects_dir.join(session_id).join("subagents");
+    let mut jsonl_path: Option<std::path::PathBuf> = None;
+    for entry in fs::read_dir(&subagents_dir).ok()?.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !name.ends_with(".meta.json") {
+            continue;
+        }
+        let meta: serde_json::Value = fs::read_to_string(&path).ok()
+            .and_then(|s| serde_json::from_str(&s).ok())?;
+        if meta["toolUseId"].as_str() == Some(tool_use_id) {
+            let jsonl_name = format!("{}.jsonl", name.trim_end_matches(".meta.json"));
+            jsonl_path = Some(subagents_dir.join(jsonl_name));
+            break;
+        }
+    }
+    let file = fs::File::open(jsonl_path?).ok()?;
+    let mut accum = AgentLogAccum {
+        items: Vec::new(), tool_idx: HashMap::new(), tokens: 0, model: String::new(),
+        started_at: None, ended_at: None,
+    };
+    for line in BufReader::new(file).lines() {
+        let line = match line {
+            Ok(l) if !l.is_empty() => l,
+            _ => continue,
+        };
+        let event: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(ts) = event["timestamp"].as_str() {
+            if !ts.is_empty() {
+                if accum.started_at.is_none() {
+                    accum.started_at = Some(ts.to_string());
+                }
+                accum.ended_at = Some(ts.to_string());
+            }
+        }
+        match event["type"].as_str() {
+            Some("assistant") => {
+                // Every line in a SAVED transcript is already the final message — unlike
+                // the live stream there is no partial/delta form to skip, but a defensive
+                // check costs nothing if one ever did slip through.
+                if event.get("partial").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    continue;
+                }
+                if let Some(m) = event["message"]["model"].as_str() {
+                    if !m.is_empty() {
+                        accum.model = m.to_string();
+                    }
+                }
+                let usage = &event["message"]["usage"];
+                accum.tokens += usage["input_tokens"].as_u64().unwrap_or(0)
+                    + usage["output_tokens"].as_u64().unwrap_or(0)
+                    + usage["cache_creation_input_tokens"].as_u64().unwrap_or(0)
+                    + usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                if let Some(content) = event["message"]["content"].as_array() {
+                    for b in content {
+                        match b["type"].as_str() {
+                            Some("text") => {
+                                if let Some(t) = b["text"].as_str() {
+                                    if !t.is_empty() {
+                                        accum.items.push(serde_json::json!({ "kind": "text", "text": t }));
+                                    }
+                                }
+                            }
+                            Some("thinking") => {
+                                let t = b["thinking"].as_str().unwrap_or("");
+                                if !t.is_empty() {
+                                    accum.items.push(serde_json::json!({ "kind": "thinking", "text": t }));
+                                }
+                            }
+                            Some("tool_use") => {
+                                let name = b["name"].as_str().unwrap_or("tool");
+                                let input = if b["input"].is_null() {
+                                    serde_json::json!({})
+                                } else {
+                                    b["input"].clone()
+                                };
+                                accum.items.push(serde_json::json!({ "kind": "tool", "name": name, "input": input }));
+                                if let Some(id) = b["id"].as_str() {
+                                    accum.tool_idx.insert(id.to_string(), accum.items.len() - 1);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Some("user") => {
+                if let Some(blocks) = event["message"]["content"].as_array() {
+                    for b in blocks {
+                        if b["type"].as_str() != Some("tool_result") {
+                            continue;
+                        }
+                        let tuid = b["tool_use_id"].as_str().unwrap_or("");
+                        if tuid.is_empty() {
+                            continue;
+                        }
+                        let is_err = b["is_error"].as_bool().unwrap_or(false);
+                        let text = if is_err {
+                            tool_error_summary(&flatten_result_content(b)).unwrap_or_default()
+                        } else {
+                            flatten_result_content(b)
+                        };
+                        if let Some(&idx) = accum.tool_idx.get(tuid) {
+                            if let Some(obj) = accum.items.get_mut(idx).and_then(|v| v.as_object_mut()) {
+                                obj.insert("status".into(),
+                                    serde_json::Value::from(if is_err { "interrupted" } else { "done" }));
+                                if is_err {
+                                    obj.insert("errorText".into(), serde_json::Value::from(text.as_str()));
+                                } else {
+                                    obj.insert("resultText".into(), serde_json::Value::from(text.as_str()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(accum)
+}
+
 pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
     let dir = match projects_dir(workspace_root) {
         Some(d) => d,
@@ -535,6 +696,13 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
     // under its tool row. Only failures the user did not cause are recorded —
     // see `tool_error_summary`, which returns None for their own decisions.
     let mut result_text: HashMap<String, String> = HashMap::new();
+    // tool_use id → the FULL result text for a SUCCESSFUL tool — separate map from
+    // result_text above, which is error-only and pre-condensed to one line. This one
+    // feeds the same "OUT" rendering (chat.js's renderToolOutput) the live path uses via
+    // chat.rs's build_status_json-adjacent tool_result handler — without it, a reloaded/
+    // resumed conversation showed tool input but never its output, since history.js's
+    // reconstruction never had anything but errorText to hand makeToolLine.
+    let mut result_success_text: HashMap<String, String> = HashMap::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -684,6 +852,14 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                                 if let Some(sum) = tool_error_summary(&flatten_result_content(b)) {
                                     result_text.insert(tuid.to_string(), sum);
                                 }
+                            } else {
+                                // Full text, no condensing — chat.js caps/links-out to a
+                                // full view for long content on its own (capIfOverflowing),
+                                // same as the live path.
+                                let full = flatten_result_content(b);
+                                if !full.is_empty() {
+                                    result_success_text.insert(tuid.to_string(), full);
+                                }
                             }
                         }
                         if !ask_ids.contains(tuid) {
@@ -756,10 +932,15 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
                             } else {
                                 b["input"].clone()
                             };
+                            let id = b["id"].as_str().unwrap_or("");
                             items.push(serde_json::json!({
-                                "t": "tool", "name": name, "input": input, "model": model,
+                                // Its own tool_use id — needed so history.js can set
+                                // data-tuid the same way the live path does (addToolLine),
+                                // which is what an Agent/Task line's own reconstructed
+                                // agentLog (below) gets matched up against.
+                                "t": "tool", "name": name, "input": input, "model": model, "id": id,
                             }));
-                            if let Some(id) = b["id"].as_str() {
+                            if !id.is_empty() {
                                 // Remember where this tool sits so its result can stamp
                                 // a status onto it after the whole file is read.
                                 tool_idx.insert(id.to_string(), items.len() - 1);
@@ -813,6 +994,38 @@ pub fn load_session_history(workspace_root: &str, session_id: &str) -> String {
             // no result and so no text — the red dot alone still says "stopped".
             if let Some(txt) = result_text.get(id) {
                 obj.insert("errorText".into(), serde_json::Value::from(txt.as_str()));
+            }
+            // The successful tool's actual output — makeToolLine (chat.js) renders this
+            // into an OUT box/result-list/checklist exactly like the live path does.
+            if let Some(txt) = result_success_text.get(id) {
+                obj.insert("resultText".into(), serde_json::Value::from(txt.as_str()));
+            }
+        }
+    }
+
+    // Attach each Agent/Task tool's own nested log onto its top-level item — read
+    // straight from its own dedicated file (see read_agent_log's doc comment: a
+    // subagent's conversation is never multiplexed into its PARENT's own transcript at
+    // all, confirmed on disk). history.js hands this to chat.js's ensureAgentLog/
+    // agentLogs so a reopened conversation's /agents popup (duration, tokens, model,
+    // Prompt, Tool calls, "Open transcript") works the same as it did live.
+    for (id, &idx) in &tool_idx {
+        let is_agent = items.get(idx)
+            .and_then(|v| v["name"].as_str())
+            .map(|n| { let n = n.to_ascii_lowercase(); n == "agent" || n == "task" })
+            .unwrap_or(false);
+        if !is_agent {
+            continue;
+        }
+        if let Some(accum) = read_agent_log(&dir, session_id, id) {
+            if let Some(obj) = items.get_mut(idx).and_then(|v| v.as_object_mut()) {
+                obj.insert("agentLog".into(), serde_json::json!({
+                    "items": accum.items,
+                    "tokens": accum.tokens,
+                    "model": accum.model,
+                    "startedAt": accum.started_at,
+                    "endedAt": accum.ended_at,
+                }));
             }
         }
     }
@@ -1786,9 +1999,9 @@ mod tests {
             {"t":"user","content":"<ide_selection a=\"b\">sel junk</ide_selection>please fix the bug","ts":"2026-07-01T10:00:00.000Z"},
             {"t":"thinking","model":"claude-fable-5","text":"hmm secret"},
             {"t":"text","text":"Here is my answer","model":"claude-fable-5"},
-            {"t":"tool","name":"mcp__eclipse__askUserQuestion","input":{"q":"Which color?"},"model":"claude-fable-5","status":"done"},
+            {"t":"tool","name":"mcp__eclipse__askUserQuestion","input":{"q":"Which color?"},"model":"claude-fable-5","id":"toolu_01","status":"done","resultText":"  The user answered: Blue"},
             {"t":"answered","text":"Blue"},
-            {"t":"tool","name":"Edit","input":{"file_path":"C:\\x.java","old_string":"a","new_string":"b"},"model":"claude-opus-4-8","status":"interrupted"}
+            {"t":"tool","name":"Edit","input":{"file_path":"C:\\x.java","old_string":"a","new_string":"b"},"model":"claude-opus-4-8","id":"toolu_02","status":"interrupted"}
         ]"#).unwrap();
         assert_eq!(got1, want1, "sess1 render items must match the reference reader");
 
@@ -1935,7 +2148,7 @@ mod tests {
         let want: serde_json::Value = serde_json::from_str(r#"[
             {"t":"user","content":"<ide_context openFile=\"C:\\a\\B.java\" />\n\nwhat is this",
              "images":[{"media_type":"image/jpeg","data":"QUJD"}],"ts":"2026-07-30T01:00:00.000Z"},
-            {"t":"tool","name":"Read","input":{"file_path":"a.txt"},"status":"done","model":"claude-opus-4-8"},
+            {"t":"tool","name":"Read","input":{"file_path":"a.txt"},"status":"done","model":"claude-opus-4-8","id":"t1","resultText":"file contents"},
             {"t":"text","text":"a screenshot","model":"claude-opus-4-8"}
         ]"#).unwrap();
         assert_eq!(got, want, "pasted-image session render items");
@@ -2131,7 +2344,10 @@ mod tests {
 
     /// A failed tool must carry WHY it failed onto its render item, so a reopened
     /// conversation reads the same as it did live. A tool the user declined gets
-    /// the red dot but no text, and a successful one neither.
+    /// the red dot but no text; a successful one carries its full output as
+    /// resultText instead (a DIFFERENT field — see result_text vs
+    /// result_success_text above — so makeToolLine can render it as an OUT box
+    /// rather than the muted one-line error note).
     #[test]
     fn load_session_attaches_error_text_to_failed_tools() {
         let _env = ENV_LOCK.lock().unwrap();
@@ -2158,11 +2374,74 @@ mod tests {
         let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
         let want: serde_json::Value = serde_json::from_str(r#"[
             {"t":"user","content":"go","ts":"2026-09-04T01:00:00.000Z"},
-            {"t":"tool","name":"Read","input":{"file_path":"C:\\nope.java"},"model":"claude-opus-4-8","status":"interrupted","errorText":"File does not exist. Note: your current working directory is C:\\ws"},
-            {"t":"tool","name":"Edit","input":{"file_path":"C:\\x.java"},"model":"claude-opus-4-8","status":"interrupted"},
-            {"t":"tool","name":"Read","input":{"file_path":"C:\\ok.java"},"model":"claude-opus-4-8","status":"done"}
+            {"t":"tool","name":"Read","input":{"file_path":"C:\\nope.java"},"model":"claude-opus-4-8","id":"toolu_a","status":"interrupted","errorText":"File does not exist. Note: your current working directory is C:\\ws"},
+            {"t":"tool","name":"Edit","input":{"file_path":"C:\\x.java"},"model":"claude-opus-4-8","id":"toolu_b","status":"interrupted"},
+            {"t":"tool","name":"Read","input":{"file_path":"C:\\ok.java"},"model":"claude-opus-4-8","id":"toolu_c","status":"done","resultText":"contents"}
         ]"#).unwrap();
-        assert_eq!(got, want, "failed tools carry their reason; declined ones stay quiet");
+        assert_eq!(got, want, "failed tools carry their reason; declined ones stay quiet; successful ones carry their output");
+    }
+
+    /// A subagent's own nested transcript lives in its own dedicated file, never
+    /// multiplexed into its parent's — confirmed against a real on-disk conversation (no
+    /// parent_tool_use_id/parentToolUseId anywhere in the parent file; a background Agent
+    /// call's own steps only showed up under
+    /// `<session_id>/subagents/agent-<id>.jsonl`, matched to the top-level tool_use via
+    /// that file's `agent-<id>.meta.json` sidecar's `toolUseId` field). This fixture
+    /// reproduces that exact layout.
+    #[test]
+    fn load_session_reads_agent_log_from_its_own_subagent_file() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("claude-eclipse-session-agentlog-home");
+        let root = r"C:\agentws";
+        let dir = home.join(".claude").join("projects").join("C--agentws");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+
+        // The parent conversation: just the Agent tool_use and an early ack tool_result
+        // (a background call's own real work never appears here — that is the whole
+        // point of this fixture).
+        fs::write(dir.join("sessa.jsonl"), concat!(
+            r#"{"type":"assistant","message":{"model":"claude-sonnet-5","content":[{"type":"tool_use","id":"toolu_top","name":"Agent","input":{"description":"Count to 3","prompt":"count to 3","subagent_type":"Explore","run_in_background":true}}]},"timestamp":"2026-09-16T13:54:40.400Z"}"#, "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_top","content":"Agent running in the background"}]},"timestamp":"2026-09-16T13:54:40.410Z"}"#, "\n",
+        )).unwrap();
+
+        // The subagent's own dedicated conversation, in its own subdirectory.
+        let sub_dir = dir.join("sessa").join("subagents");
+        fs::create_dir_all(&sub_dir).unwrap();
+        fs::write(sub_dir.join("agent-abc123.meta.json"),
+            r#"{"agentType":"Explore","description":"Count to 3","toolUseId":"toolu_top","spawnDepth":1,"requestShape":"background"}"#,
+        ).unwrap();
+        fs::write(sub_dir.join("agent-abc123.jsonl"), concat!(
+            r#"{"type":"user","isSidechain":true,"agentId":"abc123","message":{"role":"user","content":"count to 3"},"timestamp":"2026-09-16T13:54:40.450Z"}"#, "\n",
+            r#"{"type":"assistant","isSidechain":true,"agentId":"abc123","message":{"model":"claude-sonnet-5","usage":{"input_tokens":100,"output_tokens":50},"content":[{"type":"tool_use","id":"toolu_sub1","name":"Bash","input":{"command":"echo 1 2 3"}}]},"timestamp":"2026-09-16T13:54:40.460Z"}"#, "\n",
+            r#"{"type":"user","isSidechain":true,"agentId":"abc123","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_sub1","content":"1 2 3"}]},"timestamp":"2026-09-16T13:54:40.470Z"}"#, "\n",
+            r#"{"type":"assistant","isSidechain":true,"agentId":"abc123","message":{"model":"claude-sonnet-5","usage":{"input_tokens":80,"output_tokens":40},"content":[{"type":"text","text":"Counted to 3."}]},"timestamp":"2026-09-16T13:54:40.480Z"}"#, "\n",
+        )).unwrap();
+
+        set_home(&home);
+        let loaded = super::load_session_history(root, "sessa");
+        let _ = fs::remove_dir_all(&home);
+
+        let got: serde_json::Value = serde_json::from_str(&loaded).unwrap();
+        let tool_item = got.as_array().unwrap().iter()
+            .find(|it| it["t"] == "tool" && it["id"] == "toolu_top")
+            .expect("the top-level Agent tool item");
+        let log = &tool_item["agentLog"];
+        assert_eq!(log["tokens"], 270, "sums usage across every completed message in the subagent's own file (100+50+80+40)");
+        assert_eq!(log["model"], "claude-sonnet-5");
+        assert_eq!(log["startedAt"], "2026-09-16T13:54:40.450Z", "the subagent file's own FIRST timestamp, not the parent's");
+        assert_eq!(log["endedAt"], "2026-09-16T13:54:40.480Z", "the subagent file's own LAST timestamp");
+        // The initial plain "user" message (the subagent's own starting prompt) produces
+        // no item at all — only its own text/thinking/tool_use content does — so this is
+        // exactly [tool_use Bash (stamped done+resultText), text "Counted to 3."].
+        let items = log["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["kind"], "tool");
+        assert_eq!(items[0]["name"], "Bash");
+        assert_eq!(items[0]["status"], "done");
+        assert_eq!(items[0]["resultText"], "1 2 3");
+        assert_eq!(items[1]["kind"], "text");
+        assert_eq!(items[1]["text"], "Counted to 3.");
     }
 
     #[test]

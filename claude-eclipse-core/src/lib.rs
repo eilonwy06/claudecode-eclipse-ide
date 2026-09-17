@@ -1056,6 +1056,28 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatRena
     manager.rename_session(&id, &title) as jboolean
 }
 
+/// Stops one specific background agent by its own internal task id (see
+/// ChatManager::stop_task's doc comment — a different id from its tool_use id).
+/// Returns false when there's no live process to send it to.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatStopTask(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    task_id: JString,
+) -> jboolean {
+    if handle == 0 {
+        return 0;
+    }
+    let manager = unsafe { &*(handle as *const ChatManager) };
+    let id: String = if task_id.is_null() {
+        String::new()
+    } else {
+        env.get_string(&task_id).ok().map(|s| s.into()).unwrap_or_default()
+    };
+    manager.stop_task(&id) as jboolean
+}
+
 /// Switches a live conversation's permission mode over the existing control
 /// channel, so the GUI's per-tab mode dropdown applies mid-conversation instead
 /// of only at the next spawn. Returns false when there's no live process (the

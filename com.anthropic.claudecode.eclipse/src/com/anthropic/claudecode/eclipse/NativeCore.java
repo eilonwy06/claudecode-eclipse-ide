@@ -284,6 +284,16 @@ public final class NativeCore {
     public static native boolean chatRenameSession(long handle, String sessionId, String title);
 
     /**
+     * Stops one specific background agent (an Agent/Task tool call with
+     * run_in_background) via its own internal task id — a DIFFERENT id from the
+     * tool_use id that identifies its top-level tool line ({@link ChatCallbacks#onToolStart}'s
+     * own "id"). The wire shape of this control request was confirmed empirically,
+     * not documented in any public Claude Agent SDK reference at the time this was
+     * written. Returns false when there's no live process to send it to.
+     */
+    public static native boolean chatStopTask(long handle, String taskId);
+
+    /**
      * Switches the permission mode of this manager's live process via the CLI's
      * {@code set_permission_mode} control request, so a mid-conversation change
      * applies without respawning. Returns false when there's no live process — the
@@ -497,6 +507,17 @@ public final class NativeCore {
          * a declined tool keeps its red dot and says nothing). Non-blocking.
          */
         default void onToolEnd(String json) {}
+        /**
+         * A running subagent's (Task/Agent tool) own current step — its OWN tool
+         * calls are never surfaced as top-level {@link #onToolStart}/{@link #onToolEnd}
+         * (that would interleave a bogus tool line into the main transcript), so this
+         * is the only signal of what it's doing while it runs. {@code json} is
+         * {@code {"parentId":…,"name":…,"input":…}} when it starts a step, or
+         * {@code {"parentId":…,"name":null}} once that step finishes. {@code parentId}
+         * is the Agent tool_use id {@link #onToolStart} carried for the agent itself.
+         * Non-blocking.
+         */
+        default void onAgentActivity(String json) {}
         /**
          * Remote Control state changed. Two shapes reach this:
          *

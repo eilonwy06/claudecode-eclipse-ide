@@ -174,6 +174,9 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     @SuppressWarnings("unused") private BrowserFunction advisorSetFn;
     @SuppressWarnings("unused") private BrowserFunction openExternalFn;
     @SuppressWarnings("unused") private BrowserFunction openFileInEditorFn;
+    @SuppressWarnings("unused") private BrowserFunction openTextInEditorFn;
+    @SuppressWarnings("unused") private BrowserFunction getContextStatusFn;
+    @SuppressWarnings("unused") private BrowserFunction stopAgentTaskFn;
     @SuppressWarnings("unused") private BrowserFunction clipGetFn;
     @SuppressWarnings("unused") private BrowserFunction clipSetFn;
     @SuppressWarnings("unused") private BrowserFunction clipImagesFn;
@@ -919,6 +922,32 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             String path = a.length > 0 && a[0] instanceof String s ? s : null;
             String root = a.length > 1 && a[1] instanceof String s ? s : null;
             if (path != null) openFileInEditor(path, root);
+            return null;
+        });
+        // "View full output"/"View full diff" on a capped tool IN/OUT block or a truncated
+        // diff — the content isn't backed by a real file, so it can't reuse openFileInEditor
+        // directly; openTextInEditor below writes it to a throwaway temp file instead.
+        openTextInEditorFn = new SimpleFunction(browser, "_openTextInEditor", a -> {
+            String text = a.length > 0 && a[0] instanceof String s ? s : null;
+            if (text != null) openTextInEditor(text);
+            return null;
+        });
+        // Backs the composer's /context command (slash.js) — the token/context-window
+        // breakdown already computed for the native ClaudeStatusBar strip (see buildStatus),
+        // just handed to the page raw so it can print a readable summary in the transcript
+        // instead of forwarding "/context" to the headless CLI, which — like /model and
+        // /resume — has no interactive surface to answer it over stream-json.
+        getContextStatusFn = new SimpleFunction(browser, "_getContextStatus",
+                a -> lastRustStatusJson != null ? lastRustStatusJson : "{}");
+        // "Stop agent" (agents.js's detail view) — a fast, non-blocking stdin write
+        // (ChatManager::stop_task), same reasoning as _renameSession calling straight
+        // through with no extra thread. managerFor, not managers.get: the tab this
+        // agent is running in already has a live process by definition, but there is
+        // no harm in the lazy-create path either way.
+        stopAgentTaskFn = new SimpleFunction(browser, "_stopAgentTask", a -> {
+            if (a.length > 1 && a[0] instanceof String tabId && a[1] instanceof String taskId) {
+                managerFor(tabId).stopTask(taskId);
+            }
             return null;
         });
 
@@ -2441,6 +2470,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         // conversation is the same one on the phone and on claude.ai, so a change
         // made there belongs on the buttons here too.
         m.setOnSettingsChanged(j -> display.asyncExec(() -> executeJS("window.onSettingsChanged && window.onSettingsChanged('" + tj + "','" + esc(j) + "')")));
+        m.setOnAgentActivity(j -> display.asyncExec(() -> executeJS("window.onAgentActivity && window.onAgentActivity('" + tj + "','" + esc(j) + "')")));
         // Remote Control goes to two places: the page, which writes the transcript
         // line and remembers the session url, and the status bar, which shows the
         // indicator. Only the ACTIVE tab may drive the bar — it shows one
@@ -2790,6 +2820,30 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             }
         }
         return out.size() == 0 ? "" : out.toString();
+    }
+
+    /**
+     * Opens raw tool input/output text — content that was capped in the transcript and has
+     * no backing file — in a real editor tab. Writes it to a throwaway temp file and reuses
+     * {@link org.eclipse.ui.ide.IDE#openEditorOnFileStore} rather than building a custom
+     * read-only {@code IDocumentProvider}: the file is scratch, deleted on JVM exit, and
+     * nobody is expected to save over it.
+     */
+    private static void openTextInEditor(String text) {
+        Display.getDefault().asyncExec(() -> {
+            try {
+                Path tmp = Files.createTempFile("claude-output-", ".txt");
+                Files.writeString(tmp, text, java.nio.charset.StandardCharsets.UTF_8);
+                tmp.toFile().deleteOnExit();
+                org.eclipse.ui.IWorkbenchPage page = com.anthropic.claudecode.eclipse.editor.UiHelper.getActivePage();
+                if (page == null) return;
+                org.eclipse.core.filesystem.IFileStore fileStore =
+                        org.eclipse.core.filesystem.EFS.getLocalFileSystem().getStore(tmp.toUri());
+                org.eclipse.ui.ide.IDE.openEditorOnFileStore(page, fileStore);
+            } catch (Exception ignored) {
+                // Same failure policy as openFileInEditor: no popup, the click is a no-op.
+            }
+        });
     }
 
     /** Make sure the Rust MCP server (used by chat for editor tools) is up. */

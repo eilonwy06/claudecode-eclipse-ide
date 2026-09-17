@@ -556,7 +556,11 @@ public final class ClaudeStatusBar extends Canvas {
                            OptionalLong resetsAt, boolean compact, boolean withResets,
                            boolean reserveResets, String tooltip) {
         int barW = compact ? BAR_W_SHORT : BAR_W_LONG;
-        int rounded = (int) Math.floor(Math.max(0.0, pct)); // round down for display
+        // Same [0,100] clamp drawBar already applies to the bar's fill width (below) — this
+        // is the TEXT label, which used to skip the upper bound and could print something
+        // like "1097%" when an upstream ratio resolved wrong (see chat.rs's build_status_json
+        // clamp, added for the same reason — this is defense in depth, not the only guard).
+        int rounded = (int) Math.floor(Math.max(0.0, Math.min(100.0, pct))); // round down for display
         String pctText = compact ? Integer.toString(rounded) : rounded + "%";
 
         String resetText = null;

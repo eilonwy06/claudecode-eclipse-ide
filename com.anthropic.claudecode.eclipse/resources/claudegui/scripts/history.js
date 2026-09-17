@@ -568,7 +568,34 @@ function loadHistory(id, title, targetTab) {
       appendThinkStatic(assistantTurn(), it.text || '');
     } else if (ty === 'tool') {
       flushCompact();
-      assistantTurn().appendChild(makeToolLine(it.name || 'tool', it.input || {}, it.status, it.errorText, rootPathOf(t)));
+      // A reconstructed Agent/Task call's own nested log (session.rs's agentLog field) —
+      // the disk-backed counterpart of chat.js's live agentLogs, so a reopened
+      // conversation's /agents popup (duration, tokens, model, Prompt, Tool calls, "Open
+      // transcript") works the same as it did live instead of losing it the moment the
+      // webview that ran it live is gone. Populated BEFORE makeToolLine so its isAgent
+      // branch can tell there's actually something to show and add the collapsible.
+      const isAgentTool = AGENT_KEYS.has(String(it.name || '').toLowerCase());
+      const hasLog = isAgentTool && it.agentLog && Array.isArray(it.agentLog.items) && it.agentLog.items.length > 0;
+      if (hasLog && it.id) {
+        const log = ensureAgentLog(it.id);
+        log.items = it.agentLog.items.map(x => Object.assign({}, x));   // fresh copies — no stale _el refs
+        log.tokens = it.agentLog.tokens || 0;
+        log.model = it.agentLog.model || '';
+        log.startedAt = it.agentLog.startedAt ? Date.parse(it.agentLog.startedAt) || 0 : 0;
+        log.endedAt = it.agentLog.endedAt ? Date.parse(it.agentLog.endedAt) || 0 : 0;
+        log.input = it.input || {};
+      }
+      const line = makeToolLine(it.name || 'tool', it.input || {}, it.status, it.errorText, rootPathOf(t), it.resultText, hasLog);
+      if (it.id) line.dataset.tuid = it.id;
+      if (hasLog) {
+        // Built directly from the line just created rather than through
+        // renderAgentLogItem's document.querySelector lookup: this turn isn't attached to
+        // the DOM yet (the whole pane is built off-screen, see flushCompact/assistantTurn
+        // above), so that lookup would find nothing.
+        const body = line.querySelector(':scope > .agent-log > .agent-log-body');
+        if (body) agentLogs.get(it.id).items.forEach(item => body.appendChild(buildAgentLogItemEl(item)));
+      }
+      assistantTurn().appendChild(line);
     } else { // text
       flushCompact();
       appendTextStatic(assistantTurn(), it.text || it.content || '');
@@ -577,6 +604,9 @@ function loadHistory(id, title, targetTab) {
   flushCompact();
   // draw the connector rails
   pane.querySelectorAll(':scope > .turn').forEach(relinkTurn);
+  // This reconstruction may be for a BACKGROUND tab (not the one on screen) — only
+  // refresh the toolbar pill when it's the one actually showing right now.
+  if (t === activeTab() && typeof updateAgentsBtn === 'function') updateAgentsBtn();
   // Restore this conversation's settings. Our own sidecar (saved per session id)
   // is authoritative — it's the ONLY source of effort and it captures the user's
   // last selection; the transcript is the fallback for model + thinking.

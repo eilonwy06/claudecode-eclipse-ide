@@ -21,6 +21,12 @@ window.onStreamText    = (tabId, t) => withTab(tabId, () => appendAssistant(t));
 window.onStreamEnd     = (tabId) => withTab(tabId, (t) => { t.compacting = false; hideWorking(); endAssistant(); setStreaming(false); backfillMessageIds(t); });
 window.onToolStart     = (tabId, n) => withTab(tabId, () => addToolLine(n));
 window.onToolEnd       = (tabId, j) => withTab(tabId, () => applyToolResult(j));
+/* A running subagent's own current step (chat.rs never gives its OWN tool calls a
+   top-level onToolStart — that would interleave a bogus line into the main
+   transcript) — agents.js reads this to show what a running Agent is doing right now. */
+window.onAgentActivity = (tabId, j) => withTab(tabId, () => {
+  if (typeof applyAgentActivity === 'function') applyAgentActivity(j);
+});
 window.onSystemMessage = () => {};   /* backend system/init noise — ignored */
 window.onError         = (tabId, m) => withTab(tabId, () => { hideWorking(); endAssistant(); setStreaming(false); addSystem('⚠ ' + augmentError(m)); });
 window.onStatusUpdate  = () => {};

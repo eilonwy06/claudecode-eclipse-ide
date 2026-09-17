@@ -168,6 +168,7 @@ function switchTab(id) {
   if (typeof renderPendingImages === 'function') renderPendingImages();  // this tab's pasted-image chips
   if (typeof renderBrowserBanner === 'function') renderBrowserBanner();  // this tab's browser connection
   if (typeof syncComposer === 'function') syncComposer();           // send/stop reflects THIS tab
+  if (typeof updateAgentsBtn === 'function') updateAgentsBtn();     // toolbar pill reflects THIS tab's agents
   // The root rides along: Java scopes session history, rewind and the status bar to
   // the conversation's own folder, not to the workspace root.
   try { if (window._activeTab) window._activeTab(id, rootPathOf(t)); } catch (e) {} // status bar follows active tab
@@ -195,6 +196,10 @@ function switchTab(id) {
     followTail = true;
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
+  // Explicit, not left to the 'scroll' event this write may fire: a write landing on a
+  // position the container already holds (e.g. switching back to a tab left at the exact
+  // same spot) is a no-op that fires nothing — same reasoning as the followTail line above.
+  if (typeof updatePinnedPrompt === 'function') updatePinnedPrompt();
   // A conversation restored from the last Eclipse session holds only its session id
   // until it is first shown (see viewstate.js) — rebuilding every transcript at
   // startup would cost one full reconstruction per tab, for panes nobody is looking
@@ -212,6 +217,7 @@ function switchTab(id) {
       // unconditionally and followTail is forced true on every switch anyway.
       if (scrollLocked) { followTail = false; t.followTail = false; }
     }
+    if (typeof updatePinnedPrompt === 'function') updatePinnedPrompt();
     updateJumpToLatest();
   }
 }
@@ -495,6 +501,7 @@ function clearSession() {
   renderTabs();
   if (typeof renderPendingImages === 'function') renderPendingImages();
   if (typeof syncComposer === 'function') syncComposer();
+  if (typeof updateAgentsBtn === 'function') updateAgentsBtn();   // pane emptied — no agents left in it
   input.focus();
 }
 

@@ -14,6 +14,24 @@
 .menu { position: absolute; z-index: 40; background: var(--menu-bg); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 8px 24px var(--shadow); padding: 4px; min-width: 210px; display: none; }
 .menu.open { display: block; }
+/* #actions-menu bundles Rewind/Model/Effort/Thinking/Account/Slash Commands/Appearance
+   into one dropdown (unlike the focused, already-scrollable #slash-menu below) — with no
+   cap of its own it could grow taller than the viewport, and positionMenu's clamp (ui.js)
+   only keeps its TOP edge on-screen, not its bottom, so it would render past the bottom
+   edge with nothing to scroll it into view. Viewport-relative, NOT a fixed px guess like
+   #slash-menu's 260px below — that menu is always short; this one has grown past what any
+   one fixed number fits on every window size, so a fixed cap either clips on a small window
+   or scrolls needlessly on a tall one. 100vh-40px mirrors positionMenu's own 8px+8px
+   top/bottom viewport margin (ui.js) with a little extra breathing room. */
+#actions-menu { max-height: calc(100vh - 40px); overflow-y: auto; }
+/* calc(100% - 20px), not 100%: box-sizing:border-box only folds the input's OWN
+   padding/border into that 100%, never its margin — the 10px left + 10px right margin
+   below was still added ON TOP, making the real box 20px wider than the menu's own
+   content area and pushing it past the right edge. */
+#actions-slash-filter { width: calc(100% - 20px); box-sizing: border-box; margin: 2px 10px 6px; padding: 6px 9px;
+  background: var(--bg-code); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--fg); font-size: 12px; outline: none; }
+#actions-slash-filter:focus { border-color: var(--sel); }
 .menu .item { display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
 .menu .item:hover { background: var(--menu-hover); }
 .menu .item .ic { margin-top: 1px; color: var(--fg-dim); flex-shrink: 0; }
@@ -26,7 +44,12 @@
 .menu .head .hint { color: var(--fg-faint); font-size: 10.5px; }
 .menu .sep { height: 1px; background: var(--border-soft); margin: 4px 4px; }
 .menu .effort { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; }
-.menu .effort .lbl { color: var(--fg); font-size: 12.5px; display:flex; align-items:center; gap:6px;}
+/* gap was 6px with the icon glued into the .lbl text as a bare character (no element, no
+   spacing) — "Effort"/"Zoom level" sat closer to the left edge than "Switch model" etc.,
+   whose .item rows give the icon a real gap (line 31). Now .ic is a real child here
+   too, so this gap actually applies to it, matched to .item's for the same indentation. */
+.menu .effort .lbl { color: var(--fg); font-size: 12.5px; display:flex; align-items:center; gap:10px; }
+.menu .effort .lbl .ic { color: var(--fg-dim); flex-shrink: 0; }
 .slider { width: 84px; height: 16px; position: relative; cursor: pointer; }
 .slider .track { position: absolute; top: 7px; left: 0; right: 0; height: 3px; background: var(--track); border-radius: 2px; }
 .slider .fill { position: absolute; top: 7px; left: 0; width: 50%; height: 3px; background: var(--accent); border-radius: 2px; }
@@ -260,3 +283,125 @@ body.teleporting #composer { display: none; }
   border: 2px solid var(--accent-dim); border-top-color: var(--accent);
   animation: spin .8s linear infinite; }
 .tp-error { color: var(--red); }
+
+/* ── Agents popup (agents.js) ─────────────────────────────────
+   A list of Agent tool calls made this session, each with a status dot. Same modal-overlay
+   idiom as #rewind-overlay/#rewind-win above (scrim + centered card) — NOT a corner-anchored
+   dropdown; a small floating panel read as detached from anything and had no natural anchor
+   point since it opens from a typed /agents command, not a toolbar button. */
+#agents-overlay { position: absolute; inset: 0; z-index: 60; background: var(--overlay-scrim-soft);
+  display: none; align-items: flex-start; justify-content: center; }
+#agents-overlay.open { display: flex; }
+#agents-win { width: 360px; max-width: 92%; margin-top: 11vh; max-height: 60vh; overflow: hidden;
+  display: flex; flex-direction: column; background: var(--menu-bg); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 12px 40px var(--shadow); padding: 13px 15px;
+  transition: width .15s ease, max-height .15s ease; }
+/* "Open transcript" needs real room — the compact list/detail card has none. */
+#agents-win.ap-transcript-mode { width: 92%; max-width: 900px; max-height: 85vh; margin-top: 6vh; }
+#agents-win .ap-head { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+#agents-win .ap-head .ap-title { flex: 1; }
+#agents-win .ap-title { font-size: 14px; font-weight: 600; color: var(--fg); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+#agents-win .ap-sub { font-size: 12px; color: var(--fg-faint); margin-top: 3px; flex-shrink: 0; }
+#agents-win .ap-x { color: var(--fg-dim); cursor: pointer; padding: 3px; border-radius: 4px; flex-shrink: 0; }
+#agents-win .ap-x:hover { background: var(--bg-hover); color: var(--fg); }
+/* Back arrow: the same CHEVRON glyph everything else points right with, just flipped. */
+#agents-win .ap-back { display: inline-flex; color: var(--fg-dim); cursor: pointer; padding: 3px;
+  border-radius: 4px; flex-shrink: 0; transform: rotate(180deg); }
+#agents-win .ap-back:hover { background: var(--bg-hover); color: var(--fg); }
+#agents-win .ap-detail-head .ap-detail-title { font-size: 14.5px; }
+/* Its own scroll container, like .ap-list/.ap-transcript-body below — #agents-win itself
+   is overflow:hidden with a capped max-height, so without this, expanding the Prompt
+   fold just pushed Tool calls/Open transcript past that cap with no way to scroll back
+   to them; the popup clipped them outright instead of growing a scrollbar. */
+#agents-win .ap-detail-body { flex: 1; min-height: 0; overflow-y: auto; }
+#agents-win .ap-detail-body::-webkit-scrollbar { width: 9px; }
+#agents-win .ap-detail-body::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; }
+#agents-win .ap-meta { font-size: 12px; color: var(--fg-dim); margin-top: 8px; flex-shrink: 0; }
+/* The agent's own final answer (agentResponseText) — always visible, never folded like
+   Prompt/Tool calls below, since it's almost always the actual point of clicking in.
+   Capped + scrollable rather than letting a long one grow the whole popup unbounded. */
+#agents-win .ap-response-label { font-size: 11px; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--fg-faint); margin-top: 12px; flex-shrink: 0; }
+/* No white-space:pre-wrap — this holds rendered markdown HTML (.a-body), not raw text,
+   so the source's own newlines are already expressed as real p/br elements. */
+#agents-win .ap-response { margin-top: 4px; padding: 8px 10px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; color: var(--fg);
+  max-height: 26vh; overflow-y: auto; flex-shrink: 0; }
+#agents-win .ap-list { flex: 0 1 auto; min-height: 0; overflow-y: auto; margin-top: 10px; }
+#agents-win .ap-list::-webkit-scrollbar { width: 9px; }
+#agents-win .ap-list::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; }
+/* Card look (border + resting fill), not a plain list row — matches the reference
+   VSCode Agent map, where each agent is visibly its own clickable button rather than a
+   bare line of text. */
+#agents-win .ap-row { display: flex; align-items: center; gap: 8px; padding: 9px 10px;
+  border-radius: 8px; cursor: pointer; border: 1px solid var(--border-soft);
+  background: var(--bg-soft); margin-bottom: 6px;
+  transition: background-color .1s, border-color .1s; }
+#agents-win .ap-row:last-child { margin-bottom: 0; }
+#agents-win .ap-row:hover { background: var(--bg-hover); border-color: var(--border); }
+#agents-win .ap-row:active { background: var(--bg-chip); }
+/* Tool-call rows in the detail view's fold are plain sub-items, not clickable agent
+   cards — cancels the .ap-row card look above rather than needing a separate class. */
+#agents-win .ap-toolrow { cursor: default; padding: 5px 4px; border: none; background: none; margin-bottom: 0; }
+#agents-win .ap-toolrow:hover, #agents-win .ap-toolrow:active { background: none; }
+/* chat.css's .dot/.dot.done/.dot.red/.dot.spin rules are scoped to ".a-item .dot" (absolutely
+   positioned within a tool line) — a bare .dot outside one gets none of that, so this row's
+   dot is its own small standalone set rather than trying to reuse the scoped one. */
+/* Running = green (spinning ring, still conveys "in progress"), finished = grey (its
+   work is over, nothing more to say), stopped = Claude's own accent color, so a
+   deliberate user stop reads distinctly from either "finished on its own" state. */
+#agents-win .ap-row .dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--fg-faint); }
+#agents-win .ap-row .dot.done { background: var(--fg-faint); }
+#agents-win .ap-row .dot.red { background: var(--red); }
+#agents-win .ap-row .dot.stopped { background: var(--accent); }
+#agents-win .ap-row .dot.spin { background: transparent; border: 2px solid var(--green);
+  border-top-color: transparent; width: 9px; height: 9px; animation: spin .8s linear infinite; }
+#agents-win .ap-detail-head .dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--fg-faint); }
+#agents-win .ap-detail-head .dot.done { background: var(--fg-faint); }
+#agents-win .ap-detail-head .dot.red { background: var(--red); }
+#agents-win .ap-detail-head .dot.stopped { background: var(--accent); }
+#agents-win .ap-detail-head .dot.spin { background: transparent; border: 2px solid var(--green);
+  border-top-color: transparent; width: 9px; height: 9px; animation: spin .8s linear infinite; }
+/* min-width:0 is required for the ellipsis rules below to actually clamp inside a flex
+   row instead of forcing the row wider — a flex item's default min-width is its content's,
+   not 0. */
+#agents-win .ap-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+#agents-win .ap-label { font-size: 12.5px; color: var(--fg-soft); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+/* Duration + tokens (chat.js's agentLogs) — blank until the agent's own tool_use has been
+   seen at all (agentDurationMs returns 0 with nothing to show yet). */
+#agents-win .ap-step { font-size: 11px; color: var(--fg-faint); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+#agents-win .ap-empty { padding: 14px 4px; font-size: 12.5px; color: var(--fg-faint); text-align: center; }
+/* Collapsible Prompt/Tool-calls sections in the detail view — same fold idiom as
+   chat.css's .agent-log. */
+#agents-win .ap-fold { margin-top: 10px; flex-shrink: 0; }
+#agents-win .ap-fold-head { display: flex; align-items: center; gap: 6px; cursor: pointer;
+  color: var(--fg-dim); font-size: 12.5px; }
+#agents-win .ap-fold-head:hover { color: var(--fg-soft); }
+#agents-win .ap-fold .chev { display: inline-flex; transition: transform .15s; opacity: .8; }
+#agents-win .ap-fold.open .chev { transform: rotate(90deg); }
+#agents-win .ap-fold-body { display: none; margin-top: 6px; }
+#agents-win .ap-fold.open .ap-fold-body { display: block; max-height: 30vh; overflow-y: auto; }
+#agents-win .ap-prompt { margin: 0; padding: 8px 10px; background: var(--bg-code); border: 1px solid var(--border-soft);
+  border-radius: 6px; font-size: 12px; color: var(--fg-soft); white-space: pre-wrap; font-family: inherit; }
+#agents-win .ap-btn-row { display: flex; gap: 8px; margin-top: 12px; flex-shrink: 0; }
+#agents-win .ap-open-btn { flex: 1; padding: 8px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--bg-chip); color: var(--fg); font-size: 12.5px;
+  cursor: pointer; }
+#agents-win .ap-open-btn:hover { background: var(--bg-hover); }
+/* Only shown while the agent is genuinely running (renderAgentDetail) — sends a
+   stop_task control_request (ChatManager::stop_task) via the _stopAgentTask bridge. */
+#agents-win .ap-stop-btn { flex: 1; padding: 8px; border-radius: 7px; border: 1px solid var(--red);
+  background: transparent; color: var(--red); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+#agents-win .ap-stop-btn:hover { background: var(--red); color: var(--on-accent); }
+#agents-win .ap-stop-btn:disabled { opacity: .6; cursor: default; background: transparent; color: var(--red); }
+/* Open transcript: a real scrollable body (unlike .ap-list, which caps itself to the
+   compact card's own height) reusing chat.css's own .tool-line/.a-item styling verbatim —
+   items appended here (chat.js's buildAgentLogItemEl) ARE those exact classes. */
+#agents-win .ap-transcript-body { flex: 1; min-height: 0; overflow-y: auto; margin-top: 10px; padding-right: 4px; }
+#agents-win .ap-transcript-body::-webkit-scrollbar { width: 9px; }
+#agents-win .ap-transcript-body::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; }
+#agents-win .ap-transcript-prompt { padding: 8px 10px; margin-bottom: 10px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; color: var(--fg); white-space: pre-wrap; }

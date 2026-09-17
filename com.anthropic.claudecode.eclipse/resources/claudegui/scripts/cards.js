@@ -315,7 +315,7 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
   };
 
   const state = questions.map(() => ({ choice: null, other: '' })); // choice = option index or 'other'
-  let activeQ = 0, resolved = false;
+  let activeQ = 0, resolved = false, collapsed = false;
   const card = document.createElement('div'); card.className = 'question-card';
 
   function answeredText(i) {
@@ -367,9 +367,21 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
       t.onclick = () => { activeQ = i; render(); };
       tabs.appendChild(t);
     });
+    // Collapse control, next to the existing X — matches VSCode's card, which lets you
+    // shrink a question back to its header row without cancelling it. Built before .q-x
+    // so it reads left-to-right as "collapse, then cancel".
+    const chev = document.createElement('div'); chev.className = 'q-chevron'; chev.innerHTML = ICONS.CHEVRON;
+    chev.title = collapsed ? 'Expand' : 'Collapse';
+    chev.onclick = (e) => { e.stopPropagation(); collapsed = !collapsed; render(); };
+    tabs.appendChild(chev);
     const x = document.createElement('div'); x.className = 'q-x'; x.innerHTML = ICONS.X; x.onclick = cancel;
     tabs.appendChild(x);
     card.appendChild(tabs);
+    card.classList.toggle('collapsed', collapsed);
+    // Collapsed: stop right after the tabs row — nothing below it gets built at all,
+    // rather than building the body and hiding it, which would keep re-running the
+    // "Other" textarea's autofocus/grow side effects for a body nobody can see.
+    if (collapsed) return;
     card.appendChild(Object.assign(document.createElement('div'), { className: 'q-sep' }));
 
     const q = questions[activeQ];

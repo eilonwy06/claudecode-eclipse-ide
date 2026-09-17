@@ -48,8 +48,18 @@
 .question-card .q-tab { padding: 2px 0 8px; color: var(--fg-dim); font-size: 12.5px; cursor: pointer;
   border-bottom: 2px solid transparent; white-space: nowrap; }
 .question-card .q-tab.active { color: var(--fg); border-bottom-color: var(--sel); }
-.question-card .q-x { margin-left: auto; color: var(--fg-dim); cursor: pointer; padding: 2px; border-radius: 4px; }
+/* Collapse control (chev) sits before the X — margin-left:auto moves to it instead of .q-x
+   so both end up pinned to the right, X last. Rotates like .think's chevron (chat.css):
+   pointing down while expanded (there's a body below to point at), right once collapsed. */
+.question-card .q-chevron { margin-left: auto; color: var(--fg-dim); cursor: pointer; padding: 2px;
+  border-radius: 4px; display: inline-flex; transition: transform .15s; transform: rotate(90deg); }
+.question-card.collapsed .q-chevron { transform: rotate(0deg); }
+.question-card .q-chevron:hover { background: var(--bg-hover); color: var(--fg); }
+.question-card .q-x { color: var(--fg-dim); cursor: pointer; padding: 2px; border-radius: 4px; }
 .question-card .q-x:hover { background: var(--bg-hover); color: var(--fg); }
+/* Collapsed: rendering stops right after .q-tabs (cards.js), so restore the bottom
+   padding .q-tabs normally borrows from the .q-sep/body that would otherwise follow. */
+.question-card.collapsed .q-tabs { padding-bottom: 11px; }
 .question-card .q-sep { height: 1px; background: var(--border-soft); }
 .question-card .q-text { color: var(--fg); font-size: 13px; font-weight: 600; padding: 12px 14px 8px; }
 .question-card .q-opt { display: flex; gap: 11px; padding: 9px 14px; cursor: pointer; align-items: flex-start; }

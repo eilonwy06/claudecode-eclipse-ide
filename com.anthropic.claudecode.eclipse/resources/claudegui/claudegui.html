@@ -108,6 +108,9 @@
         <div class="cb-left">
           <span class="pill" id="plus-btn" title="Add" onclick="openPlusMenu(this)">__PLUS__</span>
           <span class="pill" id="slash-btn" title="Commands" onclick="toggleMenu('actions-menu', this)">__SLASH__</span>
+          <span class="agents-pill" id="agents-btn" title="Agents" onclick="toggleAgentsPanel()" style="display:none">
+            <span class="agents-dot" id="agents-dot"></span> <span id="agents-count"></span>
+          </span>
           <span class="file-chip empty" id="ctx-chip" title="Toggle file context" onclick="toggleContext()"><span id="ctx-ic">__FILEICON__</span> <span id="ctx-label">No file open</span></span>
         </div>
         <div class="cb-right">
@@ -140,7 +143,7 @@
     <div class="item" data-mode="auto" data-icon="BOLT" onclick="selectMode(this)"><span class="ic">__BOLT__</span><div class="txt"><span class="lbl">Auto</span><span class="desc">Claude will approve actions that pass a safety check and pause for anything risky</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
     <div class="item" id="mode-bypass" data-mode="bypassPermissions" data-icon="EYEOFF" onclick="selectMode(this)"><span class="ic">__EYEOFF__</span><div class="txt"><span class="lbl">Bypass permissions</span><span class="desc">Claude will not ask for approval before running potentially dangerous commands</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
     <div class="sep"></div>
-    <div class="effort"><span class="lbl">__GAUGE__ Effort <span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span>
+    <div class="effort"><span class="lbl"><span class="ic">__GAUGE__</span>Effort <span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span>
       <span class="slider eff-slider" title="Effort" onmousedown="effortDown(event)"><span class="track"></span><span class="fill eff-fill"></span><span class="knob eff-knob"></span></span></div>
   </div>
 
@@ -151,16 +154,17 @@
     <div class="sep"></div>
     <div class="head"><span class="h">Model</span></div>
     <div class="item" onclick="openModelChooser(event)"><span class="ic">__SPARK__</span><div class="txt"><span class="lbl">Switch model <span id="cur-model" style="color:var(--fg-dim)">(Default)</span></span></div><span class="ic">__CHEVRON__</span></div>
-    <div class="effort"><span class="lbl">__GAUGE__ Effort <span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span>
+    <div class="effort"><span class="lbl"><span class="ic">__GAUGE__</span>Effort <span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span>
       <span class="slider eff-slider" title="Effort" onmousedown="effortDown(event)"><span class="track"></span><span class="fill eff-fill"></span><span class="knob eff-knob"></span></span></div>
     <div class="item" onclick="toggleThinking(event)"><span class="ic">__BRAIN__</span><div class="txt"><span class="lbl">Thinking</span></div><span class="check" id="think-check">__CHECK__</span></div>
     <div class="item" onclick="openAccount()"><span class="ic">__USER__</span><div class="txt"><span class="lbl">Account &amp; usage…</span></div></div>
     <div class="sep"></div>
     <div class="head"><span class="h">Slash Commands</span></div>
+    <input id="actions-slash-filter" type="text" placeholder="Filter commands…" oninput="filterActionsSlash(this.value)">
     <div id="actions-slash"></div>
     <div class="sep"></div>
     <div class="head"><span class="h">Appearance</span></div>
-    <div class="effort"><span class="lbl">__ZOOM__ Zoom level <span class="zoom-lbl" style="color:var(--fg-dim)">(100%)</span></span>
+    <div class="effort"><span class="lbl"><span class="ic">__ZOOM__</span>Zoom level <span class="zoom-lbl" style="color:var(--fg-dim)">(100%)</span></span>
       <span class="slider zoom-slider" title="Zoom level" onmousedown="zoomDown(event)"><span class="track"></span><span class="fill zoom-fill"></span><span class="knob zoom-knob"></span></span></div>
   </div>
 
@@ -176,6 +180,9 @@
 
   <!-- rewind dialog (Rewind to… / Fork and rewind) -->
   <div id="rewind-overlay"><div id="rewind-win"></div></div>
+
+  <!-- agents fleet panel (/agents command) -->
+  <div id="agents-overlay"><div id="agents-win"></div></div>
 
   <!-- teleport: repo / branch prompts, and the fetch progress behind them -->
   <div id="teleport-overlay"><div id="teleport-win"></div></div>
@@ -214,6 +221,7 @@
 <script src="scripts/tabs.js"></script>
 <script src="scripts/supertabs.js"></script>
 <script src="scripts/chat.js"></script>
+<script src="scripts/agents.js"></script>
 <script src="scripts/find.js"></script>
 <script src="scripts/stream.js"></script>
 <script src="scripts/carddock.js"></script>

@@ -42,6 +42,7 @@ public class ChatProcessManager {
     private Consumer<String> onRemoteMessage;
     private Consumer<String> onBrowserState;
     private Consumer<String> onSettingsChanged;
+    private Consumer<String> onAgentActivity;
 
     /** (requestId, toolName, inputJson, rememberLabel) → decision string. See {@link NativeCore.ChatCallbacks#onPermissionRequest}. */
     public interface PermissionHandler {
@@ -87,6 +88,7 @@ public class ChatProcessManager {
             @Override public void onRemoteMessage(String text) { emit(ChatProcessManager.this.onRemoteMessage, text); }
             @Override public void onBrowserState(String json) { emit(ChatProcessManager.this.onBrowserState, json); }
             @Override public void onSettingsChanged(String json) { emit(ChatProcessManager.this.onSettingsChanged, json); }
+            @Override public void onAgentActivity(String json) { emit(ChatProcessManager.this.onAgentActivity, json); }
         });
     }
 
@@ -118,6 +120,8 @@ public class ChatProcessManager {
     public boolean disableBrowser() {
         return NativeCore.chatDisableChrome(handle);
     }
+    /** A running subagent's current step. See {@link NativeCore.ChatCallbacks#onAgentActivity}. */
+    public void setOnAgentActivity(Consumer<String> cb) { this.onAgentActivity = cb; }
 
     /** Turns Remote Control on or off, starting this tab's process first if it
      *  has none.
@@ -261,6 +265,11 @@ public class ChatProcessManager {
      */
     public boolean renameSession(String sessionId, String title) {
         return NativeCore.chatRenameSession(handle, sessionId, title);
+    }
+
+    /** Stops one background agent by its own internal task id. See {@link NativeCore#chatStopTask}. */
+    public boolean stopTask(String taskId) {
+        return NativeCore.chatStopTask(handle, taskId);
     }
 
     /**

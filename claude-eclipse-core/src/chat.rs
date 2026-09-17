@@ -754,6 +754,33 @@ impl ChatManager {
         p.write_line(&msg.to_string()).is_ok()
     }
 
+    /// Stops one specific background agent (an Agent/Task tool call with
+    /// run_in_background) via its own internal task id — NOT its tool_use id; those
+    /// are two different ids for the same agent (see chat.js's agentLogs.taskId,
+    /// captured from the "task_started" system event while it's still running,
+    /// since "task_notification" only arrives on completion — too late to stop
+    /// anything). Wire shape confirmed empirically, not documented in any public
+    /// Claude Agent SDK reference at the time this was written:
+    /// {"subtype":"stop_task","task_id":…}, same envelope as every other
+    /// control_request here. Returns false when there's no live process.
+    pub fn stop_task(&self, task_id: &str) -> bool {
+        if task_id.is_empty() {
+            return false;
+        }
+        let proc = self.state.lock().unwrap().proc.clone();
+        let Some(p) = proc else { return false };
+        if p.is_dead() {
+            return false;
+        }
+        static STOP_SEQ: AtomicU64 = AtomicU64::new(1);
+        let req_id = format!("eclipse-stop-{}", STOP_SEQ.fetch_add(1, Ordering::Relaxed));
+        let msg = serde_json::json!({
+            "type": "control_request",
+            "request_id": req_id,
+            "request": { "subtype": "stop_task", "task_id": task_id }
+        });
+        p.write_line(&msg.to_string()).is_ok()
+    }
 
     /// Makes sure this tab has a live CLI process, spawning one if it does not,
     /// **without sending anything**.
@@ -1442,10 +1469,13 @@ fn run_turn(
     let stdout = child.stdout.take().unwrap();
     let reader = BufReader::new(stdout);
 
-    // Tracks cumulative text already sent for the current assistant turn,
-    // so we can compute deltas from partial assistant events.
-    let mut last_text_len: usize = 0;
-    let mut last_thinking_len: usize = 0;
+    // Tracks cumulative text already sent per conversation LINEAGE, so deltas from
+    // partial assistant events are computed correctly — keyed by parent_tool_use_id
+    // ("" for the top-level conversation). A subagent (Task/Agent tool) multiplexes its
+    // OWN assistant events onto this same stream, each cumulative independently of the
+    // top-level one; a single shared counter would corrupt delta math for whichever
+    // lineage didn't own it at the moment (see process_event_value).
+    let mut cursors: std::collections::HashMap<String, (usize, usize, u64)> = std::collections::HashMap::new();
     // Live output-token counter state (from --include-partial-messages):
     // base from message_start, +1/4 char estimate per text_delta, exact at message_delta.
     let mut tok_base: u64 = 0;
@@ -1459,8 +1489,7 @@ fn run_turn(
             Ok(l) if !l.is_empty() => l,
             _ => continue,
         };
-        process_event(&line, java_vm, callbacks, &mut last_text_len, &mut last_thinking_len,
-                      &mut tok_base, &mut tok_chars);
+        process_event(&line, java_vm, callbacks, &mut cursors, &mut tok_base, &mut tok_chars);
     }
 
     let exit_ok = if cancel.load(Ordering::Relaxed) {
@@ -1708,8 +1737,8 @@ fn reader_loop(
     stdout: std::process::ChildStdout,
 ) {
     let reader = BufReader::new(stdout);
-    let mut last_text_len: usize = 0;
-    let mut last_thinking_len: usize = 0;
+    // See run_turn's own declaration of this for why it's keyed per lineage, not a bare pair.
+    let mut cursors: std::collections::HashMap<String, (usize, usize, u64)> = std::collections::HashMap::new();
     let mut tok_base: u64 = 0;
     let mut tok_chars: u64 = 0;
     // Raw model id from the init event (e.g. "claude-opus-4-8") — reported to the
@@ -1854,8 +1883,7 @@ fn reader_loop(
                     fire_string(&java_vm, &callbacks, "onStatus", &status);
                 }
                 fire_void(&java_vm, &callbacks, "onStreamEnd");
-                last_text_len = 0;
-                last_thinking_len = 0;
+                cursors.clear();
                 tok_base = 0;
                 tok_chars = 0;
                 continue;
@@ -2028,8 +2056,7 @@ fn reader_loop(
             }
         }
 
-        process_event_value(&event, &java_vm, &callbacks, &mut last_text_len,
-                            &mut last_thinking_len, &mut tok_base, &mut tok_chars);
+        process_event_value(&event, &java_vm, &callbacks, &mut cursors, &mut tok_base, &mut tok_chars);
     }
 
     // EOF. Distinguish an INTENTIONAL kill (respawn on settings/tab change, reset,
@@ -2128,8 +2155,13 @@ fn build_status_json(event: &serde_json::Value, model: &str) -> Option<String> {
         return None;
     }
 
+    // Clamped to [0, 100]: a ratio above 100% is never legitimate for display (it means
+    // `window` resolved to the wrong, too-small model entry — e.g. modelUsage briefly
+    // keyed by a small-context helper/sub-model instead of `model` — not that usage
+    // actually exceeds the window), and nothing downstream (ClaudeStatusBar's text label)
+    // clamped it either, so a bad ratio here used to surface as literal text like "1097%".
     let context_pct = if window > 0 {
-        (context_tokens as f64 / window as f64) * 100.0
+        ((context_tokens as f64 / window as f64) * 100.0).clamp(0.0, 100.0)
     } else {
         0.0
     };
@@ -2448,8 +2480,7 @@ fn process_event(
     line: &str,
     java_vm: &Arc<jni::JavaVM>,
     callbacks: &Arc<jni::objects::GlobalRef>,
-    last_text_len: &mut usize,
-    last_thinking_len: &mut usize,
+    cursors: &mut std::collections::HashMap<String, (usize, usize, u64)>,
     tok_base: &mut u64,
     tok_chars: &mut u64,
 ) {
@@ -2457,8 +2488,7 @@ fn process_event(
         Ok(v) => v,
         Err(_) => return,
     };
-    process_event_value(&event, java_vm, callbacks, last_text_len, last_thinking_len,
-                        tok_base, tok_chars);
+    process_event_value(&event, java_vm, callbacks, cursors, tok_base, tok_chars);
 }
 
 /// Pre-parsed variant shared by the legacy per-turn reader and the persistent
@@ -2467,11 +2497,19 @@ fn process_event_value(
     event: &serde_json::Value,
     java_vm: &Arc<jni::JavaVM>,
     callbacks: &Arc<jni::objects::GlobalRef>,
-    last_text_len: &mut usize,
-    last_thinking_len: &mut usize,
+    cursors: &mut std::collections::HashMap<String, (usize, usize, u64)>,
     tok_base: &mut u64,
     tok_chars: &mut u64,
 ) {
+    // A message belonging to a subagent's own nested conversation (Task/Agent tool),
+    // multiplexed onto this SAME stream alongside the top-level conversation's own
+    // events. Every "assistant"/"user" event carries this field; empty/absent means
+    // top-level. Without this check, a subagent's own text/tool calls used to fire
+    // through onText/onToolStart exactly like the top-level model's — rendering
+    // inline in Claude's own message bubble, with whatever real text followed it
+    // getting appended onto that same bubble (nothing had ever started a fresh one).
+    let parent_id = event.get("parent_tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
+    let is_subagent = !parent_id.is_empty();
     match event["type"].as_str().unwrap_or("") {
         // Usage/rate-limit signal — forwarded so the GUI can show a warning banner.
         "rate_limit_event" => {
@@ -2486,6 +2524,51 @@ fn process_event_value(
                 }
                 let msg = event["message"].as_str().unwrap_or("Connected");
                 fire_string(java_vm, callbacks, "onSystem", msg);
+            } else if event["subtype"].as_str() == Some("task_notification") {
+                // A background agent's REAL completion — confirmed against the actual
+                // live stream (not just a saved-file guess, see the two wrong shapes
+                // this replaced): {"tool_use_id":…,"status":"completed","summary":…,
+                // "usage":{"total_tokens":…,"duration_ms":…}}. Its own top-level
+                // tool_result fires almost immediately as a "kicked off" ack (see
+                // chat.js's applyToolResult), so this is the only signal that it's
+                // ACTUALLY done — tool_use_id is given directly, no id-resolution
+                // needed at all. usage's totals are authoritative (summed server-side
+                // over its whole run), more accurate than chat.js's own running total
+                // from onAgentActivity's per-message tallying.
+                if let Some(tool_use_id) = event["tool_use_id"].as_str() {
+                    let payload = serde_json::json!({
+                        "parentId": tool_use_id,
+                        "kind": "finished",
+                        "tokens": event["usage"]["total_tokens"].as_u64(),
+                        "durationMs": event["usage"]["duration_ms"].as_u64(),
+                        // The agent's own final answer, verbatim — never otherwise shown
+                        // anywhere: the top-level model reads this as context and relays
+                        // it in ITS OWN words in the main chat, but the agent's actual
+                        // response text itself isn't displayed unless the Agents popup's
+                        // detail view surfaces it directly (agents.js).
+                        "summary": event["summary"].as_str(),
+                        // "completed" vs "stopped" (the user hit Stop agent) — lets the
+                        // detail view say which, instead of always "Finished".
+                        "status": event["status"].as_str(),
+                    });
+                    fire_string(java_vm, callbacks, "onAgentActivity", &payload.to_string());
+                }
+            } else if event["subtype"].as_str() == Some("task_started") {
+                // The agent's own internal task id — needed for the "Stop agent" button
+                // (ChatManager::stop_task), which has to fire WHILE it's still running.
+                // task_notification (above) only arrives on completion, too late to stop
+                // anything; this is the only event carrying task_id this early, paired
+                // with tool_use_id so it can be matched to the right agentLogs entry.
+                if let (Some(tool_use_id), Some(task_id)) =
+                    (event["tool_use_id"].as_str(), event["task_id"].as_str())
+                {
+                    let payload = serde_json::json!({
+                        "parentId": tool_use_id,
+                        "kind": "taskId",
+                        "taskId": task_id,
+                    });
+                    fire_string(java_vm, callbacks, "onAgentActivity", &payload.to_string());
+                }
             }
         }
         // Tool RESULTS come back on a "user" event (the CLI feeds them to the model
@@ -2502,14 +2585,49 @@ fn process_event_value(
                     if id.is_empty() {
                         continue; // nothing to match it to on the GUI side
                     }
+                    if is_subagent {
+                        // The subagent's OWN tool finishing — its tool_use never got a
+                        // top-level onToolStart (see the tool_use branch below), so this
+                        // is never a top-level onToolEnd either. Relayed the same shape
+                        // (id/isError/text) as that callback, just wrapped with parentId
+                        // and a kind, so the subagent's own nested-transcript log (the
+                        // collapsible section under its tool line, and the Agents
+                        // popup's "Open transcript") can resolve this step the same way
+                        // applyToolResult resolves a top-level one.
+                        let is_error = b["is_error"].as_bool().unwrap_or(false);
+                        let text = if is_error {
+                            crate::session::tool_error_summary(&crate::session::flatten_result_content(b))
+                                .unwrap_or_default()
+                        } else {
+                            crate::session::flatten_result_content(b)
+                        };
+                        let activity = serde_json::json!({
+                            "parentId": parent_id,
+                            "kind": "tool_end",
+                            "id": id,
+                            "isError": is_error,
+                            "text": text,
+                        });
+                        fire_string(java_vm, callbacks, "onAgentActivity", &activity.to_string());
+                        continue;
+                    }
                     let is_error = b["is_error"].as_bool().unwrap_or(false);
                     // Successes fire too: the dot is then set from what actually
                     // happened instead of inferred when the NEXT tool starts.
+                    //
+                    // On error, tool_error_summary condenses to one line (~160 chars) for
+                    // the muted "⚠ …" note under the tool line — that's the only thing the
+                    // GUI renders for a failure. On success, the GUI now actually renders
+                    // the result (chat.js's applyToolResult/renderToolOutput — an "OUT" box,
+                    // a checklist, a clickable result list), so it needs the FULL flattened
+                    // content, not the empty string this used to send when nothing on the
+                    // GUI side read it yet. No truncation here: the page caps/links out to a
+                    // full view for long content on its own (capIfOverflowing in chat.js).
                     let text = if is_error {
                         crate::session::tool_error_summary(&crate::session::flatten_result_content(b))
                             .unwrap_or_default()
                     } else {
-                        String::new()
+                        crate::session::flatten_result_content(b)
                     };
                     let payload = serde_json::json!({
                         "id": id,
@@ -2530,18 +2648,34 @@ fn process_event_value(
             // onError (below, on the "result" branch) and renders the single muted
             // line. Streaming this copy as ordinary text would show it twice.
             let is_api_error = event["isApiErrorMessage"].as_bool().unwrap_or(false);
+            let cursor = cursors.entry(parent_id.to_string()).or_insert((0, 0, 0));
             if !is_api_error {
                 if let Some(content) = event["message"]["content"].as_array() {
                     for block in content {
                         match block["type"].as_str().unwrap_or("") {
                             "text" => {
                                 if let Some(text) = block["text"].as_str() {
-                                    let start = (*last_text_len).min(text.len());
+                                    let start = cursor.0.min(text.len());
                                     let new_part = &text[start..];
                                     if !new_part.is_empty() {
-                                        fire_string(java_vm, callbacks, "onText", new_part);
+                                        // A subagent's own words are relayed under a
+                                        // distinct event ("kind":"text") rather than
+                                        // onText, which chat.js reserves for the
+                                        // top-level model — a subagent's OWN transcript
+                                        // (the collapsible log under its tool line, and
+                                        // the Agents popup's "Open transcript") renders
+                                        // this separately instead of it appearing to be
+                                        // Claude's own reply.
+                                        if is_subagent {
+                                            let activity = serde_json::json!({
+                                                "parentId": parent_id, "kind": "text", "text": new_part,
+                                            });
+                                            fire_string(java_vm, callbacks, "onAgentActivity", &activity.to_string());
+                                        } else {
+                                            fire_string(java_vm, callbacks, "onText", new_part);
+                                        }
                                     }
-                                    *last_text_len = text.len();
+                                    cursor.0 = text.len();
                                 }
                             }
                             "thinking" => {
@@ -2552,39 +2686,89 @@ fn process_event_value(
                                 // reasoning that happened (matches the VSCode panel). When the
                                 // text IS present we stream the delta as before.
                                 let t = block["thinking"].as_str().unwrap_or("");
-                                let start = (*last_thinking_len).min(t.len());
+                                let start = cursor.1.min(t.len());
                                 let new_part = &t[start..];
-                                if !new_part.is_empty() || *last_thinking_len == 0 {
-                                    fire_string(java_vm, callbacks, "onThinking", new_part);
+                                if !new_part.is_empty() || cursor.1 == 0 {
+                                    if is_subagent {
+                                        let activity = serde_json::json!({
+                                            "parentId": parent_id, "kind": "thinking", "text": new_part,
+                                        });
+                                        fire_string(java_vm, callbacks, "onAgentActivity", &activity.to_string());
+                                    } else {
+                                        fire_string(java_vm, callbacks, "onThinking", new_part);
+                                    }
                                 }
-                                *last_thinking_len = t.len();
+                                cursor.1 = t.len();
                             }
                             "tool_use" if !is_partial => {
-                                // Pass name + input so the GUI can show the target file/command
-                                // after the verb and render an inline diff for edits.
-                                let payload = serde_json::json!({
-                                    "name": block["name"].as_str().unwrap_or("tool"),
-                                    "input": block.get("input").cloned().unwrap_or(serde_json::json!({})),
-                                    // Carried so the matching tool_result (onToolEnd)
-                                    // can find THIS line again and resolve its dot.
-                                    "id": block["id"].as_str().unwrap_or(""),
-                                });
-                                fire_string(java_vm, callbacks, "onToolStart", &payload.to_string());
+                                if is_subagent {
+                                    // A subagent's OWN tool call — never a top-level
+                                    // onToolStart (that would render a bogus tool line
+                                    // interleaved into the main transcript). Relayed with
+                                    // its own tool_use id (like onToolStart's "id") so the
+                                    // matching tool_end below can resolve THIS step, same
+                                    // as the top-level onToolStart/onToolEnd pairing.
+                                    let activity = serde_json::json!({
+                                        "parentId": parent_id,
+                                        "kind": "tool_start",
+                                        "name": block["name"].as_str().unwrap_or("tool"),
+                                        "input": block.get("input").cloned().unwrap_or(serde_json::json!({})),
+                                        "id": block["id"].as_str().unwrap_or(""),
+                                    });
+                                    fire_string(java_vm, callbacks, "onAgentActivity", &activity.to_string());
+                                } else {
+                                    // Pass name + input so the GUI can show the target file/command
+                                    // after the verb and render an inline diff for edits.
+                                    let payload = serde_json::json!({
+                                        "name": block["name"].as_str().unwrap_or("tool"),
+                                        "input": block.get("input").cloned().unwrap_or(serde_json::json!({})),
+                                        // Carried so the matching tool_result (onToolEnd)
+                                        // can find THIS line again and resolve its dot.
+                                        "id": block["id"].as_str().unwrap_or(""),
+                                    });
+                                    fire_string(java_vm, callbacks, "onToolStart", &payload.to_string());
+                                }
                             }
                             _ => {}
                         }
                     }
                 }
+                // A subagent's own per-turn usage, summed across its whole run — the
+                // Agents popup's duration+tokens line. Anthropic's `usage` is PER
+                // MESSAGE, not cumulative, so this has to add rather than overwrite;
+                // only counted once a message is actually final (never for a partial
+                // delta still in flight, which would double-count once it completes).
+                // Model rides along on the same message (also the detail popup's
+                // "Sonnet 5"-style field) rather than its own separate event.
+                if is_subagent && !is_partial {
+                    let usage = &event["message"]["usage"];
+                    let added = usage["input_tokens"].as_u64().unwrap_or(0)
+                        + usage["output_tokens"].as_u64().unwrap_or(0)
+                        + usage["cache_creation_input_tokens"].as_u64().unwrap_or(0)
+                        + usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                    cursor.2 += added;
+                    let model = event["message"]["model"].as_str().unwrap_or("");
+                    if added > 0 || !model.is_empty() {
+                        let activity = serde_json::json!({
+                            "parentId": parent_id, "kind": "tokens", "tokens": cursor.2,
+                            "model": if model.is_empty() { serde_json::Value::Null } else { serde_json::Value::from(model) },
+                        });
+                        fire_string(java_vm, callbacks, "onAgentActivity", &activity.to_string());
+                    }
+                }
             }
             if !is_partial {
-                *last_text_len = 0;
-                *last_thinking_len = 0;
+                cursor.0 = 0;
+                cursor.1 = 0;
             }
         }
         // Fine-grained streaming events (only with --include-partial-messages) —
         // used solely to drive the live output-token counter. Text/thinking/tools
         // still render from the complete "assistant" events above.
-        "stream_event" => {
+        // A concurrent background subagent's own token usage must not skew the
+        // top-level turn's live counter — this bar reports the turn the user is
+        // actually watching, not the sum of everything running underneath it.
+        "stream_event" if !is_subagent => {
             let ev = &event["event"];
             match ev["type"].as_str().unwrap_or("") {
                 "message_start" => {

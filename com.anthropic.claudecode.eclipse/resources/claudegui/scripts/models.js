@@ -574,12 +574,26 @@ function closeAccount() {
   unregisterOverlayCancel();
 }
 
-/* ---- slash commands inside the actions menu ---- */
-function buildActionsSlash() {
+/* ---- slash commands inside the actions menu ----
+   This list has grown (9 commands and counting) inside a menu that ALSO carries Rewind/
+   Model/Effort/Thinking/Account/Appearance — unlike the dedicated #slash-menu (which
+   filters as you type in the composer), this flat list had no way to narrow it down.
+   filterActionsSlash below re-runs this against a query; the filter box itself
+   (#actions-slash-filter) is cleared each time the menu opens, in toggleMenu (ui.js). */
+function buildActionsSlash(query) {
   const c = document.getElementById('actions-slash');
   if (!c) return;
   c.innerHTML = '';
-  SLASH_COMMANDS.forEach(cmd => {
+  const q = (query || '').trim().toLowerCase();
+  const items = q ? SLASH_COMMANDS.filter(cmd =>
+      cmd.cmd.toLowerCase().includes(q) || cmd.desc.toLowerCase().includes(q)) : SLASH_COMMANDS;
+  if (!items.length) {
+    const empty = document.createElement('div'); empty.className = 'head';
+    empty.innerHTML = '<span class="h">No matching commands</span>';
+    c.appendChild(empty);
+    return;
+  }
+  items.forEach(cmd => {
     const it = document.createElement('div'); it.className = 'item';
     it.innerHTML = '<span class="cmd"></span><span class="d"></span>';
     it.querySelector('.cmd').textContent = cmd.cmd;
@@ -588,6 +602,7 @@ function buildActionsSlash() {
     c.appendChild(it);
   });
 }
+function filterActionsSlash(query) { buildActionsSlash(query); }
 
 /* Initialise: model config FIRST (so the first tab's default model is the user's
    configured one), then the first tab + context chip + slash list. */

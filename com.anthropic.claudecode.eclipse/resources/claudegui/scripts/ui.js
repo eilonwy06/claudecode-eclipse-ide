@@ -49,6 +49,14 @@ function toggleMenu(id, anchor) {
   const wasOpen = menu.classList.contains('open');
   closeMenus();
   if (wasOpen) return;
+  // Reset any leftover filter text from last time this menu was open, and rebuild the
+  // (unfiltered) list to match — otherwise reopening shows whatever narrowed subset was
+  // left on screen when it was last closed.
+  if (id === 'actions-menu') {
+    const filterInput = document.getElementById('actions-slash-filter');
+    if (filterInput) filterInput.value = '';
+    if (typeof buildActionsSlash === 'function') buildActionsSlash('');
+  }
   menu.classList.add('open');
   positionMenu(menu, anchor);
   openMenuEl = menu; openAnchor = anchor;
@@ -345,10 +353,16 @@ function setStreaming(v) {
   syncComposer();
 }
 
+// Was navigator.clipboard-only (silently did nothing wherever that API isn't available)
+// and, separately, never actually called from anywhere — see chat.js's copyToClipboard
+// for the tool IN/OUT and diff copy buttons, which this now delegates to for the same
+// native-clipboard-bridge-first behavior, kept here as the entry point for any future
+// copy affordance on a plain markdown code fence (.code-block from renderMarkdown).
 function copyBlock(el) {
   const block = el.closest('.code-block');
+  if (!block) return;
   const text = block.querySelector('pre').innerText;
-  if (navigator.clipboard) navigator.clipboard.writeText(text).catch(()=>{});
+  copyToClipboard(el, text);
 }
 
 const messagesEl = document.getElementById('messages');

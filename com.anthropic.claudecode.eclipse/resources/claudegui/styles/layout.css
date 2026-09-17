@@ -187,7 +187,12 @@ body { min-width: 120px; }
 /* position: relative so #jump-to-latest (chat.css) can anchor to this element's
    top edge rather than the page's; nothing else inside #composer is absolutely
    positioned, so this doesn't change any other element's containing block. */
-#composer { position: relative; flex-shrink: 0; padding: 8px 14px 12px; }
+/* display:flex + centered children caps the composer's actual width (below) instead of
+   letting it stretch edge-to-edge as the view widens — a wide Eclipse view/window would
+   otherwise leave the input box uncomfortably wide with no matching cap on the transcript. */
+#composer { position: relative; flex-shrink: 0; padding: 8px 14px 12px;
+  display: flex; flex-direction: column; align-items: center; }
+#usage-warn, #input-wrap { width: 100%; max-width: 700px; }
 /* Floats OVER the transcript at the composer's position (composer hides while a
    card is up). The transcript never reflows; showBottomCard reserves matching
    bottom padding in #messages so the last message can scroll above the card. */
@@ -305,6 +310,16 @@ body { min-width: 120px; }
 .modes-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px;
   border-radius: 6px; color: var(--fg-soft); cursor: pointer; font-size: 12px; }
 .modes-btn:hover { background: var(--bg-hover); }
+/* Agents entry point (composer toolbar, replacing the deprecated /agents slash command)
+   — a status pill like the reference VSCode toolbar's "● 12 agents", not a bare icon:
+   an always-visible chip background (unlike .modes-btn's hover-only fill) with a status
+   dot + live count, hidden entirely until this conversation has at least one agent
+   (agents.js's updateAgentsBtn) — never shown empty. */
+.agents-pill { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+  border-radius: 6px; background: var(--bg-chip); color: var(--fg-soft); cursor: pointer; font-size: 12px; }
+.agents-pill:hover { background: var(--bg-hover); color: var(--fg); }
+.agents-pill .agents-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-faint); flex-shrink: 0; }
+.agents-pill .agents-dot.running { background: var(--accent); }
 /* narrow-width collapse (fitComposerBar): words hide, icons stay, nothing leaves the div.
    The mode label may NEVER wrap — it is either one line or hidden entirely. */
 #modes-lbl { white-space: nowrap; }

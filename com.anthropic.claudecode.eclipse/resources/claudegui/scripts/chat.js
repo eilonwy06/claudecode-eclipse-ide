@@ -82,7 +82,33 @@ let suppressFollowTailUpdate = false;
 messagesEl.addEventListener('scroll', () => {
   if (suppressFollowTailUpdate) return;
   followTail = isNearBottom(); updateJumpToLatest();
+  updatePinnedPrompt();
 });
+/** Exactly ONE user turn is ever pinned at a time — the most recent one that has already
+ *  scrolled up to (or past) #messages' own top edge. Plain CSS `position: sticky` on every
+ *  user turn independently can't express this: two turns sharing the same `top: 0` each
+ *  satisfy their own "stick" condition once THEY individually scroll past it, with no
+ *  awareness of each other, so a shorter later turn sticks right on top of a taller
+ *  earlier one without fully covering it — the earlier (still technically "stuck") bubble's
+ *  extra height stays visible poking out from underneath. Picking the single correct one by
+ *  hand (a `.pinned-prompt` class chat.css keys `position: sticky` off, in place of a blanket
+ *  selector matching every user turn) sidesteps that rather than fighting sticky's own math. */
+function updatePinnedPrompt() {
+  const t = activeTab(); if (!t || !t.pane) return;
+  const turns = t.pane.querySelectorAll(':scope > .turn');
+  const containerTop = messagesEl.getBoundingClientRect().top;
+  let active = null;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (!turns[i].querySelector(':scope > .user-msg')) continue;
+    // Reads the turn's CURRENT (possibly still sticky-from-last-pass) position — fine
+    // either way: a still-correctly-pinned turn reports a top at/near containerTop and
+    // keeps winning; a turn that should no longer be pinned reports its true, now-lower
+    // in-flow position (once un-pinned it's a plain block again) and loses to whichever
+    // later turn has since crossed the same threshold.
+    if (turns[i].getBoundingClientRect().top <= containerTop + 1) { active = turns[i]; break; }
+  }
+  turns.forEach(turn => turn.classList.toggle('pinned-prompt', turn === active));
+}
 /* The one place the transcript decides whether to move. Shared with showWorking, which
    appends outside of scrollBottom. */
 function autoScroll() {
@@ -93,6 +119,7 @@ function autoScroll() {
   // strand followTail at false and leave the button unable to retire itself.
   followTail = true;
   updateJumpToLatest();
+  updatePinnedPrompt();
 }
 /**
  * @param {boolean} [force] Jump to the bottom even when the lock is armed and the user
@@ -112,6 +139,7 @@ function scrollBottom(force) {
     messagesEl.scrollTop = messagesEl.scrollHeight;
     followTail = true;   // same no-op-write reasoning as autoScroll
     updateJumpToLatest();
+    updatePinnedPrompt();
     return;
   }
   autoScroll();
@@ -181,6 +209,24 @@ function addUserMessage(text, ctx, images, id, ts, pane) {
     if (typeof appendMentionText === 'function') appendMentionText(body, text);
     else body.textContent = text;
     box.appendChild(body);
+    // 2-line clamp + Show more/less (chat.css .user-msg .body.clampable) — added only once
+    // attached to the DOM shows the body actually overflows two lines, same measure-then-
+    // decide reasoning as makeIoBlock's capIfOverflowing, so a short prompt never gets a
+    // toggle with nothing behind it to expand. The class has to go on BEFORE measuring:
+    // clientHeight only differs from scrollHeight once something is actually capping it —
+    // measuring first (the original bug here) always saw them equal, since nothing had
+    // constrained the height yet, so nothing ever counted as overflowing.
+    requestAnimationFrame(() => {
+      body.classList.add('clampable');
+      if (body.scrollHeight <= body.clientHeight + 2) { body.classList.remove('clampable'); return; }
+      const more = document.createElement('button');
+      more.type = 'button'; more.className = 'clamp-toggle more'; more.textContent = 'Show more';
+      more.onclick = () => box.classList.add('expanded');
+      const less = document.createElement('button');
+      less.type = 'button'; less.className = 'clamp-toggle less'; less.textContent = 'Show less';
+      less.onclick = () => box.classList.remove('expanded');
+      box.appendChild(more); box.appendChild(less);
+    });
   }
   turn.appendChild(box); pane.appendChild(turn);
   // force only with Smart Scroll Lock on: by default, with the lock armed, sending must
@@ -268,15 +314,32 @@ function discardAssistant() {
 const TOOL_LABELS = {
   read:'Read', write:'Write', edit:'Edit', multiedit:'Edit', notebookedit:'Edit',
   opendiff:'Edit', closealldifftabs:'Edit', savedocument:'Save', openfile:'Open',
-  bash:'Run', bashoutput:'Run', killshell:'Run',
-  glob:'Search', grep:'Search', toolsearch:'Search', websearch:'Search',
-  findreferences:'Search', gettypehierarchy:'Search', getsymbolinfo:'Search',
-  webfetch:'Fetch', task:'Working', todowrite:'Planning', exitplanmode:"Claude's Plan",
+  bash:'Bash', bashoutput:'BashOutput', killshell:'KillShell',
+  // Each of these used to collapse into one generic 'Search' bucket — you couldn't tell
+  // a Grep from a WebSearch from a JDT FindReferences without reading the input. Now
+  // distinct, matching VSCode's own per-tool labels.
+  glob:'Glob', grep:'Grep', toolsearch:'Search', websearch:'WebSearch',
+  findreferences:'FindReferences', gettypehierarchy:'GetTypeHierarchy', getsymbolinfo:'GetSymbolInfo',
+  webfetch:'Fetch', agent:'Agent', task:'Agent', skill:'Skill', workflow:'Workflow',
+  todowrite:'Planning', exitplanmode:"Claude's Plan",
   askuserquestion:'Asking', runtests:'Testing',
   getdiagnostics:'Checking', checkdocumentdirty:'Checking',
   getcurrentselection:'Reading', getlatestselection:'Reading',
   getopeneditors:'Reading', getworkspacefolders:'Reading', approvalprompt:'Permission'
 };
+/* Tool names whose result text is naturally structured as "file:line[:col]" rows
+   (search/reference/diagnostic-shaped) — their OUT gets rendered as a clickable
+   result list instead of a plain <pre>. See renderToolOutput(). */
+const RESULT_LIST_TOOLS = new Set([
+  'grep', 'glob', 'findreferences', 'gettypehierarchy', 'getsymbolinfo', 'getdiagnostics'
+]);
+// The subagent-launching tool is named `Agent` in the current CLI (confirmed against the
+// official tools-reference) but was `Task` in older ones — accept both raw names so this
+// doesn't silently stop matching again if a session runs against a different CLI version.
+// One set, checked everywhere `key === 'task'` used to be hardcoded in exactly one place
+// (that mismatch — real name "Agent", checked name "task" — is why the agent registry
+// stayed empty and /agents always said "No agents this session yet").
+const AGENT_KEYS = new Set(['agent', 'task']);
 function toolLabel(name) {
   if (!name) return 'Working';
   let n = name;
@@ -298,6 +361,8 @@ function toolLabel(name) {
  * @param {string} [errorText] reload path only
  * @param {string} [root] the OWNING conversation's working directory, for resolving a
  *   relative file_path when the line is clicked — see .tpath's onclick below.
+ * @param {string} [resultText] reload path only — a successful tool's full output
+ *   (session.rs's resultText field), rendered the same way applyToolResult does live.
  * @returns {HTMLElement} the .tool-line item
  */
 /* Outcome text for an ExitPlanMode line. Shared by the LIVE decision path
@@ -318,29 +383,350 @@ function setToolError(line, text) {
   if (!sub) { sub = document.createElement('div'); sub.className = 'tool-sub err'; line.appendChild(sub); }
   sub.textContent = '⚠ ' + text;
 }
-function makeToolLine(name, input, status, errorText, root) {
-  input = input || {};
-  const path = input.file_path || input.path || input.notebook_path || '';
-  const detail = path || input.command || input.pattern || input.query || input.url || input.prompt || '';
-  const line = document.createElement('div'); line.className = 'a-item tool-line';
-  const dotClass = status === 'done' ? 'dot done' : status === 'interrupted' ? 'dot red' : 'dot';
-  line.innerHTML = '<span class="' + dotClass + '"></span><span class="tname"></span> <span class="tpath"></span>';
-  line.querySelector('.tname').textContent = toolLabel(name);   // generic label, not the raw name
-  const tpathEl = line.querySelector('.tpath');
-  tpathEl.textContent = detail;
-  // Only an actual file path is clickable — never the bash/grep/url/prompt fallbacks
-  // `detail` also covers. Silently a no-op if the path turns out stale (deleted,
-  // renamed) or unresolvable; see ClaudeGuiView#openFileInEditor.
-  if (path && window._openFileInEditor) {
-    tpathEl.classList.add('clickable');
-    tpathEl.title = 'Open in editor';
-    // No stopPropagation: unlike msgactions.js's icons (which sit inside a clickable
-    // .item), no ancestor of .tool-line has its own onclick, and this transcript sits
-    // inside the same page as menus tracked by openMenuEl — stopping propagation here
-    // would silently stop clicking a path from also closing an open menu via ui.js's
-    // click-outside handler, same class of bug as cycleSearchScope's innerHTML swap.
-    tpathEl.onclick = () => window._openFileInEditor(path, root || rootPathOf(activeTab()));
+/** Copies `text` via the native SWT clipboard bridge when available (same priority
+ *  order as contextmenu.js's ccCopy), flashing the button that triggered it. */
+function copyToClipboard(btn, text) {
+  if (window._clipSet) window._clipSet(text);
+  else if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+  if (!btn) return;
+  clearTimeout(btn._copyTimer);
+  const original = btn.textContent;
+  btn.textContent = 'Copied'; btn.classList.add('copied');
+  btn._copyTimer = setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1200);
+}
+/** A small "Copy" button, hover-revealed by the caller's own CSS (.io-row:hover / .tpath-wrap:hover). */
+function makeCopyBtn(getText) {
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'copy-btn'; btn.textContent = 'Copy';
+  btn.onclick = (e) => { e.stopPropagation(); copyToClipboard(btn, getText()); };
+  return btn;
+}
+/** "View full output/diff" footer for a block whose content really overflows its CSS
+ *  cap — appended lazily by capIfOverflowing() below, never up front, so short content
+ *  never gets a link with nothing behind it to expand. Opens a real read-only-in-spirit
+ *  editor tab (a throwaway temp file — see ClaudeGuiView#openTextInEditor), not a dialog,
+ *  matching the same target VSCode uses for "view full output". */
+function makeMoreHint(label, getFullText) {
+  const hint = document.createElement('div');
+  hint.className = 'more-hint'; hint.textContent = label;
+  hint.onclick = () => { if (window._openTextInEditor) window._openTextInEditor(getFullText()); };
+  return hint;
+}
+/** Measures `contentEl` against `block`'s CSS-capped height AFTER layout and only then
+ *  appends a more-hint — the cap itself is pure CSS (.io-block.capped), this just decides
+ *  whether there's anything to expand. Called once per block, right after it's inserted. */
+function capIfOverflowing(block, contentEl, label, getFullText) {
+  block.classList.add('capped');
+  // Reading scrollHeight forces layout — fine here since this runs once per new block,
+  // not per streamed chunk (chat.js's autoScroll doc comment explains why THAT path
+  // avoids it).
+  if (contentEl.scrollHeight <= contentEl.clientHeight + 2) { block.classList.remove('capped'); return; }
+  block.appendChild(makeMoreHint(label, getFullText));
+}
+/** Parses one line of tool-result text for a leading "path:line[:col]" prefix (grep -n /
+ *  ripgrep / JDT reference style). Returns null when the line doesn't look like a hit,
+ *  so callers can fall back to plain text instead of mis-rendering unrelated output. */
+function parseResultLine(line) {
+  const m = /^([^\s:][^:]*):(\d+):(?:(\d+):)?\s?(.*)$/.exec(line);
+  if (!m) return null;
+  return { file: m[1], line: m[2], col: m[3] || null, rest: m[4] || '' };
+}
+/** Builds the clickable result-list for search/reference/diagnostic-shaped output
+ *  (RESULT_LIST_TOOLS). Capped to a handful of rows + "+N more" into the full text,
+ *  same principle as capIfOverflowing but for discrete rows rather than a <pre>. */
+function buildResultList(text, root) {
+  const lines = text.split('\n').filter(l => l.trim());
+  if (!lines.length) return null;
+  const MAX_ROWS = 5;
+  const list = document.createElement('div'); list.className = 'result-list';
+  lines.slice(0, MAX_ROWS).forEach(l => {
+    const parsed = parseResultLine(l);
+    const row = document.createElement('div'); row.className = 'result-item';
+    if (parsed && window._openFileInEditor) {
+      row.classList.add('clickable');
+      row.textContent = parsed.file;
+      const loc = document.createElement('span'); loc.className = 'rloc';
+      loc.textContent = 'line ' + parsed.line + (parsed.rest ? ' — ' + parsed.rest : '');
+      row.appendChild(loc);
+      row.onclick = () => window._openFileInEditor(parsed.file, root);
+    } else {
+      row.textContent = l;
+    }
+    list.appendChild(row);
+  });
+  if (lines.length > MAX_ROWS) {
+    list.appendChild(makeMoreHint('+' + (lines.length - MAX_ROWS) + ' more — view all', () => text));
   }
+  return list;
+}
+/** Structured checklist for TodoWrite — its meaningful payload is the INPUT
+ *  (input.todos), not the tool_result text (which is just a short CLI ack), so this
+ *  renders at makeToolLine() time like the diff block, not at applyToolResult() time. */
+function buildTodoChecklist(input) {
+  const todos = Array.isArray(input && input.todos) ? input.todos : null;
+  if (!todos || !todos.length) return null;
+  const block = document.createElement('div'); block.className = 'io-block todo-block';
+  todos.forEach(t => {
+    const status = t.status || 'pending';
+    const row = document.createElement('div'); row.className = 'todo-item ' + status;
+    const chk = document.createElement('span'); chk.className = 'chk';
+    chk.textContent = status === 'completed' ? '✓' : '';
+    const label = document.createElement('span'); label.className = 'tlabel';
+    label.textContent = (status === 'in_progress' && t.activeForm) ? t.activeForm : (t.content || '');
+    row.appendChild(chk); row.appendChild(label);
+    block.appendChild(row);
+  });
+  return block;
+}
+/** Renders one IN or OUT row (gutter label + text + hover-copy button) as a new `.io-item`
+ *  inside an EXISTING `block`. Multiple items sharing one block — a Bash call's IN and its
+ *  later OUT — render as a single bordered card with a divider between them (matching
+ *  VSCode), not two separate boxes with a gap; see makeToolLine/renderToolOutput, which
+ *  join into the same block via line._ioBlock instead of each creating their own. */
+function appendIoRow(block, label, text) {
+  const item = document.createElement('div'); item.className = 'io-item';
+  const row = document.createElement('div'); row.className = 'io-row';
+  const labelEl = document.createElement('span'); labelEl.className = 'io-label'; labelEl.textContent = label;
+  const pre = document.createElement('pre'); pre.textContent = text;
+  row.appendChild(labelEl); row.appendChild(pre); row.appendChild(makeCopyBtn(() => text));
+  item.appendChild(row);
+  block.appendChild(item);
+  // Deferred to the next frame: appended to a detached-from-layout line at call time in
+  // some paths (history reconstruction builds the whole turn before it's in the DOM), so
+  // measuring scrollHeight/clientHeight immediately would see 0/0 and never cap anything.
+  const fullWord = label === 'IN' ? 'input' : label === 'OUT' ? 'output' : label.toLowerCase();
+  requestAnimationFrame(() => capIfOverflowing(item, pre, 'View full ' + fullWord, () => text));
+  return item;
+}
+/** A fresh `.io-block` holding a single row — the common case (a tool with only an IN, or
+ *  only an OUT, and nothing to join it with). */
+function makeIoBlock(label, text) {
+  const block = document.createElement('div'); block.className = 'io-block';
+  appendIoRow(block, label, text);
+  return block;
+}
+/** Per-subagent nested transcript — keyed by the Agent tool_use's own id (the same value a
+ *  .tool-line stores as data-tuid). Shared by BOTH the inline collapsible section under a
+ *  running agent's own line (renderAgentLogItem below) and the Agents popup's
+ *  list/detail/"Open transcript" views (agents.js), so the two never disagree about the
+ *  same agent. Populated two ways depending on how the entry got here: live, incrementally
+ *  by applyAgentActivity below (fed by chat.rs's onAgentActivity relay); on reload, all at
+ *  once by history.js from session.rs's reconstructed agentLog field (built from the same
+ *  parent_tool_use_id-tagged transcript lines, just read back off disk instead of streamed
+ *  live) — so a reopened conversation's agents keep their duration/tokens/prompt/tool-call
+ *  list/transcript instead of losing them the moment the webview that ran them live is gone. */
+const agentLogs = new Map();
+function ensureAgentLog(id) {
+  let log = agentLogs.get(id);
+  // startedAt defaults to NOW, not 0: addToolLine's own explicit stamp (the tool_use
+  // actually starting) is the accurate one and still wins whenever it runs, but
+  // duration must never depend on that ONE call site succeeding — whichever event
+  // touches this agent's log FIRST (a live activity update, a reload's reconstructed
+  // data) still gives a real, ticking number instead of a permanent "0s" if it doesn't.
+  if (!log) {
+    log = { items: [], tokens: 0, model: '', startedAt: Date.now(), endedAt: 0, input: {}, taskId: '', finishStatus: '' };
+    agentLogs.set(id, log);
+  }
+  return log;
+}
+/** Java → JS via stream.js's window.onAgentActivity. One `kind` per chat.rs relay event:
+ *  'text'/'thinking' append onto the trailing item of that kind (mirrors curText's own
+ *  delta-accumulation for the top-level stream); 'tool_start'/'tool_end' are a step in the
+ *  subagent's own tool use, matched by ITS OWN tool_use id (info.id) — distinct from
+ *  parentId, which is the AGENT's id; 'tokens' carries cumulative usage + model, piggybacked
+ *  on whichever message just completed rather than its own event. */
+function applyAgentActivity(json) {
+  let info; try { info = JSON.parse(json); } catch (e) { return; }
+  if (!info || !info.parentId) return;
+  const log = ensureAgentLog(info.parentId);
+  if (info.kind === 'tokens') {
+    if (typeof info.tokens === 'number') log.tokens = info.tokens;
+    if (info.model) log.model = info.model;
+  } else if (info.kind === 'text' || info.kind === 'thinking') {
+    const last = log.items[log.items.length - 1];
+    let item = (last && last.kind === info.kind) ? last : null;
+    if (!item) { item = { kind: info.kind, text: '' }; log.items.push(item); }
+    item.text += info.text || '';
+    renderAgentLogItem(info.parentId, item);
+  } else if (info.kind === 'tool_start') {
+    const item = { kind: 'tool', name: info.name, input: info.input || {}, id: info.id };
+    log.items.push(item);
+    renderAgentLogItem(info.parentId, item);
+  } else if (info.kind === 'tool_end') {
+    const item = log.items.find(it => it.kind === 'tool' && it.id === info.id);
+    if (item) {
+      item.status = info.isError ? 'interrupted' : 'done';
+      item.errorText = info.isError ? info.text : '';
+      item.resultText = info.isError ? '' : info.text;
+      renderAgentLogItem(info.parentId, item);
+    }
+  } else if (info.kind === 'finished') {
+    // The background agent's own system/task_notification actually finishing (chat.rs)
+    // — the only real "it's done" signal for one of these; its top-level tool_result
+    // (applyToolResult) fires almost immediately as a "kicked off" ack and deliberately
+    // does NOT stamp this itself, or duration would freeze near-zero the same way it
+    // used to before that was found and fixed. tokens/durationMs are server-computed
+    // totals for the agent's WHOLE run — more accurate than the running total this
+    // page tallied itself from each individual message's usage — so they win here.
+    if (typeof info.tokens === 'number') log.tokens = info.tokens;
+    if (info.summary) log.summary = info.summary;
+    // "completed" vs "stopped" (the user hit Stop agent) — agents.js's detail view
+    // shows this instead of always saying "Finished".
+    if (info.status) log.finishStatus = info.status;
+    log.endedAt = (typeof info.durationMs === 'number' && log.startedAt)
+        ? log.startedAt + info.durationMs
+        : Date.now();
+  } else if (info.kind === 'taskId') {
+    // The agent's own internal task id (chat.rs's task_started) — a DIFFERENT id
+    // from parentId (its tool_use id) — captured while it's still running, since
+    // it's the only thing "Stop agent" (agents.js) can actually send a stop_task
+    // control_request against.
+    log.taskId = info.taskId;
+  }
+  if (window.renderAgentsPanel) window.renderAgentsPanel();
+}
+/** Builds ONE log item's DOM node — shared by the live inline collapsible below and
+ *  agents.js's "Open transcript" full view, so a subagent's work never renders two
+ *  different ways depending on where it's being looked at. */
+function buildAgentLogItemEl(item) {
+  if (item.kind === 'tool') {
+    return makeToolLine(item.name, item.input, item.status, item.errorText, rootPathOf(activeTab()), item.resultText);
+  }
+  const el = document.createElement('div');
+  el.className = 'a-item muted' + (item.kind === 'thinking' ? ' agent-log-think' : '');
+  el.innerHTML = '<span class="dot gray"></span><span class="a-body"></span>';
+  el.querySelector('.a-body').innerHTML = renderMarkdown(item.text);
+  return el;
+}
+/** (Re)builds one log item's DOM node and places/replaces it inside the LIVE inline
+ *  collapsible section under that agent's own tool line — a no-op if that line isn't
+ *  rendered right now (the data is still recorded in agentLogs either way; the Agents
+ *  popup's "Open transcript" always renders fresh from there, so this is only about
+ *  keeping the inline copy live while it's actually on screen). */
+function renderAgentLogItem(parentId, item) {
+  const line = document.querySelector('.tool-line[data-tuid="' + parentId + '"]');
+  const body = line && line.querySelector(':scope > .agent-log > .agent-log-body');
+  if (!body) return;
+  const el = buildAgentLogItemEl(item);
+  if (item._el && item._el.parentNode) item._el.replaceWith(el); else body.appendChild(el);
+  item._el = el;
+}
+/** The collapsible "Agent activity" toggle appended under a running agent's own tool
+ *  line — collapsed by default so a busy subagent's own steps don't dominate the main
+ *  transcript, but never hidden entirely per-request: real work, just tucked behind a
+ *  fold instead of interleaved as if it were the top-level Claude's own steps. */
+function makeAgentLogSection() {
+  const wrap = document.createElement('div'); wrap.className = 'agent-log';
+  wrap.innerHTML = '<div class="agent-log-head"><span class="chev">' + ICONS.CHEVRON + '</span>'
+      + '<span class="agent-log-label">Agent activity</span></div><div class="agent-log-body"></div>';
+  wrap.querySelector('.agent-log-head').onclick = () => wrap.classList.toggle('open');
+  return wrap;
+}
+// Tools whose input is fully represented some other way (a diff block, the description
+// span, a checklist, or their own dedicated card elsewhere) — never also get a boxed IN.
+const SKIP_IN_BOX = new Set([
+  'write', 'edit', 'multiedit', 'notebookedit', 'agent', 'task', 'todowrite',
+  'askuserquestion', 'approvalprompt', 'exitplanmode'
+]);
+function makeToolLine(name, input, status, errorText, root, resultText, hasAgentLog) {
+  input = input || {};
+  const key = String(name || '').indexOf('mcp__') === 0
+      ? String(name).split('__').pop().toLowerCase() : String(name || '').toLowerCase();
+  const path = input.file_path || input.path || input.notebook_path || '';
+  const isAgent = AGENT_KEYS.has(key);
+  // A shell command or a Workflow script is always boxed below regardless of length —
+  // unlike a short Grep pattern or file path, VSCode renders these as code in their own
+  // IN box even on one line.
+  const hasCommand = !isAgent && typeof input.command === 'string' && input.command.length > 0;
+  const hasScript = !isAgent && typeof input.script === 'string' && input.script.length > 0;
+  // Grep/Glob both accept an optional `path` that merely SCOPES the search — it isn't the
+  // interesting value the way file_path is for Read/Write/Edit. Left in the default
+  // priority order, a scoped search would show the search directory inline and never the
+  // pattern actually being searched for.
+  const preferPatternOverPath = key === 'grep' || key === 'glob';
+  // Agent's own description takes the place of the generic one-liner entirely (matching
+  // VSCode's "Agent: <description>") rather than showing a truncated raw prompt underneath.
+  const detailFields = isAgent ? [] : preferPatternOverPath
+      ? [input.pattern, path, input.command, input.query, input.url, input.prompt, input.script]
+      : [path, input.command, input.pattern, input.query, input.url, input.prompt, input.script];
+  const detail = detailFields.find(v => typeof v === 'string' && v) || '';
+  const line = document.createElement('div'); line.className = 'a-item tool-line';
+  line.dataset.tname = key;   // looked up again in applyToolResult to decide how to render OUT
+  const dotClass = status === 'done' ? 'dot done' : status === 'interrupted' ? 'dot red' : 'dot';
+  line.innerHTML = '<span class="' + dotClass + '"></span><span class="tname"></span>'
+      + (isAgent ? ' <span class="tagent-type"></span> <span class="tdesc"></span>'
+                 : ' <span class="tdesc"></span> <span class="tpath-wrap"><span class="tpath"></span></span>');
+  line.querySelector('.tname').textContent = toolLabel(name);   // generic label, not the raw name
+  // Multi-line detail (or any command/script, see hasCommand/hasScript) gets ONLY the boxed
+  // IN below, never also the inline one-liner — the two used to both render for the same
+  // content (e.g. a multi-line Bash script showed once wrapped inline via .tpath, then again
+  // in its own IN box right after it).
+  const isMultiline = !isAgent && detail.indexOf('\n') !== -1;
+  const boxDetail = isMultiline || hasCommand || hasScript;
+  if (isAgent) {
+    // Which kind of agent, right in front of the "Agent" name (e.g. "Agent (Explore)") —
+    // otherwise every subagent call reads identically regardless of what actually ran.
+    const agentType = input.subagent_type || '';
+    if (agentType) line.querySelector('.tagent-type').textContent = '(' + agentType + ')';
+    // The short description sits inline (unchanged); the full prompt gets its own boxed
+    // IN below — unconditionally, not gated on multi-line like other tools, since even a
+    // short one-line prompt is worth separating from the description it's easy to conflate
+    // it with otherwise.
+    line.querySelector('.tdesc').textContent = input.description || '';
+    // Stashed on the line so a later OUT (the agent's own eventual result) joins into
+    // this SAME box instead of opening a second, separately-bordered one right under it.
+    if (input.prompt) line.appendChild(line._ioBlock = makeIoBlock('IN', input.prompt));
+    // Live (status undefined) always gets the toggle — it starts empty and fills in as
+    // the agent actually runs, so there's nothing to check upfront. Reload only gets one
+    // when session.rs's reconstructed agentLog actually has something in it (hasAgentLog,
+    // set by the caller — never hardcode "no toggle with nothing behind it" the other way
+    // around, matching capIfOverflowing's own rule elsewhere in this file).
+    if (status === undefined || hasAgentLog) line.appendChild(makeAgentLogSection());
+  } else {
+    // A tool's own description (e.g. Bash's "what this command does") sits inline next to
+    // the name, same slot Agent uses above — independent of whether detail is boxed below.
+    if (input.description) line.querySelector('.tdesc').textContent = input.description;
+    if (boxDetail) {
+      // Leave .tpath-wrap in the DOM (simpler than branching the innerHTML above) but
+      // empty and invisible — the boxed IN a few lines down is the sole representation.
+      line.querySelector('.tpath-wrap').style.display = 'none';
+    } else {
+      const tpathEl = line.querySelector('.tpath');
+      tpathEl.textContent = detail;
+      // Only when `detail` IS the path (not a pattern/query/etc. that outranked it — see
+      // preferPatternOverPath) is it clickable. Otherwise the visible text and the path a
+      // click would open are two different things (e.g. a scoped Grep showing its pattern
+      // but a `path` field pointing at the search directory). Silently a no-op if the path
+      // turns out stale (deleted, renamed) or unresolvable; see ClaudeGuiView#openFileInEditor.
+      if (path && detail === path && window._openFileInEditor) {
+        tpathEl.classList.add('clickable');
+        tpathEl.title = 'Open in editor';
+        // No stopPropagation: unlike msgactions.js's icons (which sit inside a clickable
+        // .item), no ancestor of .tool-line has its own onclick, and this transcript sits
+        // inside the same page as menus tracked by openMenuEl — stopping propagation here
+        // would silently stop clicking a path from also closing an open menu via ui.js's
+        // click-outside handler, same class of bug as cycleSearchScope's innerHTML swap.
+        tpathEl.onclick = () => window._openFileInEditor(path, root || rootPathOf(activeTab()));
+      }
+      if (detail) line.querySelector('.tpath-wrap').appendChild(makeCopyBtn(() => detail));
+    }
+  }
+  // A boxed IN row for input that .tpath's one-line fallback chain can't represent well:
+  // a command (always, see hasCommand), genuinely multi-line text (a long Agent-less
+  // prompt), or a tool whose real payload is structured JSON with no single dominant field
+  // (SendMessage, CronCreate, TaskStop…). Never for tools in SKIP_IN_BOX — input renders
+  // elsewhere for those.
+  if (!SKIP_IN_BOX.has(key)) {
+    // Stashed on the line (same as the Agent branch above) so a later OUT joins into
+    // this SAME bordered box instead of opening a second one right under it.
+    if (boxDetail) {
+      line.appendChild(line._ioBlock = makeIoBlock('IN', detail));
+    } else if (!isAgent && !detail && Object.keys(input).length) {
+      line.appendChild(line._ioBlock = makeIoBlock('IN', JSON.stringify(input, null, 2)));
+    }
+  }
+  const todoBlock = key === 'todowrite' ? buildTodoChecklist(input) : null;
+  if (todoBlock) line.appendChild(todoBlock);
   const diff = buildToolDiff(name, input);
   if (diff) {
     const sub = document.createElement('div'); sub.className = 'tool-sub'; sub.textContent = diff.summary;
@@ -358,6 +744,12 @@ function makeToolLine(name, input, status, errorText, root) {
   // simply cut off has no result and no text — the red dot alone still reads
   // "stopped", which is what it meant live.
   if (status === 'interrupted') setToolError(line, errorText);
+  // Reload path: the successful tool's actual output — same renderer applyToolResult
+  // calls live, so a reopened conversation shows the OUT box/result-list/checklist it had
+  // live instead of just the input. Absent entirely on the live path (undefined), and
+  // absent here too for a tool session.rs didn't record success output for (errors, asks,
+  // a cut-off turn) — renderToolOutput's own `if (!text...) return` covers both.
+  if (resultText) renderToolOutput(line, key, resultText);
   return line;
 }
 function addToolLine(payload) {
@@ -371,6 +763,22 @@ function addToolLine(payload) {
   // The tool_use id, so this line can be found again when its result lands. An
   // older core sends no id — the line then just keeps the inferred green dot.
   if (info.id) line.dataset.tuid = info.id;
+  // agents.js reads the transcript DOM directly (rather than a separately tracked list) —
+  // works the same whether a card got here via live streaming or history reconstruction,
+  // and survives a reload/resume that a session-only registry wouldn't. This just pokes it
+  // to re-render if the popup happens to be open right now.
+  if (AGENT_KEYS.has(line.dataset.tname)) {
+    if (info.id) {
+      // Duration/prompt for the Agents popup's list+detail views — recorded here
+      // (start of the tool_use) rather than only in agentLogs' activity-driven
+      // entries, so it exists even for an agent that finishes with zero steps of
+      // its own logged (a near-instant one, or one that only ever answers in text).
+      const log = ensureAgentLog(info.id);
+      log.startedAt = Date.now();
+      log.input = info.input || {};
+    }
+    if (window.renderAgentsPanel) window.renderAgentsPanel();
+  }
   curTurn.appendChild(line);
   // End the current text body so any text Claude emits AFTER this tool starts a new
   // body BELOW the tool line (otherwise the closing "Done…" merges in above the edits).
@@ -400,7 +808,56 @@ function applyToolResult(payload) {
   if (line.classList.contains('pending')) return;
   const dot = line.querySelector('.dot');
   if (dot) dot.className = info.isError ? 'dot red' : 'dot done';
-  if (info.isError) setToolError(line, info.text);
+  // The dot's class (just set above) already reflects the outcome — agents.js reads that
+  // straight off the DOM, so this is just a poke to re-render if the popup is open.
+  if (AGENT_KEYS.has(line.dataset.tname)) {
+    const log = ensureAgentLog(info.id);
+    // A BACKGROUND agent's own top-level tool_result is an early "kicked off"
+    // acknowledgment, not its real completion — confirmed live: a real run logged 21k
+    // tokens and 3 of its own steps (via onAgentActivity) in the ~30ms window between
+    // this firing and the agent's own start. Stamping endedAt from it froze duration at
+    // that ~30ms forever. Foreground agents don't have this problem — their tool_result
+    // genuinely IS the final result — so only skip the stamp for background ones; leaving
+    // endedAt unset lets agentDurationMs keep counting up against Date.now() instead.
+    if (!(log.input && log.input.run_in_background)) {
+      log.endedAt = Date.now();
+    }
+    if (window.renderAgentsPanel) window.renderAgentsPanel();
+  }
+  if (info.isError) { setToolError(line, info.text); return; }
+  renderToolOutput(line, line.dataset.tname || '', info.text);
+}
+// Tools whose successful result is already fully represented some other way (a diff,
+// the plan-outcome tool-sub, the question card) — showing the CLI's boilerplate ack text
+// underneath would just be noise, so OUT is skipped for these specifically.
+const SKIP_OUT_BOX = new Set(['write', 'edit', 'multiedit', 'notebookedit', 'exitplanmode', 'askuserquestion', 'approvalprompt', 'todowrite']);
+/* The actual output-rendering fix: until now a successful tool_result only ever colored
+   the dot (applyToolResult above) — the CLI's answer never appeared anywhere. Shared by
+   the live path (applyToolResult) and, when a reload's session.rs starts carrying result
+   text too, the history path — both just need a line + a tool name + result text.
+   Idempotent: matches setToolError's "replace, don't stack" rule for a duplicate result. */
+function renderToolOutput(line, key, text) {
+  if (!text || SKIP_OUT_BOX.has(key)) return;
+  // Idempotent: a duplicate/updated result for the same tool replaces just the OUT
+  // piece — never the whole shared block an IN row might still belong to.
+  const stale = line.querySelector('.io-item.out, .result-list.out');
+  if (stale) stale.remove();
+  if (RESULT_LIST_TOOLS.has(key)) {
+    const resultList = buildResultList(text, rootPathOf(activeTab()));
+    if (resultList) { resultList.classList.add('out'); line.appendChild(resultList); }
+    return;
+  }
+  // Joins into the SAME box as an existing IN row (matches VSCode's single bordered
+  // IN/OUT card with a divider between them, not two separate boxes with a gap) —
+  // falls back to a fresh block when this tool never got a boxed IN in the first place
+  // (e.g. a simple command whose input is just the inline .tpath one-liner).
+  let block = line._ioBlock;
+  if (!block || !line.contains(block)) {
+    block = document.createElement('div'); block.className = 'io-block';
+    line.appendChild(block);
+    line._ioBlock = block;
+  }
+  appendIoRow(block, 'OUT', text).classList.add('out');
 }
 /* Minimal LCS line diff (guarded against pathological sizes). */
 function lineDiff(oldStr, newStr) {
@@ -435,24 +892,50 @@ function buildToolDiff(name, input) {
       if (i) rows.push(['gap', '']);
       lineDiff(e.old_string || '', e.new_string || '').forEach(r => rows.push(r));
     });
+  } else if (n === 'notebookedit') {
+    // The prior cell source isn't available client-side (NotebookEdit's own input never
+    // carries it, and we don't cache Read's notebook output per cell) — so a real old/new
+    // line diff isn't possible here. 'delete' has no new_source to show at all; 'insert'
+    // and 'replace' render new_source as all-added, same honest treatment Write gets for
+    // a brand new file, rather than pretending to know what the cell used to say.
+    if (input.edit_mode === 'delete') {
+      rows = [['gap', 'Cell deleted']];
+    } else if (typeof input.new_source === 'string') {
+      rows = input.new_source.replace(/\n$/, '').split('\n').map(l => ['add', l]); added = rows.length;
+    }
   }
   if (!rows || !rows.length) return null;
   rows.forEach(r => { if (r[0] === 'add') added++; else if (r[0] === 'del') removed++; });
   const block = document.createElement('div'); block.className = 'code-block edit';
   const pre = document.createElement('pre');
-  const MAX = 40;
-  rows.slice(0, MAX).forEach(r => {
+  // A hard DOM-size safety ceiling for pathological diffs (thousands of rows) — NOT the
+  // normal "don't show too much" cap, which is now the real CSS/measured one below
+  // (capIfOverflowing). This only bites for diffs far bigger than anything a visual cap
+  // alone would need to guard against; ordinary 30-100 line diffs stay well under it and
+  // rely entirely on the height cap instead — that's the bug this replaces: a 29-line
+  // diff used to render in full because it was under the old MAX=40, uncapped either way.
+  const HARD_MAX = 500;
+  rows.slice(0, HARD_MAX).forEach(r => {
     const ln = document.createElement('span');
     ln.className = 'ln mono' + (r[0] === 'add' ? ' add' : r[0] === 'del' ? ' del' : r[0] === 'gap' ? ' meta' : '');
     ln.textContent = r[0] === 'gap' ? '⋯' : r[1];
     pre.appendChild(ln);
   });
-  if (rows.length > MAX) {
-    const ln = document.createElement('span'); ln.className = 'ln meta mono';
-    ln.textContent = '⋯ ' + (rows.length - MAX) + ' more line' + (rows.length - MAX > 1 ? 's' : '');
-    pre.appendChild(ln);
-  }
+  // Full plain-text form (every row, +/- prefixed) for both the copy button and, when
+  // capped, the "view full diff" link below — same text either way.
+  const fullText = () => rows.map(r => (r[0] === 'add' ? '+ ' : r[0] === 'del' ? '- ' : '  ') + r[1]).join('\n');
   block.appendChild(pre);
+  block.appendChild(makeCopyBtn(fullText));
+  if (rows.length > HARD_MAX) {
+    // Rows past HARD_MAX were never put in the DOM at all — always show this one
+    // regardless of measured height, since there's genuinely missing content, not just
+    // clipped-but-present content the way the height cap below handles.
+    block.appendChild(makeMoreHint('⋯ ' + (rows.length - HARD_MAX) + ' more line' + (rows.length - HARD_MAX > 1 ? 's' : '') + ' — view full diff', fullText));
+  } else {
+    // Every row IS in the DOM; only add the link if they actually overflow the CSS cap
+    // (.code-block.capped pre, chat.css) — measured, not guessed, same as makeIoBlock.
+    requestAnimationFrame(() => capIfOverflowing(block, pre, 'View full diff', fullText));
+  }
   const parts = [];
   if (added) parts.push('Added ' + added + ' line' + (added > 1 ? 's' : ''));
   if (removed) parts.push('Removed ' + removed + ' line' + (removed > 1 ? 's' : ''));

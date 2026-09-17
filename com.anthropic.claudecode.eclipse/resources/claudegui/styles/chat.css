@@ -19,7 +19,12 @@
    flex/table ancestor still sizes itself to the unbroken token and overflows
    even though the text now wraps. Normal break opportunities are still
    preferred; mid-token breaks only happen when the token cannot fit alone. */
-#messages { flex: 1; overflow-y: auto; padding: 4px 14px 16px; overflow-wrap: anywhere; }
+/* No top padding: padding on a SCROLLING container isn't a safe zone — content can still
+   scroll into it, so the old 4px here was a second, uncovered gap above the sticky user
+   .turn's own (opaque) top edge, exactly where earlier scrolled-past content could peek
+   through for an instant. .pane > .turn:first-child's own margin-top (below) already
+   covers the "space above the very first message" need this padding used to double up on. */
+#messages { flex: 1; overflow-y: auto; padding: 0 14px 16px; overflow-wrap: anywhere; }
 #messages::-webkit-scrollbar { width: 9px; }
 #messages::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; border: 2px solid var(--bg); }
 #messages::-webkit-scrollbar-track { background: transparent; }
@@ -105,7 +110,28 @@
    or the hover-actions badges pinned to .user-msg's corner. */
 .msg-ts { color: var(--fg-faint); font-size: 10.5px; margin: 0 2px 4px; }
 
-/* user bubble */
+/* Sticky goes on .turn, NOT .user-msg: a sticky element can only float within its OWN
+   parent's box, and .turn wraps nothing but the one .user-msg — same height as its child,
+   zero room to detach, so it un-stuck the instant it started (confirmed not sticking at
+   all in testing). .turn is a direct child of the much taller .pane/#messages, which gives
+   it real room to float — below #jump-to-latest/#find-bar's z-index 5/6, so that scrolling
+   past it while reading Claude's reply pins it to the top instead of scrolling it fully
+   out of view.
+   Gated on JS's .pinned-prompt (chat.js's updatePinnedPrompt), NOT a blanket :has() match
+   on every user turn: plain sticky siblings sharing one `top: 0` don't hand off cleanly on
+   their own — each independently "sticks" once ITS OWN static position crosses the
+   threshold, with no awareness of the others, so a SHORTER later prompt can end up stuck
+   right on top of a TALLER earlier one without fully covering it (the earlier bubble's
+   extra height then still shows, poking out from underneath — confirmed by screenshot).
+   updatePinnedPrompt picks the single correct turn by hand instead.
+   Top spacing is padding here, not the inherited 10px .turn margin — sticky's `top: 0`
+   offset is measured including the sticky box's own margin, so that margin left a 10px
+   GAP between the true top of #messages and the (opaque) .user-msg bubble inside it, with
+   nothing painted in that gap — exactly the sliver the scrolling reply text showed through.
+   Padding is part of the sticky box itself, so giving it the matching page background
+   keeps the same visual breathing room while actually covering that space instead of
+   leaving it empty. */
+.turn.pinned-prompt { position: sticky; top: 0; z-index: 4; margin-top: 0; padding-top: 10px; background: var(--bg); }
 .user-msg { position: relative; border: 1px solid var(--border); background: var(--bg-soft);
   border-radius: 8px; padding: 10px 12px; }
 .user-msg .ctx-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
@@ -119,6 +145,34 @@
    inherited overflow-wrap:anywhere from #messages still breaks a long unbroken token,
    which white-space only stops for `pre`/`nowrap`, not for pre-wrap. */
 .user-msg .body { color: var(--fg); line-height: 1.5; white-space: pre-wrap; }
+/* Clamped to ~2 lines by default — a long prompt no longer eats the top of the pane while
+   pinned there by the sticky rule above. .clampable is only added by JS (addUserMessage)
+   once the rendered body actually overflows two lines, so a short prompt never gets a
+   pointless "Show more" with nothing behind it. */
+.user-msg .body.clampable { max-height: 3.1em; overflow: hidden; position: relative; }
+.user-msg .body.clampable::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0;
+  height: 1.4em; background: linear-gradient(transparent, var(--bg-soft)); pointer-events: none; }
+/* Bounded, not "none": .user-msg's .turn is sticky (pinned at the top), which has no
+   internal scroll of its own — a fully unbounded expand on a prompt taller than the
+   viewport just grew past the bottom edge with no way to reach the rest of it, since
+   scrolling #messages can't move a pinned element. Capped to a viewport fraction with its
+   own scrollbar instead, so "Show more" always stays fully reachable regardless of length. */
+.user-msg.expanded .body.clampable { max-height: 35vh; overflow-y: auto; }
+.user-msg.expanded .body.clampable::after { display: none; }
+/* Styled like .copy-btn (chip look, hover-revealed) but anchored bottom-left instead of
+   top-right, and a touch bigger — a plain text link read as too easy to miss/misclick
+   against the clamp fade. "Show more" only ever reveals on hover (nothing to click before
+   that matters); "Show less" stays visible once expanded even without hovering, same as
+   before this restyle — you shouldn't have to re-hover to find your way back to collapsed. */
+.user-msg .clamp-toggle { display: none; position: absolute; left: 8px; bottom: 8px; z-index: 2;
+  background: var(--bg-chip); border: 1px solid var(--border); color: var(--fg-dim);
+  border-radius: 4px; font-size: 11.5px; padding: 3px 9px; cursor: pointer;
+  opacity: 0; transition: opacity .1s; }
+.user-msg .clamp-toggle:hover { background: var(--bg-hover); color: var(--fg); }
+.user-msg:not(.expanded) .clamp-toggle.more { display: inline-block; }
+.user-msg.expanded .clamp-toggle.less { display: inline-block; }
+.user-msg:hover .clamp-toggle.more { opacity: 1; }
+.user-msg:hover .clamp-toggle.less, .user-msg.expanded .clamp-toggle.less { opacity: 1; }
 
 /* ── Per-message actions (joebiden8) ─────────────────────────────────────────
    Hovering a sent message floats round badges over its top-right corner: the
@@ -251,10 +305,94 @@
 /* tool line */
 .tool-line { font-size: 12.5px; }
 .tool-line .tname { font-weight: 600; color: var(--fg); }
-.tool-line .tpath { color: var(--fg-dim); word-break: break-all; }
+.tool-line .tdesc { color: var(--fg-dim); font-weight: normal; } /* a tool's description, next to its name (Agent, Bash, ...) */
+.tool-line .tagent-type { color: var(--fg-faint); font-weight: normal; font-size: 11.5px; } /* e.g. "(Explore)" */
+/* pre-wrap: a multi-line Bash command / Task prompt / search query used to collapse to one
+   run-on line (word-break alone doesn't stop that — it only breaks long unbroken tokens,
+   the newline collapse is a `white-space: normal` default). Same reasoning as .user-msg .body. */
+.tool-line .tpath { color: var(--fg-dim); word-break: break-all; white-space: pre-wrap; }
 .tool-line .tpath.clickable { cursor: pointer; }
 .tool-line .tpath.clickable:hover { color: var(--fg); text-decoration: underline; }
+.tool-line .tpath-wrap { position: relative; display: inline-block; max-width: 100%; }
 .tool-sub { font-size: 11.5px; color: var(--fg-faint); margin-top: 2px; margin-bottom: 6px; }
+
+/* ── Tool IN/OUT blocks ───────────────────────────────────────────────────
+   Until now a tool line showed only its INPUT (the .tpath one-liner above) — a
+   successful result never rendered anywhere (applyToolResult in chat.js only
+   colored the dot). .io-block renders that result (and, for a few tools whose
+   input doesn't fit .tpath's one-line fallback chain, the input too) in the
+   same gutter-labeled layout VSCode uses: a fixed-width "IN"/"OUT" label to the
+   LEFT of the content's first line, not overlapping it. */
+/* margin-left is 0, NOT 22px: .tool-line is an .a-item, which already has 22px of
+   padding-left for the dot rail (chat.css's .a-item rule) — an extra 22px margin here on
+   top of that doubled the indent to 44px, sitting way off from the diff .code-block right
+   above it (whose OWN 22px margin-left is explicitly zeroed for this exact reason — see
+   ".tool-line .code-block" — this rule just never got the same treatment). overflow:hidden
+   so the shared rounded corners clip the first/last .io-item cleanly when more than one
+   row joins into the same block (see .io-item below) instead of each row need its own. */
+.io-block { margin: 6px 0 2px 0; border: 1px solid var(--border-soft); border-radius: 6px;
+  background: var(--bg-code); overflow: hidden; }
+/* A divider between joined rows (e.g. a Bash call's IN and its later OUT) — one bordered
+   card with an internal line, matching VSCode, instead of two separate boxes with a gap. */
+.io-item + .io-item { border-top: 1px solid var(--border-soft); }
+.io-row { display: flex; align-items: flex-start; position: relative; gap: 8px; }
+/* 26px fit "IN" but not "OUT" — box-sizing is border-box globally (tokens.css), so the
+   8px left padding ate into the already-tight budget, and with no white-space guard the
+   third letter wrapped onto its own line ("OU" / "T"). Widened, and nowrap as a backstop
+   so a future longer label (that doesn't fit) overflows visibly instead of silently
+   wrapping mid-word again. */
+.io-label { flex: 0 0 34px; padding: 7px 0 7px 8px; font-size: 10px; color: var(--fg-faint);
+  text-transform: uppercase; letter-spacing: .5px; line-height: 1.55; user-select: none;
+  white-space: nowrap; }
+.io-block pre { flex: 1; min-width: 0; margin: 0; padding: 7px 30px 7px 0; white-space: pre-wrap;
+  word-break: break-word; font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px;
+  color: var(--fg-soft); line-height: 1.5; }
+/* Capped by JS (capIfOverflowing in chat.js) via this max-height — NOT by hand-picking
+   which tools are "short"; a row whose real scrollHeight fits under this never gets a
+   footer. Scoped to .io-item (one row), not the outer .io-block — joined IN+OUT rows cap
+   independently, so a short IN alongside a long OUT doesn't force both to the same height. */
+.io-item.capped pre { max-height: 6.4em; overflow: hidden; }
+
+/* checklist for TodoWrite — structured, not a JSON dump */
+.todo-block { padding: 5px 8px; }
+.todo-item { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
+.todo-item .chk { width: 13px; height: 13px; border: 1px solid var(--fg-dim); border-radius: 3px;
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; color: transparent; }
+.todo-item.completed .chk { background: var(--green); border-color: var(--green); color: #fff; }
+.todo-item.completed .tlabel { color: var(--fg-dim); text-decoration: line-through; }
+.todo-item.in_progress .tlabel { color: var(--accent); font-weight: 600; }
+
+/* clickable result rows for Grep/Glob/FindReferences/GetTypeHierarchy/GetSymbolInfo/GetDiagnostics —
+   reuses the same open-in-editor bridge .tpath already calls (chat.js). margin-left is 0,
+   not 22px — same double-indent bug as .io-block above (.tool-line's own 22px padding-left
+   already accounts for it). */
+.result-list { margin: 6px 0 2px 0; border: 1px solid var(--border-soft); border-radius: 6px;
+  background: var(--bg-code); padding: 3px 0; overflow: hidden; }
+.result-item { padding: 4px 10px; font-size: 12px; color: var(--fg-soft); }
+.result-item.clickable { color: var(--link); cursor: pointer; }
+.result-item.clickable:hover { background: var(--bg-hover); }
+.result-item .rloc { color: var(--fg-faint); font-family: 'Cascadia Code','Consolas',monospace; font-size: 11px; margin-left: 6px; }
+
+/* "view full / +N more" footer — shared by capped IN/OUT blocks, capped diffs, and capped
+   result lists, so they can't visually drift apart from each other. No border-radius here:
+   a hardcoded "round the bottom corners" broke the moment IN/OUT joined into one box (the
+   IN item's hint is no longer the true bottom once an OUT item + divider follow it) — each
+   container (.io-block, .code-block, .result-list) clips its own true edges via its own
+   overflow:hidden + border-radius instead, so rounding only ever happens where the box
+   actually ends, not wherever a hint happens to render. */
+.more-hint { display: block; text-align: center; padding: 4px; font-size: 11px; color: var(--fg-faint);
+  cursor: pointer; border-top: 1px solid var(--border-soft); background: var(--bg-box);
+  transition: color .1s, background .1s; }
+.more-hint:hover { color: var(--fg-soft); background: var(--bg-hover); }
+
+/* hover-revealed copy button — shared by .io-row and the compact .tpath-wrap one-liner */
+.copy-btn { position: absolute; top: 3px; right: 3px; opacity: 0; transition: opacity .1s;
+  background: var(--bg-chip); border: 1px solid var(--border); color: var(--fg-dim);
+  border-radius: 3px; font-size: 10.5px; padding: 1px 6px; cursor: pointer; line-height: 1.6; }
+.io-row:hover .copy-btn, .tpath-wrap:hover .copy-btn, .code-block:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { background: var(--bg-hover); color: var(--fg); }
+.copy-btn.copied { color: var(--green); border-color: var(--green); }
 /* Why a tool failed. Clamped to ONE line here as well as in the summariser: real
    results run to 100+ lines, and the transcript stays scannable only if a failure
    costs exactly one row. */
@@ -274,6 +412,12 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 .code-block .cb-head .copy { color: var(--fg-dim); cursor: pointer; padding: 3px; border-radius: 4px; }
 .code-block .cb-head .copy:hover { background: var(--bg-hover); color: var(--fg); }
 .code-block pre { padding: 2px 0 10px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+/* Visual cap (~7 lines) applied by capIfOverflowing (chat.js) once the diff is actually
+   measured to overflow it — a 100-line Write/Edit must not grow the card to 100 lines just
+   because it's short of buildToolDiff's separate hard MAX row-count safety limit.
+   overflow-y specifically, NOT the overflow shorthand: the rule above already needs
+   overflow-x:auto for a single long line, and shorthand would clobber it back to hidden. */
+.code-block.capped pre { max-height: 8.6em; overflow-y: hidden; }
 .code-block pre::-webkit-scrollbar { height: 8px; }
 .code-block pre::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 4px; }
 /* width:max-content + min-width:100% so the row (and its add/del background) spans the
@@ -368,6 +512,21 @@ code.ic { font-family: 'Cascadia Code','Consolas',monospace; font-size: 11.5px; 
 .a-item.think .think-body { display: none; margin-top: 6px; margin-left: 18px; color: var(--fg-dim);
   font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; }
 .a-item.think.open .think-body { display: block; }
+
+/* Collapsible "Agent activity" section under a LIVE agent's own tool line — its nested
+   transcript (chat.rs's onAgentActivity relay via chat.js's agentLogs), collapsed by
+   default so a busy subagent's own steps don't dominate the main transcript, but never
+   hidden entirely: real work, just tucked behind a fold instead of interleaved as if it
+   were the top-level Claude's own steps. Same chevron-rotate idiom as .think above. */
+.agent-log { margin: 6px 0 2px 0; }
+.agent-log-head { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  color: var(--fg-dim); font-size: 12px; }
+.agent-log-head:hover { color: var(--fg-soft); }
+.agent-log .chev { display: inline-flex; transition: transform .15s; opacity: .8; }
+.agent-log.open .chev { transform: rotate(90deg); }
+.agent-log-body { display: none; margin-top: 6px; padding-left: 6px; border-left: 2px solid var(--border-soft); }
+.agent-log.open .agent-log-body { display: block; }
+.agent-log-body .agent-log-think { font-style: italic; color: var(--fg-faint); }
 .a-body p { margin: 4px 0; } .a-body p:first-child { margin-top: 0; }
 .a-body ul, .a-body ol { margin: 4px 0 4px 20px; } .a-body li { margin: 2px 0; }
 .a-body h1,.a-body h2,.a-body h3,.a-body h4,.a-body h5,.a-body h6 { margin: 8px 0 4px; color: var(--fg); }
