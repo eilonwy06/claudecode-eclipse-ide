@@ -1,0 +1,19 @@
+# This only takes effect once branch protection on `master` requires review
+# from code owners (Settings -> Branches). Until then it's a hint, not a gate.
+
+# Default owner for everything not matched more specifically below.
+*                                                     @eilonwy06
+
+# This directory *is* the p2 update site GitHub Pages serves to every
+# installed copy of the plugin. There is no CI step yet that rebuilds it from
+# source and verifies a match (see SECURITY.md and the Contributing section
+# of README.md), so a human owner reviewing every change here is the only
+# check in place.
+/com.anthropic.claudecode.eclipse.site/              @eilonwy06
+
+# Prebuilt native binaries for each platform/arch, committed directly rather
+# than built in CI. Same reasoning as above.
+/com.anthropic.claudecode.eclipse/native/            @eilonwy06
+
+# CI and security configuration itself.
+/.github/                                            @eilonwy06

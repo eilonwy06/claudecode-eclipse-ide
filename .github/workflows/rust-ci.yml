@@ -1,0 +1,46 @@
+name: Rust CI
+
+on:
+  pull_request:
+    paths:
+      - "claude-eclipse-core/**"
+      - ".github/workflows/rust-ci.yml"
+  push:
+    branches: [master]
+    paths:
+      - "claude-eclipse-core/**"
+      - ".github/workflows/rust-ci.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: claude-eclipse-core
+
+jobs:
+  test:
+    name: build & test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09), pins to latest stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - run: cargo build --locked --all-targets
+      - run: cargo test --locked
+      # The existing tree isn't fmt-clean and has pre-existing clippy findings
+      # (mostly on macos-latest/windows-latest, ~20 lint hits, 0 build errors),
+      # so these are visibility-only for now rather than blocking every PR
+      # that doesn't happen to touch the offending lines. Run `cargo fmt` and
+      # `cargo clippy --fix` once on master, then drop `continue-on-error` and
+      # add `-- -D warnings` back to clippy to make both required.
+      - run: cargo fmt --check
+        continue-on-error: true
+      - run: cargo clippy --locked --all-targets
+        continue-on-error: true
