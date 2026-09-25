@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.2.8] — 2026-09-25 *(current)*
+## [3.2.9] — 2026-09-25 *(current)*
+
+### Fixed
+- Minor UI fixes.
+
+---
+
+## [3.2.8] — 2026-09-25
 
 ### Fixed
 - Minor UI fixes.
