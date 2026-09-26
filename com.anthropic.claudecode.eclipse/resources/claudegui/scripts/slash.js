@@ -6,6 +6,7 @@ const SLASH_COMMANDS = [
   { cmd: '/advisor', desc: 'Set up an advisor model' },
   { cmd: '/clear',   desc: 'Start a new session (tab)' },
   { cmd: '/compact', desc: 'Clear conversation history but keep a summary in context' },
+  { cmd: '/mcp',     desc: 'Manage MCP servers' },
   { cmd: '/model',   desc: 'Switch model' },
   { cmd: '/resume',  desc: 'Open session history' },
   { cmd: '/context', desc: 'Show context window usage for this conversation' },
@@ -112,10 +113,13 @@ function handleSlashCommand(text) {
   // send it to, same reason /model is reproduced locally above rather than forwarded.
   // No echo: nothing was actually sent, just a panel opened, like /rewind.
   if (cmd === '/resume') { openHistoryForResume(); return true; }
+  // The CLI's /mcp is another terminal-only picker; this is the extension's window for it.
+  // No echo, like /resume: a window opened, nothing was sent.
+  if (cmd === '/mcp') { openMcpServers(); return true; }
   if (cmd === '/help') {
     const ht = activeTab();
     addUserMessage(text, null, null, null, nowIso());
-    addSystemTo(ht, 'Commands: /advisor — set up an advisor model · /clear — new conversation · /compact — compact the conversation into a summary · /context — show context window usage for this conversation · /model — switch model · /remote-control — continue this conversation on the web or your phone · /rewind — restore code and fork from an earlier message · /workflows — watch live progress of a running workflow · /help — this list. Type / to see them. The Agents panel has its own toolbar button in the composer.');
+    addSystemTo(ht, 'Commands: /advisor — set up an advisor model · /clear — new conversation · /compact — compact the conversation into a summary · /context — show context window usage for this conversation · /mcp — manage MCP servers · /model — switch model · /remote-control — continue this conversation on the web or your phone · /rewind — restore code and fork from an earlier message · /workflows — watch live progress of a running workflow · /help — this list. Type / to see them. The Agents panel has its own toolbar button in the composer.');
     return true;
   }
   return false; // unknown slash: let it pass through to Claude

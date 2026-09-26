@@ -383,6 +383,30 @@ public final class NativeCore {
     public static native boolean chatRemoteControl(long handle, boolean enabled);
 
     /**
+     * Sends one of the MCP servers window's control requests ({@code mcp_status},
+     * {@code mcp_toggle}, {@code mcp_reconnect}, {@code mcp_authenticate},
+     * {@code mcp_clear_auth}) to this tab's live process, under the page's
+     * {@code token}. Any other subtype is refused.
+     *
+     * <p>Fire-and-forget — the reply arrives as {@link ChatCallbacks#onMcp}
+     * carrying the same token.
+     *
+     * @return false when the tab has no live process, or the request was refused.
+     */
+    public static native boolean chatMcpRequest(long handle, String token, String requestJson);
+
+    /**
+     * Adds or removes an MCP server with the CLI's own {@code claude mcp add|remove},
+     * run in {@code cwd} — the conversation's folder, which a Local server is keyed on
+     * and a Project server's {@code .mcp.json} is written to.
+     *
+     * <p><b>Blocking</b> — runs the CLI, up to 30s. Off the UI thread.
+     *
+     * @return {@code {"token","ok":true}} or {@code {"token","ok":false,"error"}}.
+     */
+    public static native String mcpEditConfig(String claudeCmd, String cwd, String token, String opJson);
+
+    /**
      * Whether switching this tab back to the default model would restart its
      * process. Every other launch setting is applied to the running process; this
      * one can be too, but only when the CLI has no model setting of its own — its
@@ -556,6 +580,12 @@ public final class NativeCore {
          * Non-blocking.
          */
         default void onBrowserState(String json) {}
+        /**
+         * The reply to an MCP servers window request:
+         * {@code {"token","ok":true,"response":…}} or {@code {"token","ok":false,"error":…}}.
+         * Non-blocking.
+         */
+        default void onMcp(String json) {}
     }
 
     // ── Embedded console (replaces PTY + xterm.js for the CLI view) ─────────

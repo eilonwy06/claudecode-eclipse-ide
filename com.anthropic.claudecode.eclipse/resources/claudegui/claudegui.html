@@ -159,6 +159,9 @@
     <div class="item" onclick="toggleThinking(event)"><span class="ic">__BRAIN__</span><div class="txt"><span class="lbl">Thinking</span></div><span class="check" id="think-check">__CHECK__</span></div>
     <div class="item" onclick="openAccount()"><span class="ic">__USER__</span><div class="txt"><span class="lbl">Account &amp; usage…</span></div></div>
     <div class="sep"></div>
+    <div class="head"><span class="h">Customize</span></div>
+    <div class="item" onclick="openMcpServers()"><span class="ic">__PLUG__</span><div class="txt"><span class="lbl">MCP servers</span></div></div>
+    <div class="sep"></div>
     <div class="head"><span class="h">Slash Commands</span></div>
     <input id="actions-slash-filter" type="text" placeholder="Filter commands…" oninput="filterActionsSlash(this.value)">
     <div id="actions-slash"></div>
@@ -180,6 +183,9 @@
 
   <!-- rewind dialog (Rewind to… / Fork and rewind) -->
   <div id="rewind-overlay"><div id="rewind-win"></div></div>
+
+  <!-- MCP servers window (the / menu → MCP servers, and /mcp): list, detail, add -->
+  <div id="mcp-overlay"><div id="mcp-win" role="dialog" aria-label="MCP servers"></div></div>
 
   <!-- agents fleet panel (/agents command) -->
   <div id="agents-overlay"><div id="agents-win"></div></div>
@@ -235,6 +241,7 @@
 <script src="scripts/cliversion.js"></script>
 <script src="scripts/history.js"></script>
 <script src="scripts/rewind.js"></script>
+<script src="scripts/mcp.js"></script>
 <script src="scripts/teleport.js"></script>
 <script src="scripts/remotecontrol.js"></script>
 <script src="scripts/msgactions.js"></script>

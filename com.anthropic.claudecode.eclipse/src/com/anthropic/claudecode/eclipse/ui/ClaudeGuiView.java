@@ -136,6 +136,8 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     @SuppressWarnings("unused") private BrowserFunction listWebSessionsFn;
     @SuppressWarnings("unused") private BrowserFunction remoteControlFn;
     @SuppressWarnings("unused") private BrowserFunction remoteControlQrFn;
+    @SuppressWarnings("unused") private BrowserFunction mcpFn;
+    @SuppressWarnings("unused") private BrowserFunction mcpConfigFn;
     @SuppressWarnings("unused") private BrowserFunction confirmDefaultModelFn;
     @SuppressWarnings("unused") private BrowserFunction applySettingsFn;
     @SuppressWarnings("unused") private BrowserFunction thinkingDefaultFn;
@@ -869,6 +871,57 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                     });
                 }
             }, "claude-remote-control").start();
+            return null;
+        });
+        // The MCP servers window (mcp.js). What the conversation sees — status, tools,
+        // enable/disable, reconnect, sign-in — is asked of the tab's own process, so
+        // this may have to start it, exactly as Remote Control may; launch settings
+        // and root ride along for that, resolved as a send resolves them.
+        mcpFn = new SimpleFunction(browser, "_mcp", a -> {
+            if (a.length < 3 || !(a[0] instanceof String ti) || !(a[1] instanceof String token)
+                    || !(a[2] instanceof String request))
+                return null;
+            final String resumeId = a.length > 3 && a[3] instanceof String s ? s : "";
+            final String permMode = a.length > 4 && a[4] instanceof String s ? s : "";
+            final String effort   = a.length > 5 && a[5] instanceof String s ? s : "";
+            final String model    = launchModel(a.length > 6 && a[6] instanceof String s ? s : "");
+            final String thinking = launchThinking(a.length > 7 && a[7] instanceof String s ? s : "");
+            final String root     = a.length > 8 && a[8] instanceof String s ? s : "";
+            final ChatProcessManager m = managerFor(ti);
+            // Off the UI thread — spawning a child process would otherwise freeze it.
+            new Thread(() -> {
+                String err = null;
+                try {
+                    m.setRoot(root);
+                    if (!m.mcpRequest(token, request, resumeId, permMode, effort, model, thinking))
+                        err = "Claude could not be started.";
+                } catch (UnsatisfiedLinkError e) {
+                    err = "Not supported by this build.";   // a native library from before this window
+                } catch (Throwable t) {
+                    err = "Claude could not be started.";
+                }
+                // Only a failure is reported from here; the answer is the CLI's reply.
+                if (err != null) pushMcp(ti, mcpError(token, err));
+            }, "claude-mcp").start();
+            return null;
+        });
+        // Adding or removing a server is the CLI's own `claude mcp add|remove`, run in
+        // the tab's folder. Blocking, so off the UI thread; the outcome comes back on
+        // the same channel as the requests above.
+        mcpConfigFn = new SimpleFunction(browser, "_mcpConfig", a -> {
+            if (a.length < 3 || !(a[0] instanceof String ti) || !(a[1] instanceof String token)
+                    || !(a[2] instanceof String op))
+                return null;
+            final String root = a.length > 3 && a[3] instanceof String s ? s : "";
+            final ChatProcessManager m = managerFor(ti);
+            new Thread(() -> {
+                String res;
+                try {
+                    m.setRoot(root);
+                    res = m.mcpEditConfig(token, op);
+                } catch (Throwable t) { res = null; }
+                pushMcp(ti, res != null ? res : mcpError(token, "Not supported by this build."));
+            }, "claude-mcp-config").start();
             return null;
         });
         // Advisor model (/advisor): the CLI persists it GLOBALLY as "advisorModel"
@@ -2513,6 +2566,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         m.setOnSettingsChanged(j -> display.asyncExec(() -> executeJS("window.onSettingsChanged && window.onSettingsChanged('" + tj + "','" + esc(j) + "')")));
         m.setOnAgentActivity(j -> display.asyncExec(() -> executeJS("window.onAgentActivity && window.onAgentActivity('" + tj + "','" + esc(j) + "')")));
         m.setOnNotice(t -> display.asyncExec(() -> executeJS("window.onNotice && window.onNotice('" + tj + "','" + esc(t) + "')")));
+        m.setOnMcp(j -> pushMcp(tabId, j));
         // Remote Control goes to two places: the page, which writes the transcript
         // line and remembers the session url, and the status bar, which shows the
         // indicator. Only the ACTIVE tab may drive the bar — it shows one
@@ -3289,6 +3343,20 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             }
         }
         return String.join(",", terms);
+    }
+
+    /** An MCP servers window reply for the page, from whichever thread has it. */
+    private void pushMcp(String tabId, String json) {
+        Display.getDefault().asyncExec(() -> executeJS(
+                "window.onMcp && window.onMcp('" + esc(tabId) + "','" + esc(json) + "')"));
+    }
+
+    private static String mcpError(String token, String error) {
+        com.google.gson.JsonObject o = new com.google.gson.JsonObject();
+        o.addProperty("token", token);
+        o.addProperty("ok", false);
+        o.addProperty("error", error);
+        return o.toString();
     }
 
     /** Transcript events land on a native worker thread; the browser is UI-thread only. */

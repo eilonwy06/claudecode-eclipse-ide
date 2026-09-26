@@ -44,6 +44,7 @@ public class ChatProcessManager {
     private Consumer<String> onSettingsChanged;
     private Consumer<String> onAgentActivity;
     private Consumer<String> onNotice;
+    private Consumer<String> onMcp;
 
     /** (requestId, toolName, inputJson, rememberLabel) → decision string. See {@link NativeCore.ChatCallbacks#onPermissionRequest}. */
     public interface PermissionHandler {
@@ -91,6 +92,7 @@ public class ChatProcessManager {
             @Override public void onSettingsChanged(String json) { emit(ChatProcessManager.this.onSettingsChanged, json); }
             @Override public void onAgentActivity(String json) { emit(ChatProcessManager.this.onAgentActivity, json); }
             @Override public void onNotice(String text) { emit(ChatProcessManager.this.onNotice, text); }
+            @Override public void onMcp(String json) { emit(ChatProcessManager.this.onMcp, json); }
         });
     }
 
@@ -126,6 +128,8 @@ public class ChatProcessManager {
     public void setOnAgentActivity(Consumer<String> cb) { this.onAgentActivity = cb; }
     /** A display-only note for the conversation that did not come from the CLI. */
     public void setOnNotice(Consumer<String> cb) { this.onNotice = cb; }
+    /** The reply to an MCP servers window request. See {@link NativeCore.ChatCallbacks#onMcp}. */
+    public void setOnMcp(Consumer<String> cb) { this.onMcp = cb; }
 
     /** Turns Remote Control on or off, starting this tab's process first if it
      *  has none.
@@ -149,16 +153,15 @@ public class ChatProcessManager {
     /** Starts this tab's process if it has none, sending nothing. Launch
      *  settings are gathered exactly as {@link #sendMessage} gathers them, so
      *  both agree on what the tab's process is instead of one respawning what
-     *  the other just started. */
-    public boolean ensureProcess(String resumeId, String permMode, String effort,
-                                 String model, String thinking) {
-        IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
-        String claudeCmd = prefs.getString(Constants.PREF_CLAUDE_CMD);
-        if (claudeCmd == null || claudeCmd.isBlank()) claudeCmd = Constants.DEFAULT_CLAUDE_CMD;
-
-        String workspaceRoot = rootOverride.isEmpty()
-                ? org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getLocation().toOSString()
-                : rootOverride;
+     *  the other just started.
+     *
+     *  <p>Synchronized: two callers arriving while the process is still starting
+     *  (the MCP servers window closed and reopened, Remote Control switched on
+     *  meanwhile) would otherwise each spawn one, and the core keeps only the last. */
+    public synchronized boolean ensureProcess(String resumeId, String permMode, String effort,
+                                              String model, String thinking) {
+        String claudeCmd = claudeCmd();
+        String workspaceRoot = workspaceRoot();
 
         int mcpPort = 0;
         String mcpAuthToken = "";
@@ -236,13 +239,8 @@ public class ChatProcessManager {
      */
     public void sendMessage(String message, String resumeId, String permMode, String effort,
                             String model, String thinking, String imagesJson) {
-        IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
-        String claudeCmd = prefs.getString(Constants.PREF_CLAUDE_CMD);
-        if (claudeCmd == null || claudeCmd.isBlank()) claudeCmd = Constants.DEFAULT_CLAUDE_CMD;
-
-        String workspaceRoot = rootOverride.isEmpty()
-                ? org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getLocation().toOSString()
-                : rootOverride;
+        String claudeCmd = claudeCmd();
+        String workspaceRoot = workspaceRoot();
 
         int mcpPort = 0;
         String mcpAuthToken = "";
@@ -291,11 +289,29 @@ public class ChatProcessManager {
      * settings the send will carry. Blocking.
      */
     public String browserBlocks(String message) {
-        IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
-        String claudeCmd = prefs.getString(Constants.PREF_CLAUDE_CMD);
-        if (claudeCmd == null || claudeCmd.isBlank()) claudeCmd = Constants.DEFAULT_CLAUDE_CMD;
-        String json = NativeCore.chatBrowserBlocks(handle, claudeCmd, message);
+        String json = NativeCore.chatBrowserBlocks(handle, claudeCmd(), message);
         return json == null ? "[]" : json;
+    }
+
+    /** Sends one of the MCP servers window's requests to this tab's process,
+     *  starting it first if it has none — the window lists what the conversation
+     *  sees, so it needs a process, but never a conversation.
+     *
+     *  <p><b>Blocking</b> — may spawn a child process. Call it off the UI thread.
+     *  The reply arrives on the onMcp callback under the same token.
+     *
+     *  @return false if no process could be started or the request was refused. */
+    public boolean mcpRequest(String token, String requestJson, String resumeId, String permMode,
+                              String effort, String model, String thinking) {
+        if (!ensureProcess(resumeId, permMode, effort, model, thinking)) return false;
+        return NativeCore.chatMcpRequest(handle, token, requestJson);
+    }
+
+    /** Adds or removes an MCP server via {@code claude mcp add|remove}, run in this
+     *  tab's folder — the same one its process runs in, since a Local server is
+     *  keyed on it. <b>Blocking</b>, up to 30s. See {@link NativeCore#mcpEditConfig}. */
+    public String mcpEditConfig(String token, String opJson) {
+        return NativeCore.mcpEditConfig(claudeCmd(), workspaceRoot(), token, opJson);
     }
 
     /** Pushes the tab's launch settings to its live process now — see
@@ -331,6 +347,20 @@ public class ChatProcessManager {
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
+
+    /** The configured CLI command, or the default when the preference is blank. */
+    private static String claudeCmd() {
+        IPreferenceStore prefs = Activator.getDefault().getPreferenceStore();
+        String claudeCmd = prefs.getString(Constants.PREF_CLAUDE_CMD);
+        return (claudeCmd == null || claudeCmd.isBlank()) ? Constants.DEFAULT_CLAUDE_CMD : claudeCmd;
+    }
+
+    /** The folder this tab's claude runs in: its root, or the Eclipse workspace root. */
+    private String workspaceRoot() {
+        return rootOverride.isEmpty()
+                ? org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getLocation().toOSString()
+                : rootOverride;
+    }
 
     private static void emit(Runnable cb) {
         if (cb != null) {

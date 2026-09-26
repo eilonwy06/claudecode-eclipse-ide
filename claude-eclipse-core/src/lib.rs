@@ -6,6 +6,7 @@ mod freebsd_guide;
 mod launch;
 mod lock_file;
 mod mcp;
+mod mcp_servers;
 mod mentions;
 mod server;
 mod session;
@@ -1199,6 +1200,60 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatRemo
     }
     let manager = unsafe { &*(handle as *const ChatManager) };
     manager.remote_control(enabled != 0) as jboolean
+}
+
+/// Sends one of the MCP servers window's control requests to this tab's live
+/// process, under the page's `token`.
+///
+/// Fire-and-forget: the reply reaches Java as an `onMcp` callback carrying the same
+/// token. Returns false when the tab has no live process, or the request is not one
+/// the window may send.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatMcpRequest(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    token: JString,
+    request: JString,
+) -> jboolean {
+    if handle == 0 {
+        return 0;
+    }
+    let manager = unsafe { &*(handle as *const ChatManager) };
+    let mut text = |s: JString| -> String {
+        if s.is_null() {
+            String::new()
+        } else {
+            env.get_string(&s).ok().map(|v| v.into()).unwrap_or_default()
+        }
+    };
+    let (token, request) = (text(token), text(request));
+    manager.mcp_request(&token, &request) as jboolean
+}
+
+/// Adds or removes an MCP server with `claude mcp add|remove`, run in `cwd`.
+/// Returns `{"token","ok"}` or `{"token","ok":false,"error"}`.
+///
+/// **Blocking** — runs the CLI, up to 30s. Off the UI thread.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_mcpEditConfig(
+    mut env: JNIEnv,
+    _class: JClass,
+    claude_cmd: JString,
+    cwd: JString,
+    token: JString,
+    op: JString,
+) -> jstring {
+    let mut text = |s: JString| -> String {
+        if s.is_null() {
+            String::new()
+        } else {
+            env.get_string(&s).ok().map(|v| v.into()).unwrap_or_default()
+        }
+    };
+    let (claude_cmd, cwd, token, op) = (text(claude_cmd), text(cwd), text(token), text(op));
+    let json = mcp_servers::edit_config(&claude_cmd, &cwd, &token, &op);
+    env.new_string(json).unwrap().into_raw()
 }
 
 /// Applies a tab's launch settings (permission mode, effort, model, thinking) to its

@@ -1018,6 +1018,21 @@ impl ChatManager {
         was_on
     }
 
+    /// Sends one of the MCP servers window's requests (`mcp_status`, `mcp_toggle`, …)
+    /// to this manager's live process, under the page's `token`. The reply reaches
+    /// Java as `onMcp`. False when there is no live process, or the request is not
+    /// one the window may send ([`crate::mcp_servers::request_line`]).
+    pub fn mcp_request(&self, token: &str, request: &str) -> bool {
+        let Ok(request) = serde_json::from_str::<serde_json::Value>(request) else { return false };
+        let Some(line) = crate::mcp_servers::request_line(token, &request) else { return false };
+        let proc = self.state.lock().unwrap().proc.clone();
+        let Some(p) = proc else { return false };
+        if p.is_dead() {
+            return false;
+        }
+        p.write_line(&line).is_ok()
+    }
+
     fn emit_browser_state(&self, json: &str) {
         let guard = self.callbacks.lock().unwrap();
         if let Some(cb) = guard.as_ref() {
@@ -1852,6 +1867,10 @@ fn reader_loop(
                             None => serde_json::json!({ "status": "connected" }),
                         };
                         fire_string(&java_vm, &callbacks, "onBrowserState", &json.to_string());
+                    }
+                } else if rid.starts_with(crate::mcp_servers::REQUEST_PREFIX) {
+                    if let Some(json) = crate::mcp_servers::reply_json(inner) {
+                        fire_string(&java_vm, &callbacks, "onMcp", &json);
                     }
                 }
                 continue;
