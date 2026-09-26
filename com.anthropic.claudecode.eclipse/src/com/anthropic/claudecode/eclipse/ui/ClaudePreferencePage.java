@@ -218,16 +218,6 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
         addField(statuslineEnabled);
 
         addStatuslineDependent(new BooleanFieldEditor(
-                Constants.PREF_STATUSLINE_SHOW_MODEL,
-                "Show model",
-                getFieldEditorParent()));
-
-        addStatuslineDependent(new BooleanFieldEditor(
-                Constants.PREF_STATUSLINE_SHOW_EFFORT,
-                "Show effort level",
-                getFieldEditorParent()));
-
-        addStatuslineDependent(new BooleanFieldEditor(
                 Constants.PREF_STATUSLINE_SHOW_THINKING,
                 "Show thinking indicator",
                 getFieldEditorParent()));

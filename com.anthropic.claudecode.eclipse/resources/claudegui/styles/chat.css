@@ -159,12 +159,12 @@
    own scrollbar instead, so "Show more" always stays fully reachable regardless of length. */
 .user-msg.expanded .body.clampable { max-height: 35vh; overflow-y: auto; }
 .user-msg.expanded .body.clampable::after { display: none; }
-/* Styled like .copy-btn (chip look, hover-revealed) but anchored bottom-left instead of
+/* Styled like .copy-btn (chip look, hover-revealed) but anchored bottom-right instead of
    top-right, and a touch bigger — a plain text link read as too easy to miss/misclick
    against the clamp fade. "Show more" only ever reveals on hover (nothing to click before
    that matters); "Show less" stays visible once expanded even without hovering, same as
    before this restyle — you shouldn't have to re-hover to find your way back to collapsed. */
-.user-msg .clamp-toggle { display: none; position: absolute; left: 8px; bottom: 8px; z-index: 2;
+.user-msg .clamp-toggle { display: none; position: absolute; right: 8px; bottom: 8px; z-index: 2;
   background: var(--bg-chip); border: 1px solid var(--border); color: var(--fg-dim);
   border-radius: 4px; font-size: 11.5px; padding: 3px 9px; cursor: pointer;
   opacity: 0; transition: opacity .1s; }
@@ -307,13 +307,24 @@
 .tool-line .tname { font-weight: 600; color: var(--fg); }
 .tool-line .tdesc { color: var(--fg-dim); font-weight: normal; } /* a tool's description, next to its name (Agent, Bash, ...) */
 .tool-line .tagent-type { color: var(--fg-faint); font-weight: normal; font-size: 11.5px; } /* e.g. "(Explore)" */
+.tool-line .tscope { color: var(--fg-faint); font-weight: normal; font-size: 11.5px; } /* Grep/Glob's scoping dir, e.g. "(in: internal)" */
 /* pre-wrap: a multi-line Bash command / Task prompt / search query used to collapse to one
    run-on line (word-break alone doesn't stop that — it only breaks long unbroken tokens,
    the newline collapse is a `white-space: normal` default). Same reasoning as .user-msg .body. */
 .tool-line .tpath { color: var(--fg-dim); word-break: break-all; white-space: pre-wrap; }
 .tool-line .tpath.clickable { cursor: pointer; }
 .tool-line .tpath.clickable:hover { color: var(--fg); text-decoration: underline; }
-.tool-line .tpath-wrap { position: relative; display: inline-block; max-width: 100%; }
+/* Plain inline (not inline-block): inline-block sizes itself against the FULL container
+   width via shrink-to-fit, independent of how much space .tname/.tdesc already used on the
+   current line — for a long path that computed width is nearly always wider than whatever's
+   left after the name, so the whole box got pushed to a fresh line instead of continuing on
+   the name's line and only wrapping the overflow. Plain inline content has no such box: it
+   just keeps filling the current line from wherever the name left off. */
+/* padding-right reserves room for the absolutely-positioned .copy-btn (chat.js's
+   makeCopyBtn, ~20px wide incl. its own right:3px offset) — without it, a short path/
+   pattern's box is only as wide as its own text, so the button sat directly on top of
+   (and hid) the last few characters instead of floating past them. */
+.tool-line .tpath-wrap { position: relative; padding-right: 22px; }
 .tool-sub { font-size: 11.5px; color: var(--fg-faint); margin-top: 2px; margin-bottom: 6px; }
 
 /* ── Tool IN/OUT blocks ───────────────────────────────────────────────────
@@ -367,7 +378,7 @@
    reuses the same open-in-editor bridge .tpath already calls (chat.js). margin-left is 0,
    not 22px — same double-indent bug as .io-block above (.tool-line's own 22px padding-left
    already accounts for it). */
-.result-list { margin: 6px 0 2px 0; border: 1px solid var(--border-soft); border-radius: 6px;
+.result-list { position: relative; margin: 6px 0 2px 0; border: 1px solid var(--border-soft); border-radius: 6px;
   background: var(--bg-code); padding: 3px 0; overflow: hidden; }
 .result-item { padding: 4px 10px; font-size: 12px; color: var(--fg-soft); }
 .result-item.clickable { color: var(--link); cursor: pointer; }
@@ -386,11 +397,26 @@
   transition: color .1s, background .1s; }
 .more-hint:hover { color: var(--fg-soft); background: var(--bg-hover); }
 
-/* hover-revealed copy button — shared by .io-row and the compact .tpath-wrap one-liner */
+/* hover-revealed copy button — shared by .io-row and the compact .tpath-wrap one-liner.
+   Icon-only (ICONS.COPY, swapped for ICONS.CHECK briefly on click by copyToClipboard). */
 .copy-btn { position: absolute; top: 3px; right: 3px; opacity: 0; transition: opacity .1s;
+  display: inline-flex; align-items: center; justify-content: center;
   background: var(--bg-chip); border: 1px solid var(--border); color: var(--fg-dim);
-  border-radius: 3px; font-size: 10.5px; padding: 1px 6px; cursor: pointer; line-height: 1.6; }
-.io-row:hover .copy-btn, .tpath-wrap:hover .copy-btn, .code-block:hover .copy-btn { opacity: 1; }
+  border-radius: 4px; padding: 3px; cursor: pointer; line-height: 0; }
+.copy-btn svg { display: block; }
+/* .tpath-wrap's box is only ever ~one line tall (its own font-size/line-height), unlike
+   the tall multi-line .io-row/.code-block/.result-list boxes top:3px was tuned for — a
+   fixed 3px-from-top offset there pushed the button below the text's vertical center and
+   past the line's own height. Centered instead, so it never droops below the line. */
+.tool-line .tpath-wrap .copy-btn { top: 50%; transform: translateY(-50%); }
+/* Agent log text/thinking entries (chat.js's buildAgentLogItemEl) place the button in
+   normal flow below the text instead of floating over a corner of it — this is prose, not
+   a boxed IN/OUT/diff, so an overlay would sit awkwardly across the text's own line(s)
+   rather than in a code block's unused margin. */
+.a-item.muted .copy-btn { position: static; display: inline-flex; width: fit-content;
+  margin-top: 4px; }
+.io-row:hover .copy-btn, .tpath-wrap:hover .copy-btn, .code-block:hover .copy-btn,
+.result-list:hover .copy-btn, .a-item.muted:hover .copy-btn { opacity: 1; }
 .copy-btn:hover { background: var(--bg-hover); color: var(--fg); }
 .copy-btn.copied { color: var(--green); border-color: var(--green); }
 /* Why a tool failed. Clamped to ONE line here as well as in the summariser: real

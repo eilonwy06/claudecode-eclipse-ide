@@ -20,6 +20,10 @@
   --chip-border-hover: #646667;
   --accent: #d97757;          /* Claude coral */
   --accent-dim: rgba(217,119,87,.5);
+  --mode-auto: #f48771;       /* composer border: Auto permission mode */
+  --mode-manual: #c6613f;     /* composer border: Manual permission mode */
+  --mode-plan: #297aa0;       /* composer border: Plan permission mode */
+  --mode-accept-edits: #bfbfbf; /* composer border: Edit automatically permission mode */
   --sel: #2d84af;             /* VSCode-style selection blue (cards/answers) */
   --sel-hover: #3a93bf;
   --green: #4eb87a;           /* action dots */
@@ -38,8 +42,6 @@
   --ic-bg: #2b2b2b;           /* inline code chip bg */
   --ic-fg: #d8b58c;           /* inline code chip fg (also dec-q code) */
   --cb-head-bg: #181818;      /* code-block header strip */
-  --send-off-bg: #4a3a33;     /* disabled send button bg */
-  --send-off-fg: #8a7a72;     /* disabled send button fg */
   --on-accent: #fff;          /* text on accent/selection fills */
   --tbtn-active: #3a3550;     /* toolbar button toggled-on bg */
   /* Tab strip: the ACTIVE tab must read as lighter/selected, matching the content
@@ -93,6 +95,10 @@
   --chip-border-hover: #b1b1b1;
   --accent: #c8502b;          /* Claude coral, darkened for contrast on white */
   --accent-dim: rgba(200,80,43,.5);
+  --mode-auto: #f48771;       /* composer border: Auto permission mode */
+  --mode-manual: #c6613f;     /* composer border: Manual permission mode */
+  --mode-plan: #297aa0;       /* composer border: Plan permission mode */
+  --mode-accept-edits: #bfbfbf; /* composer border: Edit automatically permission mode */
   --sel: #0a6ebd;             /* selection blue tuned for light bg */
   --sel-hover: #0b7fd4;
   --green: #2e9e5b;
@@ -110,8 +116,6 @@
   --ic-bg: #ececec;
   --ic-fg: #a15c2b;
   --cb-head-bg: #ececec;
-  --send-off-bg: #e0d3cc;
-  --send-off-fg: #a89a92;
   --on-accent: #fff;
   --tbtn-active: #dfe3f0;
   /* See the dark block's comment: active must be lighter than inactive. In light

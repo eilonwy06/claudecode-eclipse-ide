@@ -237,6 +237,7 @@ function renderAgentDetail(agent) {
     // "**bold**"/code-fence characters shown literally.
     const respBody = document.createElement('div'); respBody.className = 'ap-response a-body';
     respBody.innerHTML = renderMarkdown(response);
+    respBody.appendChild(makeCopyBtn(() => response));   // hover-revealed, chat.css's #agents-win .ap-response rule
     body.appendChild(label);
     body.appendChild(respBody);
   }

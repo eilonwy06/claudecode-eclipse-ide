@@ -80,15 +80,18 @@ function prettyModelId(id) {
   return p.length > 1 ? fam + ' ' + p.slice(1).join('.') : fam;
 }
 function updateModelLabel() {
+  const lbl = modelLabelFor(curModel);
+  const pill = document.getElementById('model-pill-lbl');
+  if (pill) pill.textContent = lbl;
   const el = document.getElementById('cur-model');
-  if (el) el.textContent = '(' + modelLabelFor(curModel) + ')';
+  if (el) el.textContent = '(' + lbl + ')';
 }
 function openModelChooser(e) {
   if (e) e.stopPropagation();
   closeMenus();
   renderModelList();
   const menu = document.getElementById('model-menu');
-  const anchor = document.getElementById('slash-btn');
+  const anchor = document.getElementById('model-btn');
   menu.classList.add('open');
   positionMenu(menu, anchor);
   openMenuEl = menu; openAnchor = anchor;

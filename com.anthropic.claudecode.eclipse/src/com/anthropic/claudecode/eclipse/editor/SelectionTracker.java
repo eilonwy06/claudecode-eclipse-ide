@@ -137,7 +137,12 @@ public class SelectionTracker {
         } catch (Exception e) {
             // Document unavailable / stale offsets — keep the ITextSelection lines, columns 0.
         }
-        boolean empty = textSelection.isEmpty();
+        // NOT textSelection.isEmpty(): ITextSelection's isEmpty() only reflects whether the
+        // selection object itself is valid (offset >= 0), not whether any text is actually
+        // highlighted — a bare caret is a valid zero-length TextSelection, so isEmpty() would
+        // return false for it, making a plain cursor placement look like "1 line selected"
+        // (startLine == endLine) downstream in the context chip.
+        boolean empty = textSelection.getLength() <= 0;
         String  text  = textSelection.getText();
 
         // Store for getLatestSelection() tool queries.

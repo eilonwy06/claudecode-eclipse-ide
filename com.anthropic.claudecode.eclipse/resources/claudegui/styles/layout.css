@@ -235,8 +235,17 @@ body { min-width: 120px; }
   width: 20px; height: 20px; border-radius: 4px; cursor: pointer; color: inherit; }
 #browser-banner .bb-x:hover { background: var(--hover-veil); }
 #browser-banner .bb-x svg { width: 12px; height: 12px; }
-#input-wrap { position: relative; border: 1px solid var(--accent); border-radius: 10px; background: var(--bg-soft);
-  padding: 8px 10px 6px; transition: border-color .15s; }
+/* Border color signals the live permission mode when focused — plain classes toggled by
+   controls.js's applyModeUI (MODE_BORDER_CLASSES), not a JS-set custom property (see that
+   function's comment for why). Manual has no class of its own: this base rule IS its color.
+   .blur must stay declared LAST: it and a mode-* class have equal specificity, so source
+   order decides the tie when the composer is both unfocused and in a non-Manual mode. */
+#input-wrap { position: relative; border: 1px solid var(--mode-manual); border-radius: 8px;
+  background: var(--bg-soft); padding: 8px 10px 6px; transition: border-color .15s; }
+#input-wrap.mode-acceptEdits { border-color: var(--mode-accept-edits); }
+#input-wrap.mode-plan { border-color: var(--mode-plan); }
+#input-wrap.mode-auto { border-color: var(--mode-auto); }
+#input-wrap.mode-bypassPermissions { border-color: var(--mode-auto); }
 #input-wrap.blur { border-color: var(--border); }
 .input-row { display: flex; align-items: flex-start; gap: 8px; }
 #input { flex: 1; background: transparent; border: none; outline: none; resize: none; color: var(--fg);
@@ -289,16 +298,36 @@ body { min-width: 120px; }
    ends or the user starts typing, so italics always mean "dictation is live". */
 #input.dictating { font-style: italic; }
 
-#composer-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+/* Negative left/right margin cancels #input-wrap's own 10px horizontal padding so the
+   border-top spans the box's full width edge-to-edge; matching padding-left/right on top
+   of that keeps the buttons themselves aligned with the textarea above, same as before. */
+#composer-bar { display: flex; align-items: center; justify-content: space-between;
+  margin: 6px -10px 0; padding: 6px 6px 0; border-top: 1px solid var(--border-soft); }
 /* 2px between controls, the extension's footer spacing; the controls themselves carry
    the room. The groups must NOT be allowed below their content width (no min-width:0):
    a group that shrinks lets its controls slide under the other group's, and hides the
    very overflow fitComposerBar measures to decide how far to collapse. */
 .cb-left, .cb-right { display: flex; align-items: center; gap: 2px; }
+/* Separates the +/commands/agents button group from the file-context chip. Asymmetric on
+   purpose: .agents-pill has a visible background box that already ends flush at its own
+   padding, so .cb-left's 2px gap alone reads fine on that side — but .file-chip has NO
+   background at rest, so ITS 8px left padding is invisible whitespace that only reads as
+   "the gap" once something (this divider) marks where the gap actually starts. Adding the
+   same 8px as margin-left here (and none on the right, since the chip already supplies it)
+   balances the two sides instead of leaving the left one looking flush. */
+.cb-divider { width: 1px; height: 16px; background: var(--border-soft); margin-left: 8px; flex-shrink: 0; }
 .pill { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
   padding: 0; flex-shrink: 0; border-radius: 5px; color: var(--fg-dim); cursor: pointer; }
 .pill svg { display: block; flex-shrink: 0; }
 .pill:hover { background: var(--bg-hover); color: var(--fg); }
+/* Context-usage ring (composer bar): a partial circle, empty at 0% used and fully drawn
+   at 100%. rotate(-90deg) so the arc starts at 12 o'clock instead of 3 o'clock. Track and
+   fill are two stacked circles rather than one, since a single circle can't show both an
+   unfilled track color AND a filled arc color at once. */
+.ctx-ring svg { transform: rotate(-90deg); overflow: visible; }
+.ctx-ring-track { fill: none; stroke: var(--border-soft); stroke-width: 2; }
+.ctx-ring-fill { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round;
+  stroke-dasharray: 50.27; stroke-dashoffset: 50.27; transition: stroke-dashoffset .2s linear; }
 .file-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px;
   font-size: 12px; color: var(--fg-dim); border-radius: 6px; cursor: pointer; max-width: 220px; }
 .file-chip:hover { background: var(--bg-hover); color: var(--fg); }
@@ -307,6 +336,10 @@ body { min-width: 120px; }
 .file-chip.off { opacity: .55; }
 .file-chip.empty { opacity: .5; cursor: default; }
 .file-chip.empty:hover { background: transparent; color: var(--fg-dim); }
+.file-chip .ctx-x { display: none; align-items: center; opacity: .6; border-radius: 3px; flex-shrink: 0; margin-left: 1px; }
+.file-chip .ctx-x:hover { opacity: 1; background: var(--hover-veil); }
+.file-chip:not(.empty) .ctx-x { display: inline-flex; }
+#ctx-chip.icon-only .ctx-x { display: none; }   /* narrow-width collapse (fitComposerBar) has no room for it */
 .modes-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px;
   border-radius: 6px; color: var(--fg-soft); cursor: pointer; font-size: 12px; }
 .modes-btn:hover { background: var(--bg-hover); }
@@ -315,10 +348,10 @@ body { min-width: 120px; }
    an always-visible chip background (unlike .modes-btn's hover-only fill) with a status
    dot + live count, hidden entirely until this conversation has at least one agent
    (agents.js's updateAgentsBtn) — never shown empty. */
-.agents-pill { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
-  border-radius: 6px; background: var(--bg-chip); color: var(--fg-soft); cursor: pointer; font-size: 12px; }
+.agents-pill { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 9px;
+  border-radius: 999px; background: var(--bg-chip); color: var(--fg-soft); cursor: pointer; font-size: 11px; }
 .agents-pill:hover { background: var(--bg-hover); color: var(--fg); }
-.agents-pill .agents-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-faint); flex-shrink: 0; }
+.agents-pill .agents-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--fg-faint); flex-shrink: 0; }
 .agents-pill .agents-dot.running { background: var(--accent); }
 /* narrow-width collapse (fitComposerBar): words hide, icons stay, nothing leaves the div.
    The mode label may NEVER wrap — it is either one line or hidden entirely. */
@@ -342,10 +375,18 @@ body { min-width: 120px; }
 #composer-bar.tiny .modes-btn svg, #composer-bar.tiny .file-chip svg { width: 14px; height: 14px; }
 #composer-bar.tiny #send.mini { width: 18px; height: 18px; margin-left: 0; border-radius: 4px; }
 #composer-bar.tiny #send.mini svg { width: 10px; height: 10px; }
-/* Square with its siblings (the extension's 26px send), not the old 28x32. */
+/* Square with its siblings (the extension's 26px send), not the old 28x32. Background
+   mirrors #input-wrap's per-mode border color (same mode-* classes, toggled together by
+   controls.js's applyModeUI) — Manual has no class of its own, so this base rule IS its
+   color, same convention as #input-wrap. .disabled/.stop stay declared LAST so they win
+   the equal-specificity tie over a mode-* class when both are present on the button. */
 #send { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
-  margin-left: 2px; border-radius: 5px; background: var(--accent); color: var(--on-accent); cursor: pointer; flex-shrink: 0; }
-#send.disabled { background: var(--send-off-bg); color: var(--send-off-fg); cursor: default; }
+  margin-left: 2px; border-radius: 8px; background: var(--mode-manual); color: var(--on-accent); cursor: pointer; flex-shrink: 0; }
+#send.mode-acceptEdits { background: var(--mode-accept-edits); }
+#send.mode-plan { background: var(--mode-plan); }
+#send.mode-auto { background: var(--mode-auto); }
+#send.mode-bypassPermissions { background: var(--mode-auto); }
+#send.disabled { cursor: default; opacity: .5; }
 #send.stop { background: var(--accent); }
 
 

@@ -46,8 +46,19 @@ function renderSlash() {
   });
 }
 function positionSlash() {
-  const r = document.getElementById('composer').getBoundingClientRect();
-  slashEl.style.left = (r.left + 12) + 'px';
+  // #input-wrap (the actual bordered box), NOT #composer — #composer is a wider outer
+  // container (its own 14px padding, no max-width) that #input-wrap sits inset within;
+  // see ui.js's positionMenu for the same fix and full explanation.
+  const r = document.getElementById('input-wrap').getBoundingClientRect();
+  // Inset 10px each side (matching #input-wrap/#composer-bar's own horizontal padding,
+  // same as ui.js's #actions-menu treatment) — not an exact flush match, otherwise this
+  // menu's own border sits right on top of the composer's with no visible gap.
+  slashEl.style.width = (r.width - 20) + 'px';
+  slashEl.style.left = (r.left + 10) + 'px';
+  // max-height from the actual space above the composer, not a fixed 260px guess (panels.css)
+  // — read BEFORE offsetHeight below so a menu taller than that space is already capped
+  // (and scrollable) by the time its height is measured for the top offset.
+  slashEl.style.maxHeight = (r.top - 16) + 'px';
   slashEl.classList.add('open');
   slashEl.style.top = (r.top - slashEl.offsetHeight - 4) + 'px';
 }

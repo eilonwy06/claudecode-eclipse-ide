@@ -11,8 +11,13 @@
 #ctx-menu .ci:hover { background: var(--menu-hover); }
 #ctx-menu .ci.off { color: var(--fg-faint); pointer-events: none; }
 #ctx-menu .ci.off .ck { color: var(--fg-faint); }
+/* box-sizing: border-box — ui.js/slash.js set explicit width/max-height meant as the
+   menu's TOTAL rendered size (to line up exactly with the composer); without this, the
+   1px border + 4px padding below were added ON TOP of those values instead of counted
+   within them, rendering 10px wider/taller than intended and defeating the height cap. */
 .menu { position: absolute; z-index: 40; background: var(--menu-bg); border: 1px solid var(--border);
-  border-radius: 8px; box-shadow: 0 8px 24px var(--shadow); padding: 4px; min-width: 210px; display: none; }
+  border-radius: 8px; box-shadow: 0 8px 24px var(--shadow); padding: 4px; min-width: 210px;
+  box-sizing: border-box; display: none; }
 .menu.open { display: block; }
 /* #actions-menu bundles Rewind/Model/Effort/Thinking/Account/Slash Commands/Appearance
    into one dropdown (unlike the focused, already-scrollable #slash-menu below) — with no
@@ -23,15 +28,18 @@
    one fixed number fits on every window size, so a fixed cap either clips on a small window
    or scrolls needlessly on a tall one. 100vh-40px mirrors positionMenu's own 8px+8px
    top/bottom viewport margin (ui.js) with a little extra breathing room. */
-#actions-menu { max-height: calc(100vh - 40px); overflow-y: auto; }
-/* calc(100% - 20px), not 100%: box-sizing:border-box only folds the input's OWN
-   padding/border into that 100%, never its margin — the 10px left + 10px right margin
-   below was still added ON TOP, making the real box 20px wider than the menu's own
-   content area and pushing it past the right edge. */
-#actions-slash-filter { width: calc(100% - 20px); box-sizing: border-box; margin: 2px 10px 6px; padding: 6px 9px;
+/* min-width, not the removed inline width:284px — positionMenu (ui.js) now sets an
+   explicit width matching #composer's own, but the composer can shrink narrower than
+   that at small window sizes, and the menu's internal rows (Effort/Model labels) still
+   need this floor to lay out sanely. */
+#actions-menu { max-height: calc(100vh - 40px); overflow-y: auto; min-width: 284px; }
+/* calc(100% - 12px), not 100%: box-sizing:border-box only folds the input's OWN
+   padding/border into that 100%, never its margin — the 6px left + 6px right margin
+   below is still added ON TOP, so it has to be subtracted here too or the real box would
+   be 12px wider than the menu's own content area and push past the right edge. */
+#actions-slash-filter { width: calc(100% - 12px); box-sizing: border-box; margin: 2px 6px 6px; padding: 6px 9px;
   background: var(--bg-code); border: 1px solid var(--border); border-radius: 6px;
   color: var(--fg); font-size: 12px; outline: none; }
-#actions-slash-filter:focus { border-color: var(--sel); }
 .menu .item { display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
 .menu .item:hover { background: var(--menu-hover); }
 .menu .item .ic { margin-top: 1px; color: var(--fg-dim); flex-shrink: 0; }
@@ -69,6 +77,9 @@
 
 /* slash command menu */
 #slash-menu { min-width: 260px; max-height: 260px; overflow-y: auto; }
+/* min-width, not the removed inline width:320px — positionMenu (ui.js) now sizes this to
+   #input-wrap like #actions-menu, but the composer can shrink narrower than that. */
+#model-menu { min-width: 260px; max-height: 260px; overflow-y: auto; }
 #slash-menu .item .cmd { font-family: 'Cascadia Code','Consolas',monospace; color: var(--fg); font-size: 12.5px; }
 #slash-menu .item .d { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
 #slash-menu .item.sel { background: var(--menu-hover); }
@@ -328,9 +339,11 @@ body.teleporting #composer { display: none; }
   color: var(--fg-faint); margin-top: 12px; flex-shrink: 0; }
 /* No white-space:pre-wrap — this holds rendered markdown HTML (.a-body), not raw text,
    so the source's own newlines are already expressed as real p/br elements. */
-#agents-win .ap-response { margin-top: 4px; padding: 8px 10px; background: var(--bg-soft);
+#agents-win .ap-response { position: relative; margin-top: 4px; padding: 8px 10px; background: var(--bg-soft);
   border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; color: var(--fg);
   max-height: 26vh; overflow-y: auto; flex-shrink: 0; }
+/* Top-right corner overlay (the shared .copy-btn default), hover-revealed on the box. */
+#agents-win .ap-response:hover .copy-btn { opacity: 1; }
 #agents-win .ap-list { flex: 0 1 auto; min-height: 0; overflow-y: auto; margin-top: 10px; }
 #agents-win .ap-list::-webkit-scrollbar { width: 9px; }
 #agents-win .ap-list::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; }
@@ -408,3 +421,12 @@ body.teleporting #composer { display: none; }
 #agents-win .ap-transcript-body::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; }
 #agents-win .ap-transcript-prompt { padding: 8px 10px; margin-bottom: 10px; background: var(--bg-soft);
   border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; color: var(--fg); white-space: pre-wrap; }
+
+/* Context-usage ring's hover popover (controls.js) — positioned in JS like a .menu
+   (position: fixed + explicit left/top), styled the same way rather than relying on the
+   browser's own native title tooltip. */
+#ctx-ring-tip { display: none; position: fixed; z-index: 60; min-width: 220px; background: var(--menu-bg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; box-shadow: 0 8px 24px var(--shadow); }
+#ctx-ring-tip.open { display: block; }
+#ctx-ring-tip .crt-line { font-size: 12.5px; color: var(--fg); line-height: 1.4; }
+#ctx-ring-tip .crt-line.crt-dim { color: var(--fg-dim); margin-top: 6px; }

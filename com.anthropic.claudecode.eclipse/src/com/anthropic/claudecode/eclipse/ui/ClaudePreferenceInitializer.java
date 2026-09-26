@@ -45,8 +45,6 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
 
         // Claude Terminal status bar (statusLine) — on by default, except the thinking segment.
         store.setDefault(Constants.PREF_STATUSLINE_ENABLED, true);
-        store.setDefault(Constants.PREF_STATUSLINE_SHOW_MODEL, true);
-        store.setDefault(Constants.PREF_STATUSLINE_SHOW_EFFORT, true);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_THINKING, false);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_CONTEXT, true);
         store.setDefault(Constants.PREF_STATUSLINE_SHOW_COST, false);

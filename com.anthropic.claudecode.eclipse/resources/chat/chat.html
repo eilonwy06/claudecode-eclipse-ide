@@ -212,7 +212,7 @@ function addToolIndicator(toolName, isRunning) {
   const badge = document.createElement('div');
   badge.className = 'tool-badge' + (isRunning ? '' : ' done');
   badge.id = 'tool-' + toolName.replace(/[^a-zA-Z0-9]/g, '_');
-  badge.innerHTML = (isRunning ? '<span class="spinner"></span>' : '✓') + ' ' + toolName;
+  badge.innerHTML = (isRunning ? '<span class="spinner"></span>' : '✓') + ' ' + escapeHtml(toolName);
   currentAssistantEl.appendChild(badge);
   scrollToBottom();
 }
@@ -221,7 +221,7 @@ function updateToolDone(toolName) {
   const badge = document.getElementById('tool-' + toolName.replace(/[^a-zA-Z0-9]/g, '_'));
   if (badge) {
     badge.className = 'tool-badge done';
-    badge.innerHTML = '✓ ' + toolName;
+    badge.innerHTML = '✓ ' + escapeHtml(toolName);
   }
 }
 
@@ -273,14 +273,24 @@ function handleError(msg) {
 // --- Markdown renderer (lightweight) ---
 function renderMarkdown(text) {
   if (!text) return '';
-  let html = text;
 
-  // Code blocks (```lang\n...\n```)
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+  // Code blocks (```lang\n...\n```) are pulled out and escaped/wrapped up front, then
+  // swapped back in by a null-byte placeholder once the rest of the text has ALSO been
+  // escaped below — otherwise their already-safe '<pre>...' HTML would get re-escaped.
+  const blocks = [];
+  let html = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const escaped = escapeHtml(code.trimEnd());
     const label = lang || 'code';
-    return '<pre><div class="code-header"><span>' + label + '</span><button onclick="copyCode(this)">Copy</button></div><code>' + escaped + '</code></pre>';
+    blocks.push('<pre><div class="code-header"><span>' + label + '</span><button onclick="copyCode(this)">Copy</button></div><code>' + escaped + '</code></pre>');
+    return '\u0000B' + (blocks.length - 1) + '\u0000';
   });
+
+  // Escape everything else BEFORE running the markdown transforms below, so raw HTML in
+  // the source (e.g. text quoted from a fetched page, or a file's contents) can never
+  // reach innerHTML unescaped — this is what CodeQL's js/xss-through-dom alert flagged:
+  // previously only code-fence content was escaped, every other branch passed raw text
+  // straight into the HTML the regexes below build.
+  html = escapeHtml(html);
 
   // Inline code
   html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
@@ -307,6 +317,9 @@ function renderMarkdown(text) {
 
   // Wrap in paragraph if not already wrapped
   if (!html.startsWith('<')) html = '<p>' + html + '</p>';
+
+  // Restore the escaped/wrapped code fences.
+  html = html.replace(/\u0000B(\d+)\u0000/g, (_, i) => blocks[+i]);
 
   return html;
 }

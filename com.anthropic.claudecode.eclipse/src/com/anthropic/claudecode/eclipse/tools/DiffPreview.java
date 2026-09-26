@@ -57,6 +57,39 @@ public final class DiffPreview {
         return ref[0];
     }
 
+    /**
+     * Opens a read-only Eclipse diff editor comparing two in-memory texts directly, with no
+     * backing file on disk. Used for "View full diff" on a chat transcript's Write/Edit/
+     * MultiEdit/NotebookEdit card: by the time that's clicked the edit has typically already
+     * been applied, so reading the current file (as {@link #open} does for the LIVE pending
+     * decision) would just compare the new content against itself. The old/new snippet text
+     * already rendered inline is passed straight through instead.
+     */
+    public static void openText(String oldText, String newText, String title) {
+        UiHelper.syncCall(() -> {
+            try {
+                CompareConfiguration cfg = new CompareConfiguration();
+                cfg.setLeftEditable(false);
+                cfg.setRightEditable(false);
+                cfg.setLeftLabel("Before");
+                cfg.setRightLabel("After");
+
+                CompareItem left  = new CompareItem(title, oldText, false);
+                CompareItem right = new CompareItem(title, newText, false);
+
+                CompareEditorInput input = new CompareEditorInput(cfg) {
+                    @Override
+                    protected Object prepareInput(IProgressMonitor monitor) {
+                        return new DiffNode(null, Differencer.CHANGE, null, left, right);
+                    }
+                };
+                input.setTitle(title);
+                CompareUI.openCompareEditor(input);
+            } catch (Exception ignored) {}
+            return null;
+        });
+    }
+
     /** Closes a preview opened by {@link #open}. Safe to call with null. */
     public static void close(CompareEditorInput input) {
         if (input == null) return;

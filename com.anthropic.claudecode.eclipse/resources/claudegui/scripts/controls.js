@@ -34,10 +34,84 @@ window.onRateLimit = function(tabId, json) {   // tabId ignored — usage is acc
   el.classList.add('show');
 };
 
+/* ---- context-usage ring (composer bar) ----
+   Pushed from Java's onStatusForTab (ClaudeGuiView.java) — the same per-turn contextPct
+   already computed for the native status bar and the /context command, just also handed
+   to the page now. Only ever updates once a turn actually completes (chat.rs's
+   build_status_json fires on the "result" event), same limitation /context already has:
+   nothing live mid-stream, and nothing meaningful right after a resume until a new turn
+   finishes — the ring just stays hidden until then instead of showing a stale/wrong %. */
+let ctxRingData = null;
+const ctxRingByTab = {};   // tabId -> parsed status, mirrors ClaudeGuiView.java's statusByTab
+const CTX_RING_CIRC = 2 * Math.PI * 8;   // matches the SVG circle's r=8 (layout.css)
+window.onContextStatus = function(tabId, json) {
+  let data = null;
+  try { data = JSON.parse(json); } catch (e) {}
+  ctxRingByTab[tabId] = data;   // recorded even for a background tab, for switchToContextRing below
+  const t = activeTab();
+  if (!t || t.id !== tabId) return;   // a background tab's turn finishing shouldn't repaint this
+  ctxRingData = data;
+  updateContextRing();
+};
+/** Called on tab switch (tabs.js) so the ring shows THAT tab's own last-known status
+ *  immediately, instead of stale data left over from whichever tab was active before. */
+function switchToContextRing(tabId) {
+  ctxRingData = ctxRingByTab[tabId] || null;
+  updateContextRing();
+}
+function updateContextRing() {
+  const btn = document.getElementById('ctx-ring-btn');
+  if (!btn) return;
+  const CTX_RING_THRESHOLD = 65;   // hidden below this — only worth surfacing once it matters
+  const has = !!(ctxRingData && typeof ctxRingData.contextPct === 'number' && ctxRingData.contextWindow
+      && ctxRingData.contextPct >= CTX_RING_THRESHOLD);
+  btn.style.display = has ? '' : 'none';
+  if (!has) { hideCtxRingTip(); return; }
+  const pct = Math.min(100, Math.max(0, ctxRingData.contextPct));
+  const fill = btn.querySelector('.ctx-ring-fill');
+  if (fill) fill.style.strokeDashoffset = CTX_RING_CIRC * (1 - pct / 100);
+  const remaining = Math.max(0, 100 - Math.floor(pct));
+  const lbl = document.getElementById('ctx-ring-tip-remaining');
+  if (lbl) lbl.textContent = remaining + '% of context remaining until auto-compact.';
+}
+/** Styled popover (not the browser's own native title tooltip) — positioned like a .menu:
+ *  fixed, glued above the ring button, clamped so it never runs off the left/right edge. */
+function showCtxRingTip() {
+  const btn = document.getElementById('ctx-ring-btn');
+  const tip = document.getElementById('ctx-ring-tip');
+  if (!btn || !tip || btn.style.display === 'none') return;
+  tip.classList.add('open');
+  const r = btn.getBoundingClientRect();
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 8));
+  tip.style.left = left + 'px';
+  tip.style.top = (r.top - th - 6) + 'px';
+}
+function hideCtxRingTip() {
+  const tip = document.getElementById('ctx-ring-tip');
+  if (tip) tip.classList.remove('open');
+}
+
 /* ---- file context chip ---- */
 let ctxData = { fileName: null };
 let ctxEnabled = true;
-window.onContextChanged = function(c) { ctxData = c || { fileName: null }; updateCtxChip(); };
+// Dismissing (the X) is per-snapshot, unlike ctxEnabled's persistent on/off: it hides
+// THIS file/selection only, and clears itself the moment the tracked file or selection
+// range actually changes — ctxEnabled instead stays however the user last left it
+// regardless of what file is open.
+let ctxDismissed = false;
+let ctxDismissKey = '';
+function ctxKey() {
+  return (ctxData && ctxData.fileName)
+    ? ctxData.fileName + ':' + (ctxData.startLine || 0) + '-' + (ctxData.endLine || 0)
+    : '';
+}
+function ctxIsDismissed() { return ctxDismissed && ctxKey() === ctxDismissKey; }
+window.onContextChanged = function(c) {
+  ctxData = c || { fileName: null };
+  if (ctxDismissed && ctxKey() !== ctxDismissKey) ctxDismissed = false;
+  updateCtxChip();
+};
 try { ctxData = JSON.parse(window._currentContext()); } catch (e) {}
 function ctxBaseName() {
   return ctxData && ctxData.fileName ? ctxData.fileName.split(/[\\/]/).pop() : '';
@@ -60,8 +134,8 @@ function updateCtxChip() {
   const chip = document.getElementById('ctx-chip');
   const label = document.getElementById('ctx-label');
   if (!chip || !label) return;
-  const has = !!(ctxData && ctxData.fileName);
-  label.textContent = ctxLabelText();
+  const has = !!(ctxData && ctxData.fileName) && !ctxIsDismissed();
+  label.textContent = has ? ctxLabelText() : 'No file open';
   chip.classList.toggle('empty', !has);
   chip.classList.toggle('off', has && !ctxEnabled);
   const ic = document.getElementById('ctx-ic');
@@ -69,8 +143,18 @@ function updateCtxChip() {
   fitComposerBar();   // label text changed — re-check the narrow-width collapse
 }
 function toggleContext() {
-  if (!ctxData || !ctxData.fileName) return;
+  if (!ctxData || !ctxData.fileName || ctxIsDismissed()) return;
   ctxEnabled = !ctxEnabled;
+  updateCtxChip();
+}
+/** The chip's X — removes the CURRENT file/selection from context (unlike toggleContext's
+ *  persistent eye icon, this un-dismisses itself the moment onContextChanged reports a
+ *  genuinely different file or selection, so it never permanently hides the chip). */
+function dismissContext(e) {
+  if (e) e.stopPropagation();
+  if (!ctxData || !ctxData.fileName) return;
+  ctxDismissed = true;
+  ctxDismissKey = ctxKey();
   updateCtxChip();
 }
 
@@ -126,6 +210,13 @@ new ResizeObserver(() => requestAnimationFrame(fitComposerBar))
    so it takes effect without a respawn. */
 /* DEFAULT_PERM_MODE lives in tabs.js beside the other per-tab defaults. */
 let permMode = DEFAULT_PERM_MODE;
+/* Composer border + send button color per permission mode (border only when focused —
+   #input-wrap.blur overrides back to plain --border, layout.css). Plain classes, not a
+   JS-set custom property with a nested var() fallback (var(--mode-color, var(--accent)))
+   — that pattern failed to resolve in testing and fell back to border-color's CSS-spec
+   initial value, currentColor, which reads as --fg (a light near-white grey) here. Manual
+   needs no class at all: #input-wrap/#send's own base rules already use its color. */
+const MODE_BORDER_CLASSES = ['mode-acceptEdits', 'mode-plan', 'mode-auto', 'mode-bypassPermissions'];
 /** Paints the composer button + menu checkmark for `mode` (no state/pushing). */
 function applyModeUI(mode) {
   const el = document.querySelector('#modes-menu .item[data-mode="' + (mode || DEFAULT_PERM_MODE) + '"]')
@@ -137,6 +228,12 @@ function applyModeUI(mode) {
   const icEl = document.getElementById('modes-ic'); if (icEl) icEl.innerHTML = ICONS[iconKey] || ICONS.HAND;
   document.querySelectorAll('#modes-menu .item .check').forEach(c => c.style.visibility = 'hidden');
   const chk = el.querySelector('.check'); if (chk) chk.style.visibility = '';
+  const dm = el.getAttribute('data-mode');
+  [document.getElementById('input-wrap'), document.getElementById('send')].forEach(node => {
+    if (!node) return;
+    MODE_BORDER_CLASSES.forEach(c => node.classList.remove(c));
+    if (dm && dm !== 'default') node.classList.add('mode-' + dm);
+  });
   fitComposerBar();   // mode label changed — re-check the narrow-width collapse
 }
 /* Bypass permissions is listed only while the preference allows it — the VS Code
@@ -215,6 +312,8 @@ function setEffort(idx, opts) {
   document.querySelectorAll('.eff-fill').forEach(el => el.style.width = pct + '%');
   document.querySelectorAll('.eff-knob').forEach(el => el.style.left = pct + '%');
   document.querySelectorAll('.eff-lbl').forEach(el => el.textContent = '(' + EFFORT_LABELS[effortIdx] + ')');
+  const pillEffort = document.getElementById('model-pill-effort');
+  if (pillEffort) pillEffort.textContent = EFFORT_LABELS[effortIdx];
   const t = (typeof activeTab === 'function') ? activeTab() : null; if (t) t.effortIdx = effortIdx;
   // Moving to/from xhigh/max flips whether thinking is mandatory — refresh both
   // affordances so the lock appears the moment the stop is reached.

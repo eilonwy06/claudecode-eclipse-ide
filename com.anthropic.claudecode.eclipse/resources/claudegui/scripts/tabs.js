@@ -169,6 +169,7 @@ function switchTab(id) {
   if (typeof renderBrowserBanner === 'function') renderBrowserBanner();  // this tab's browser connection
   if (typeof syncComposer === 'function') syncComposer();           // send/stop reflects THIS tab
   if (typeof updateAgentsBtn === 'function') updateAgentsBtn();     // toolbar pill reflects THIS tab's agents
+  if (typeof switchToContextRing === 'function') switchToContextRing(id);  // ring reflects THIS tab's context
   // The root rides along: Java scopes session history, rewind and the status bar to
   // the conversation's own folder, not to the workspace root.
   try { if (window._activeTab) window._activeTab(id, rootPathOf(t)); } catch (e) {} // status bar follows active tab

@@ -390,17 +390,17 @@ function copyToClipboard(btn, text) {
   else if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
   if (!btn) return;
   clearTimeout(btn._copyTimer);
-  // Captured once: a second click inside the flash would otherwise record "Copied" as
-  // the label to restore, and the button would stay stuck on it.
-  if (btn._copyLabel === undefined) btn._copyLabel = btn.textContent;
-  const original = btn._copyLabel;
-  btn.textContent = 'Copied'; btn.classList.add('copied');
-  btn._copyTimer = setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1200);
+  // Captured once: a second click inside the flash would otherwise record the checkmark as
+  // the icon to restore, and the button would stay stuck on it.
+  if (btn._copyIcon === undefined) btn._copyIcon = btn.innerHTML;
+  const original = btn._copyIcon;
+  btn.innerHTML = ICONS.CHECK; btn.classList.add('copied');
+  btn._copyTimer = setTimeout(() => { btn.innerHTML = original; btn.classList.remove('copied'); }, 1200);
 }
-/** A small "Copy" button, hover-revealed by the caller's own CSS (.io-row:hover / .tpath-wrap:hover). */
+/** A small copy-icon button, hover-revealed by the caller's own CSS (.io-row:hover / .tpath-wrap:hover). */
 function makeCopyBtn(getText) {
   const btn = document.createElement('button');
-  btn.type = 'button'; btn.className = 'copy-btn'; btn.textContent = 'Copy';
+  btn.type = 'button'; btn.className = 'copy-btn'; btn.title = 'Copy'; btn.innerHTML = ICONS.COPY;
   btn.onclick = (e) => { e.stopPropagation(); copyToClipboard(btn, getText()); };
   return btn;
 }
@@ -408,23 +408,31 @@ function makeCopyBtn(getText) {
  *  cap — appended lazily by capIfOverflowing() below, never up front, so short content
  *  never gets a link with nothing behind it to expand. Opens a real read-only-in-spirit
  *  editor tab (a throwaway temp file — see ClaudeGuiView#openTextInEditor), not a dialog,
- *  matching the same target VSCode uses for "view full output". */
-function makeMoreHint(label, getFullText) {
+ *  matching the same target VSCode uses for "view full output". `diffPayload`, when given
+ *  (a {old,new,title} object), opens a real Eclipse Compare editor instead — used for
+ *  "View full diff" so it lands in an actual old/new diff view, not a flattened text dump. */
+function makeMoreHint(label, getFullText, diffPayload) {
   const hint = document.createElement('div');
   hint.className = 'more-hint'; hint.textContent = label;
-  hint.onclick = () => { if (window._openTextInEditor) window._openTextInEditor(getFullText()); };
+  hint.onclick = () => {
+    if (diffPayload && window._openDiffInEditor) {
+      window._openDiffInEditor(diffPayload.old, diffPayload.new, diffPayload.title);
+    } else if (window._openTextInEditor) {
+      window._openTextInEditor(getFullText());
+    }
+  };
   return hint;
 }
 /** Measures `contentEl` against `block`'s CSS-capped height AFTER layout and only then
  *  appends a more-hint — the cap itself is pure CSS (.io-block.capped), this just decides
  *  whether there's anything to expand. Called once per block, right after it's inserted. */
-function capIfOverflowing(block, contentEl, label, getFullText) {
+function capIfOverflowing(block, contentEl, label, getFullText, diffPayload) {
   block.classList.add('capped');
   // Reading scrollHeight forces layout — fine here since this runs once per new block,
   // not per streamed chunk (chat.js's autoScroll doc comment explains why THAT path
   // avoids it).
   if (contentEl.scrollHeight <= contentEl.clientHeight + 2) { block.classList.remove('capped'); return; }
-  block.appendChild(makeMoreHint(label, getFullText));
+  block.appendChild(makeMoreHint(label, getFullText, diffPayload));
 }
 /** Parses one line of tool-result text for a leading "path:line[:col]" prefix (grep -n /
  *  ripgrep / JDT reference style). Returns null when the line doesn't look like a hit,
@@ -460,6 +468,7 @@ function buildResultList(text, root) {
   if (lines.length > MAX_ROWS) {
     list.appendChild(makeMoreHint('+' + (lines.length - MAX_ROWS) + ' more — view all', () => text));
   }
+  list.appendChild(makeCopyBtn(() => text));   // full result text, not just the capped rows shown
   return list;
 }
 /** Structured checklist for TodoWrite — its meaningful payload is the INPUT
@@ -599,6 +608,10 @@ function buildAgentLogItemEl(item) {
   el.className = 'a-item muted' + (item.kind === 'thinking' ? ' agent-log-think' : '');
   el.innerHTML = '<span class="dot gray"></span><span class="a-body"></span>';
   el.querySelector('.a-body').innerHTML = renderMarkdown(item.text);
+  // Below the text, not overlapping it in a corner (chat.css's .a-item.muted .copy-btn
+  // override) — this is short-form conversational text, not a boxed IN/OUT/diff, so a
+  // floating overlay would sit awkwardly over prose rather than a code block's margin.
+  if (item.text) el.appendChild(makeCopyBtn(() => item.text));
   return el;
 }
 /** (Re)builds one log item's DOM node and places/replaces it inside the LIVE inline
@@ -710,6 +723,15 @@ function makeToolLine(name, input, status, errorText, root, resultText, hasAgent
         // would silently stop clicking a path from also closing an open menu via ui.js's
         // click-outside handler, same class of bug as cycleSearchScope's innerHTML swap.
         tpathEl.onclick = () => window._openFileInEditor(path, root || rootPathOf(activeTab()));
+      }
+      // Grep/Glob's own `path` merely scopes the search (preferPatternOverPath already
+      // outranked it for `detail` above) — shown as a faint suffix after the pattern so a
+      // scoped search reads differently from an unscoped one instead of looking identical.
+      if (preferPatternOverPath && path && path !== detail) {
+        const scope = document.createElement('span');
+        scope.className = 'tscope';
+        scope.textContent = ' (in: ' + path + ')';
+        line.querySelector('.tpath-wrap').appendChild(scope);
       }
       if (detail) line.querySelector('.tpath-wrap').appendChild(makeCopyBtn(() => detail));
     }
@@ -841,7 +863,7 @@ function applyToolResult(payload) {
 // Tools whose successful result is already fully represented some other way (a diff,
 // the plan-outcome tool-sub, the question card) — showing the CLI's boilerplate ack text
 // underneath would just be noise, so OUT is skipped for these specifically.
-const SKIP_OUT_BOX = new Set(['write', 'edit', 'multiedit', 'notebookedit', 'exitplanmode', 'askuserquestion', 'approvalprompt', 'todowrite']);
+const SKIP_OUT_BOX = new Set(['write', 'edit', 'multiedit', 'notebookedit', 'exitplanmode', 'askuserquestion', 'approvalprompt', 'todowrite', 'read']);
 /* The actual output-rendering fix: until now a successful tool_result only ever colored
    the dot (applyToolResult above) — the CLI's answer never appeared anywhere. Shared by
    the live path (applyToolResult) and, when a reload's session.rs starts carrying result
@@ -892,17 +914,22 @@ function lineDiff(oldStr, newStr) {
 }
 function buildToolDiff(name, input) {
   const n = (name || '').toLowerCase();
-  let rows = null, added = 0, removed = 0;
+  let rows = null, added = 0, removed = 0, oldText = '', newText = '';
   if (n === 'write' && typeof input.content === 'string') {
     rows = input.content.replace(/\n$/, '').split('\n').map(l => ['add', l]); added = rows.length;
+    newText = input.content;
   } else if (typeof input.old_string === 'string' && typeof input.new_string === 'string') {
     rows = lineDiff(input.old_string, input.new_string);
+    oldText = input.old_string; newText = input.new_string;
   } else if (n === 'multiedit' && Array.isArray(input.edits)) {
     rows = [];
+    const oldParts = [], newParts = [];
     input.edits.forEach((e, i) => {
       if (i) rows.push(['gap', '']);
       lineDiff(e.old_string || '', e.new_string || '').forEach(r => rows.push(r));
+      oldParts.push(e.old_string || ''); newParts.push(e.new_string || '');
     });
+    oldText = oldParts.join('\n\n'); newText = newParts.join('\n\n');
   } else if (n === 'notebookedit') {
     // The prior cell source isn't available client-side (NotebookEdit's own input never
     // carries it, and we don't cache Read's notebook output per cell) — so a real old/new
@@ -913,9 +940,11 @@ function buildToolDiff(name, input) {
       rows = [['gap', 'Cell deleted']];
     } else if (typeof input.new_source === 'string') {
       rows = input.new_source.replace(/\n$/, '').split('\n').map(l => ['add', l]); added = rows.length;
+      newText = input.new_source;
     }
   }
   if (!rows || !rows.length) return null;
+  const diffPayload = { old: oldText, new: newText, title: toolLabel(name) || name };
   rows.forEach(r => { if (r[0] === 'add') added++; else if (r[0] === 'del') removed++; });
   const block = document.createElement('div'); block.className = 'code-block edit';
   const pre = document.createElement('pre');
@@ -941,11 +970,11 @@ function buildToolDiff(name, input) {
     // Rows past HARD_MAX were never put in the DOM at all — always show this one
     // regardless of measured height, since there's genuinely missing content, not just
     // clipped-but-present content the way the height cap below handles.
-    block.appendChild(makeMoreHint('⋯ ' + (rows.length - HARD_MAX) + ' more line' + (rows.length - HARD_MAX > 1 ? 's' : '') + ' — view full diff', fullText));
+    block.appendChild(makeMoreHint('⋯ ' + (rows.length - HARD_MAX) + ' more line' + (rows.length - HARD_MAX > 1 ? 's' : '') + ' — view full diff', fullText, diffPayload));
   } else {
     // Every row IS in the DOM; only add the link if they actually overflow the CSS cap
     // (.code-block.capped pre, chat.css) — measured, not guessed, same as makeIoBlock.
-    requestAnimationFrame(() => capIfOverflowing(block, pre, 'View full diff', fullText));
+    requestAnimationFrame(() => capIfOverflowing(block, pre, 'View full diff', fullText, diffPayload));
   }
   const parts = [];
   if (added) parts.push('Added ' + added + ' line' + (added > 1 ? 's' : ''));
@@ -1047,7 +1076,7 @@ function doSend() {
   // Mid-stream sends QUEUE onto THIS tab's own conversation; other tabs stream
   // independently (each has its own process), so they never block this send.
   const queueing = !!t.streaming;
-  const withCtx = !!(ctxEnabled && ctxData && ctxData.fileName);
+  const withCtx = !!(ctxEnabled && ctxData && ctxData.fileName && !ctxIsDismissed());
   const imagesJson = (typeof pendingImagesJson === 'function') ? pendingImagesJson(t) : '';
   addUserMessage(text, withCtx ? ctxChipLabel() : null, imgs, null, nowIso());
   if (!t.titled && text) setTabTitle(t, text);   // title from text; an image-only first turn stays untitled
