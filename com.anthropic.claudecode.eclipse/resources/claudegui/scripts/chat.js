@@ -5,14 +5,55 @@
 let curTurn = null, curBody = null, curText = '';
 let curThink = null, curThinkText = '', thinkStart = 0, turnStart = 0;
 
+/* True while a whole conversation is being rebuilt from disk (loadHistory). Nothing in the
+   middle of that is worth scrolling to — each scroll forces a layout of everything built so
+   far — and loadHistory pins the bottom itself once, when it is done. */
+let bulkRendering = false;
+/* Layout reads and writes grouped across everything queued in one frame. A card or a user
+   bubble has to be measured after it is laid out, and doing that one at a time — write a
+   class, read a height, next one — makes the browser lay the whole page out again for every
+   one of them; a conversation with thousands of cards then takes minutes. Every queued job
+   instead gets its writes in first, then all the reads (one layout), then its final writes. */
+const measureJobs = [];
+let measureScheduled = false;
+/* `el` is what is being measured: when it is out of sight with its whole turn (a tab that is
+   not in front, or under a closed "Messages before compaction") it has no size to measure and
+   would be taken for short and never cut. It is parked instead, marked .unmeasured with its
+   measurement on it, and measured when it comes into view (measureRevealed). */
+function measureLater(prepare, read, apply, el) {
+  measureJobs.push({ prepare, read, apply, el });
+  if (measureScheduled) return;
+  measureScheduled = true;
+  requestAnimationFrame(runMeasureJobs);
+}
+function outOfSight(el) {
+  if (el.getClientRects().length) return false;
+  const turn = el.closest('.pane > *');
+  return !!turn && !turn.getClientRects().length;
+}
+function runMeasureJobs() {
+  measureScheduled = false;
+  const jobs = measureJobs.splice(0).filter(j => {
+    if (!j.el || !outOfSight(j.el)) return true;
+    j.el._measure = { mark: j.prepare, overflows: j.read, settle: j.apply };
+    j.el.classList.add('unmeasured');
+    return false;
+  });
+  jobs.forEach(j => j.prepare());
+  jobs.forEach(j => { j.value = j.read(); });
+  jobs.forEach(j => j.apply(j.value));
+}
 // .wc-wordmark is WELCOME_HTML's other top-level element (a sibling of .welcome, not a
 // child — see that function's own comment), so it has to be swept here too or it's
 // orphaned in the pane once .welcome itself is gone. renderTerminalTip re-checks
 // immediately after: its own visibility is keyed off whether .welcome still exists.
 function clearWelcome(pane) {
   if (!pane) return;
-  const w = pane.querySelector('.welcome'); if (w) w.remove();
-  const wm = pane.querySelector('.wc-wordmark'); if (wm) wm.remove();
+  // Both pieces are the pane's first children (createTab builds it from WELCOME_HTML), so
+  // they are looked for there, not searched out of a transcript of thousands of turns.
+  for (let c = pane.firstElementChild; c && (c.classList.contains('welcome') || c.classList.contains('wc-wordmark')); ) {
+    const next = c.nextElementSibling; c.remove(); c = next;
+  }
   if (typeof renderTerminalTip === 'function') renderTerminalTip();
 }
 /* Scroll Lock — the view toolbar's checkbox (the same Action, and the same icon, the
@@ -175,6 +216,7 @@ function autoScroll() {
  *   permission prompt) where landing on what follows is expected, not a surprise.
  */
 function scrollBottom(force) {
+  if (bulkRendering) return;
   if (workingEl && workingEl.parentNode) workingEl.parentNode.appendChild(workingEl); // keep last
   // Don't yank the visible view to the bottom for a BACKGROUND tab's stream — only
   // the active tab's pane is on screen, so a background render must not scroll it.
@@ -275,20 +317,16 @@ function addUserMessage(text, ctx, images, id, ts, pane, ctxTarget) {
     // clientHeight only differs from scrollHeight once something is actually capping it —
     // measuring first (the original bug here) always saw them equal, since nothing had
     // constrained the height yet, so nothing ever counted as overflowing.
-    measureWhenShown(body, {
-      mark: () => body.classList.add('clampable'),
-      overflows: () => body.scrollHeight > body.clientHeight + 2,
-      settle: cut => {
-        if (!cut) { body.classList.remove('clampable'); return; }
-        const more = document.createElement('button');
-        more.type = 'button'; more.className = 'clamp-toggle more'; more.textContent = 'Show more';
-        more.onclick = () => box.classList.add('expanded');
-        const less = document.createElement('button');
-        less.type = 'button'; less.className = 'clamp-toggle less'; less.textContent = 'Show less';
-        less.onclick = () => box.classList.remove('expanded');
-        box.appendChild(more); box.appendChild(less);
-      }
-    });
+    measureLater(() => body.classList.add('clampable'), () => body.scrollHeight > body.clientHeight + 2, over => {
+      if (!over) { body.classList.remove('clampable'); return; }
+      const more = document.createElement('button');
+      more.type = 'button'; more.className = 'clamp-toggle more'; more.textContent = 'Show more';
+      more.onclick = () => box.classList.add('expanded');
+      const less = document.createElement('button');
+      less.type = 'button'; less.className = 'clamp-toggle less'; less.textContent = 'Show less';
+      less.onclick = () => box.classList.remove('expanded');
+      box.appendChild(more); box.appendChild(less);
+    }, body);
   }
   turn.appendChild(box); pane.appendChild(turn);
   // force only with Smart Scroll Lock on: by default, with the lock armed, sending must
@@ -467,30 +505,6 @@ function makeCopyBtn(getText) {
   btn.onclick = (e) => { e.stopPropagation(); copyToClipboard(btn, getText()); };
   return btn;
 }
-/* Blocks that are cut short only when their content overflows — a tool's input or output,
-   a diff, a long prompt — are measured a frame after they are drawn, once they are laid
-   out. One drawn out of sight has no size to measure: in a tab that is not in front, or
-   under a closed "Messages before compaction". Measured there it would be taken for
-   short and never cut. So it waits, marked .unmeasured with its measurement on it, and
-   is measured when it comes into view (measureRevealed).
-
-   A measurement is three steps, so that many can be taken with one layout between them:
-   mark() sets the class that caps the block, overflows() reads whether its content is
-   then cut, and settle(cut) takes the class off again or adds what expands the block. */
-/** @param {HTMLElement} el  the block that is capped
- *  @param {{mark: Function, overflows: Function, settle: Function}} measurement */
-function measureWhenShown(el, measurement) {
-  requestAnimationFrame(() => {
-    if (!el.getClientRects().length) {
-      // Out of sight with the whole of its turn: later. Hidden within a turn that shows
-      // (a closed block of its own) is measured now, as it always was.
-      const turn = el.closest('.pane > *');
-      if (turn && !turn.getClientRects().length) { el._measure = measurement; el.classList.add('unmeasured'); return; }
-    }
-    measurement.mark();
-    measurement.settle(measurement.overflows());
-  });
-}
 /* Measures what was drawn out of sight under `root` and shows now: when a tab comes to
    the front, and when "Messages before compaction", a Focus view fold or an "Agent
    activity" is opened (or Focus view switched off). All marked, then all read,
@@ -634,8 +648,8 @@ function makeCardBar(card, label, getFullText, total, over) {
   add('cb-view', label, () => { if (window._openTextInEditor) window._openTextInEditor(getFullText()); });
   return bar;
 }
-/** One card's measurement, in measureWhenShown's three steps: against the preview height,
- *  whatever mode is showing. */
+/** One card's measurement, in the three steps measureRevealed takes (mark, read, settle):
+ *  against the preview height, whatever mode is showing. */
 function cardMeasurement(card) {
   const blk = card.parentElement.classList.contains('io-block') ? card.parentElement : null;
   let mode;
@@ -676,7 +690,7 @@ function settleCards(line) {
  *  start hidden can always be opened. Then the cards: all marked, all read, all settled,
  *  one layout for the lot. A card whose line has no size — its tab is not in front, or it
  *  sits under "Messages before compaction", a closed Focus view fold or a closed "Agent
- *  activity" — would be taken for short and never cut: it waits, as measureWhenShown's
+ *  activity" — would be taken for short and never cut: it waits, as measureLater's
  *  blocks do, and is measured when it shows (measureRevealed). */
 function settleLines(lines) {
   const ready = [];
@@ -690,7 +704,10 @@ function settleLines(lines) {
     });
     ensureCardChevron(line);
     syncLineChevron(line);
-    const shows = line.getClientRects().length > 0;
+  });
+  const showing = lines.map(line => line.getClientRects().length > 0);   // after every write: one layout
+  lines.forEach((line, i) => {
+    const shows = showing[i];
     line.querySelectorAll(':scope > .io-block > .io-item, :scope > .code-block.edit').forEach(card => {
       if (card._settled || card.dataset.mode === 'hidden') return;
       card._settled = true;
