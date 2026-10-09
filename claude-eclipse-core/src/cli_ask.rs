@@ -28,7 +28,7 @@ pub(crate) const REQUEST_PREFIX: &str = "eclipse-ask-";
 /// The control requests the page may send to a live process that only read: what the
 /// dialogs show. Not `get_settings`: the settings in effect can hold what `env` holds,
 /// and the one setting the page shows is picked out of them here ([`flagged_message_switch`]).
-const READING_SUBTYPES: [&str; 10] = [
+const READING_SUBTYPES: [&str; 12] = [
     "get_memory_dialog",
     "get_skills_dialog",
     "get_status",
@@ -39,6 +39,8 @@ const READING_SUBTYPES: [&str; 10] = [
     "get_sandbox_dialog",
     "get_plan",
     "export_conversation",
+    "get_context_usage",
+    "get_usage",
 ];
 
 /// Whether `request` is its subtype and exactly the fields named, each as its check
@@ -646,6 +648,7 @@ mod tests {
         for subtype in [
             "get_memory_dialog", "get_skills_dialog", "get_status", "get_chrome_dialog", "get_chrome_browsers",
             "get_hooks_listing", "list_permission_rules", "get_sandbox_dialog", "get_plan", "export_conversation",
+            "get_context_usage", "get_usage",
         ] {
             assert!(request_line("t", &json!({ "subtype": subtype })).is_some(), "{subtype}");
         }

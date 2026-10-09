@@ -394,7 +394,8 @@ public final class RewindService {
                     com.anthropic.claudecode.eclipse.ui.SessionPrefsStore.load(oldId)).getAsJsonObject();
             if (p.size() == 0) return;
             com.anthropic.claudecode.eclipse.ui.SessionPrefsStore.save(newId,
-                    str(p, "effort"), str(p, "model"), str(p, "thinking"), str(p, "permMode"));
+                    str(p, "effort"), str(p, "model"), str(p, "thinking"), str(p, "permMode"),
+                    str(p, "ultracode"));
         } catch (Throwable ignored) {}
     }
 

@@ -128,7 +128,7 @@ function modelSupportsFast(t) {
 }
 
 /* ===================== The rows ===================== */
-const CMD_SECTIONS = ['Context', 'Model', 'Customize', 'Settings', 'Support', 'Appearance'];
+const CMD_SECTIONS = ['Context', 'Model', 'Customize', 'Settings', 'Appearance', 'Support'];
 const HELP_DOCS_URL = 'https://code.claude.com/docs/en/overview';
 
 /** Whether this Eclipse has the Marketplace client. Asked once: it does not come and go. */
@@ -160,6 +160,9 @@ function cmdMenuRows() {
     { id: 'effort', sec: 'Model', label: 'Effort', node: document.getElementById('row-effort') },
     { id: 'thinking', sec: 'Model', label: 'Thinking', icon: 'BRAIN', toggle: true, swId: 'think-check',
       on: () => thinkingOn, run: (e) => toggleThinking(e) },
+    { id: 'ultracode', sec: 'Model', label: 'Ultracode', icon: 'BOLT', toggle: true,
+      tip: 'Orchestrate background subagents more aggressively',
+      on: () => ultracodeOn, run: (e) => toggleUltracode(e) },
     { id: 'flagswitch', sec: 'Model', label: 'Switch models when a message is flagged', icon: 'FLAG', toggle: true,
       tip: 'When safeguards flag a message, automatically switch to a different model to keep chatting. '
         + 'When off, your session will pause instead.',
@@ -204,8 +207,6 @@ function cmdMenuRows() {
 
     { id: 'docs', sec: 'Support', label: 'View help docs', icon: 'HELP',
       run: () => { if (window._openExternal) _openExternal(HELP_DOCS_URL); } },
-    { id: 'feedback', sec: 'Support', label: 'Report a problem', icon: 'BUG',
-      show: () => feedbackMode(t) !== 'disabled', run: () => openFeedbackDialog() },
 
     { id: 'zoom', sec: 'Appearance', label: 'Zoom level', node: document.getElementById('row-zoom') },
   ];

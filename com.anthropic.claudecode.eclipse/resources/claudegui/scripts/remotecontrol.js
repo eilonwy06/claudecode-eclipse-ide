@@ -68,7 +68,8 @@ function rcSend(t, enabled) {
   t.rcAckPending = true;
   _remoteControl(t.id, enabled, t.sessionId || '', t.permMode || permMode,
                  EFFORTS[t.effortIdx] || effort, t.model !== undefined ? t.model : curModel,
-                 (t.thinking !== undefined ? t.thinking : thinkingOn) ? '1' : '0', rootPathOf(t));
+                 (t.thinking !== undefined ? t.thinking : thinkingOn) ? '1' : '0', rootPathOf(t),
+                 t.ultracode !== undefined ? t.ultracode : ultracodeOn);
 }
 
 /* How long to wait for a bridge before giving up.

@@ -91,6 +91,7 @@ function toggleMenu(id, anchor) {
     const filterInput = document.getElementById('actions-slash-filter');
     if (filterInput) filterInput.value = '';
     if (typeof filterActionsSlash === 'function') filterActionsSlash('');
+    if (typeof updateMenuVersionFooter === 'function') updateMenuVersionFooter();
     focusFilter = filterInput;
   }
   // The preference can change while Eclipse is running (ClaudePreferencePage applies it

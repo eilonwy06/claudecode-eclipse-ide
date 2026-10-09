@@ -76,7 +76,7 @@ function mcpCall(t, request) {
   // Launch settings ride along because this may have to START the tab's process,
   // exactly as Remote Control's toggle does.
   _mcp(t.id, token, JSON.stringify(request), t.sessionId || '', t.permMode || permMode,
-       effort, curModel, thinkingOn ? '1' : '0', rootPathOf(t));
+       effort, curModel, thinkingOn ? '1' : '0', rootPathOf(t), ultracodeOn);
   return done;
 }
 /** `claude mcp add|remove`, run in the tab's folder. */

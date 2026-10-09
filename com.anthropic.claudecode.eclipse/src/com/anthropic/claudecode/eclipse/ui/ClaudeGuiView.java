@@ -160,6 +160,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     @SuppressWarnings("unused") private SimpleFunction remoteControlFn;
     @SuppressWarnings("unused") private SimpleFunction remoteControlQrFn;
     @SuppressWarnings("unused") private SimpleFunction mcpFn;
+    @SuppressWarnings("unused") private SimpleFunction pluginVersionFn;
     @SuppressWarnings("unused") private SimpleFunction mcpConfigFn;
     @SuppressWarnings("unused") private SimpleFunction cliFn;
     @SuppressWarnings("unused") private SimpleFunction commandsFn;
@@ -426,6 +427,10 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                 // This conversation's working root — its claude's cwd. Empty (an older
                 // page, or the workspace root itself) leaves the manager on the default.
                 String root     = (a.length > 9 && a[9] instanceof String rp) ? rp : "";
+                // Ultracode and "switch models when a message is flagged" — appended at the
+                // end, like root/imagesJson before them, so an older page's shorter argument
+                // array still reads correctly by position.
+                final boolean ultracode = a.length > 10 && a[10] instanceof Boolean b10 && b10;
                 // Capture effort/thinking for the status bar (the stream reports
                 // model + context + cost, but not these launch-time choices).
                 this.lastEffort = effort;
@@ -441,7 +446,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                     new Thread(() -> {
                         String blocks = "[]";
                         try {
-                            if (mgr.ensureProcess(resumeId, permMode, effort, fModel, fThinking)) {
+                            if (mgr.ensureProcess(resumeId, permMode, effort, fModel, fThinking, ultracode)) {
                                 blocks = mgr.browserBlocks(s);
                             }
                         } catch (Throwable t) {
@@ -454,11 +459,11 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                             ClaudeCodeView.debug("[BROWSER] no browser instruction in this send: the browser was "
                                     + "already on for this conversation, or the instruction was not found in the CLI");
                         }
-                        mgr.sendMessage(s, resumeId, permMode, effort, fModel, fThinking,
+                        mgr.sendMessage(s, resumeId, permMode, effort, fModel, fThinking, ultracode,
                                 concatJsonArrays(attachments, blocks));
                     }, "claude-browser-send").start();
                 } else {
-                    mgr.sendMessage(s, resumeId, permMode, effort, model, thinking, attachments);
+                    mgr.sendMessage(s, resumeId, permMode, effort, model, thinking, ultracode, attachments);
                 }
             }
             return null;
@@ -887,7 +892,8 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                 String md = (a.length > 2 && a[2] instanceof String s) ? s : "";
                 String th = (a.length > 3 && a[3] instanceof String s) ? s : "";
                 String pm = (a.length > 4 && a[4] instanceof String s) ? s : "";
-                SessionPrefsStore.save(id, ef, md, th, pm);
+                String uc = (a.length > 5 && a[5] instanceof String s) ? s : "";
+                SessionPrefsStore.save(id, ef, md, th, pm, uc);
             }
             return null;
         });
@@ -915,12 +921,13 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             final String effort   = a[2] instanceof String s2 ? s2 : "";
             final String model    = launchModel(a[3] instanceof String s3 ? s3 : "");
             final String thinking = launchThinking(a[4] instanceof String s4 ? s4 : "");
+            final boolean ultracode = a.length > 5 && a[5] instanceof Boolean b5 && b5;
             final ChatProcessManager m = managers.get(ti);   // only a live process needs telling
             if (m == null) return null;
             // Off the UI thread: a stdin write to a process that has stopped reading
             // must not hold the view.
             new Thread(() -> {
-                try { m.applySettings(permMode, effort, model, thinking); }
+                try { m.applySettings(permMode, effort, model, thinking, ultracode); }
                 catch (Throwable ignored) {}
             }, "claude-apply-settings").start();
             return null;
@@ -1055,6 +1062,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             // runs in the workspace root, and the tab's first message — which names its
             // folder — replaces that process, taking the bridge down with it.
             final String root     = a.length > 7 && a[7] instanceof String s ? s : "";
+            final boolean ultracode = a.length > 8 && a[8] instanceof Boolean b8 && b8;
             final boolean enabled = on.booleanValue();
             final Browser b = browser;
             // managerFor, not managers.get: a tab nothing has been typed into yet has
@@ -1067,7 +1075,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                     // Only when one was sent: a page from before this argument sends none,
                     // and clearing the folder a send has set would move the tab.
                     if (!root.isEmpty()) m.setRoot(root);
-                    ok = m.remoteControl(enabled, resumeId, permMode, effort, model, thinking);
+                    ok = m.remoteControl(enabled, resumeId, permMode, effort, model, thinking, ultracode);
                 } catch (Throwable t) { ok = false; }
                 // Only a FAILURE is reported from here; success is announced by the
                 // CLI's own reply, which is the only thing that knows the url.
@@ -1100,6 +1108,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             final String model    = launchModel(a.length > 6 && a[6] instanceof String s ? s : "");
             final String thinking = launchThinking(a.length > 7 && a[7] instanceof String s ? s : "");
             final String root     = a.length > 8 && a[8] instanceof String s ? s : "";
+            final boolean ultracode = a.length > 9 && a[9] instanceof Boolean b9 && b9;
             final ChatProcessManager m = managerFor(ti);
             // Off the UI thread — spawning a child process would otherwise freeze it.
             new Thread(() -> {
@@ -1107,7 +1116,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                 ClaudeCodeView.debug("[mcp] → " + mcpRequestLabel(request) + " (" + token + ")");
                 try {
                     m.setRoot(root);
-                    if (!m.mcpRequest(token, request, resumeId, permMode, effort, model, thinking)) {
+                    if (!m.mcpRequest(token, request, resumeId, permMode, effort, model, thinking, ultracode)) {
                         err = "Claude could not be started.";
                         ClaudeCodeView.debug("[mcp] " + token + " not sent: no live process, or the request was refused");
                     }
@@ -1122,6 +1131,14 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                 if (err != null) pushMcp(ti, mcpError(token, err));
             }, "claude-mcp").start();
             return null;
+        });
+        // This plugin's own version, for the Settings section's footer (alongside the
+        // installed Claude Code CLI's version, which the page already tracks itself).
+        pluginVersionFn = new SimpleFunction(browser, "_pluginVersion", a -> {
+            try {
+                org.osgi.framework.Version v = Activator.getDefault().getBundle().getVersion();
+                return v.getMajor() + "." + v.getMinor() + "." + v.getMicro();
+            } catch (Throwable t) { return ""; }
         });
         // Adding or removing a server is the CLI's own `claude mcp add|remove`, run in
         // the tab's folder. Blocking, so off the UI thread; the outcome comes back on
@@ -1159,6 +1176,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             final String model    = launchModel(a.length > 6 && a[6] instanceof String s ? s : "");
             final String thinking = launchThinking(a.length > 7 && a[7] instanceof String s ? s : "");
             final String root     = a.length > 8 && a[8] instanceof String s ? s : "";
+            final boolean ultracode = a.length > 9 && a[9] instanceof Boolean b9 && b9;
             final ChatProcessManager m = managerFor(ti);
             // Off the UI thread — spawning a child process would otherwise freeze it.
             new Thread(() -> {
@@ -1166,7 +1184,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                 ClaudeCodeView.debug("[cli] → " + mcpRequestLabel(request) + " (" + token + ")");
                 try {
                     m.setRoot(root);
-                    if (!m.cliRequest(token, request, resumeId, permMode, effort, model, thinking)) {
+                    if (!m.cliRequest(token, request, resumeId, permMode, effort, model, thinking, ultracode)) {
                         err = "Claude could not be started.";
                         ClaudeCodeView.debug("[cli] " + token + " not sent: no live process, or the request was refused");
                     }

@@ -38,7 +38,7 @@ public final class SessionPrefsStore {
 
     /** Records the composer settings for {@code sessionId}. No-op on any error. */
     public static synchronized void save(String sessionId, String effort, String model, String thinking,
-                                         String permMode) {
+                                         String permMode, String ultracode) {
         if (sessionId == null || sessionId.isEmpty()) return;
         try {
             JsonObject root = read();
@@ -48,15 +48,16 @@ public final class SessionPrefsStore {
             e.addProperty("model", model == null ? "" : model);
             e.addProperty("thinking", thinking == null ? "" : thinking);
             e.addProperty("permMode", permMode == null ? "" : permMode);
+            e.addProperty("ultracode", ultracode == null ? "" : ultracode);
             root.add(sessionId, e);
             prune(root);
             write(root);
         } catch (Throwable ignored) {}
     }
 
-    /** Returns the stored {@code {effort,model,thinking,permMode}} for {@code sessionId},
-     *  or {@code "{}"}. Entries written before permMode existed simply omit it, and the
-     *  GUI falls back to the default mode. */
+    /** Returns the stored {@code {effort,model,thinking,permMode,ultracode}}
+     *  for {@code sessionId}, or {@code "{}"}. Entries written before a field existed simply
+     *  omit it, and the GUI falls back to its own default. */
     public static synchronized String load(String sessionId) {
         if (sessionId == null || sessionId.isEmpty()) return "{}";
         try {

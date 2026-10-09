@@ -39,7 +39,7 @@ function cliAsk(t, subtype, extra, timeoutMs) {
   if (!window._cli) return Promise.reject(new Error('Not supported by this build.'));
   const w = cliWaiting('c', timeoutMs);
   _cli(t.id, w.token, JSON.stringify(Object.assign({ subtype }, extra || {})), t.sessionId || '',
-       t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', rootPathOf(t));
+       t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', rootPathOf(t), ultracodeOn);
   return w.done;
 }
 /** Saves one change a dialog made, with the CLI's own edit subcommand (`claude edit-…`),

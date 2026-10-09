@@ -9,13 +9,10 @@ const SLASH_COMMANDS = [
   { cmd: '/mcp',     desc: 'Manage MCP servers' },
   { cmd: '/model',   desc: 'Switch model' },
   { cmd: '/resume',  desc: 'Open session history', aliases: ['continue'] },
-  { cmd: '/context', desc: 'Show context window usage for this conversation' },
+  { cmd: '/context', desc: 'Show context window usage for this conversation', dialog: true },
+  { cmd: '/usage',   desc: 'Show account and plan usage', dialog: true },
   { cmd: '/remote-control', desc: 'Continue this conversation on the web or your phone', aliases: ['rc'] },
   { cmd: '/rewind',  desc: 'Restore code and fork from an earlier message', aliases: ['checkpoint', 'undo'] },
-  // No local handling — just menu discoverability. Falls through to sendSlashToCli()
-  // like any other unrecognized command, same as it would with no entry here at all;
-  // this only makes it show up while typing "/wo…" instead of being invisible.
-  { cmd: '/workflows', desc: 'Watch live progress of a running workflow' },
   { cmd: '/help',    desc: 'Show available commands' },
   // The dialogs the command menu opens (clidialogs.js), by the names the CLI gives them.
   // Typed bare they open the dialog; with arguments they go to the CLI, as in the extension.
@@ -75,7 +72,7 @@ function handleSlashCommand(text) {
       '/permissions': openPermissionsDialog, '/hooks': openHooksDialog, '/export': openExportDialog,
       '/skills': openSlashCommandsDialog, '/sandbox': openSandboxDialog, '/chrome': openChromeDialog,
       '/config': () => { if (window._ide) _ide('prefs', '', ''); },
-      '/design-login': openDesignDialog, '/login': () => openSignInDialog(true), '/logout': openSignOutDialog };
+      '/usage': openAccount, '/design-login': openDesignDialog, '/login': () => openSignInDialog(true), '/logout': openSignOutDialog };
     if (dialogs[cmd]) { dialogs[cmd](); return true; }
   }
   // Clears the conversation IN THE CURRENT TAB, then echoes the command so it's
@@ -86,7 +83,10 @@ function handleSlashCommand(text) {
   // Echo is deferred to the card's confirm() — cancel/Esc adds nothing.
   if (cmd === '/advisor') { openAdvisorCard(text); return true; }
   if (cmd === '/model') { handleModelCommand(text); return true; }
-  if (cmd === '/context') { handleContextCommand(text); return true; }
+  // Same "interactive-only, refuses over stream-json" story as /model and /resume — but
+  // get_context_usage answers it anyway. openContextDialog (tabs.js) drives it instead of
+  // sending this text anywhere. No echo: a dialog opened, nothing was sent.
+  if (cmd === '/context') { openContextDialog(); return true; }
   if (cmd === '/rewind') { openRewindDialog(); return true; }      // deliberately unchanged
   // No echo: the CLI answers asynchronously and writes its own line, so echoing
   // the command here would put it above a result that has not happened yet.
@@ -106,7 +106,7 @@ function handleSlashCommand(text) {
   if (cmd === '/help') {
     const ht = activeTab();
     addUserMessage(text, null, null, null, nowIso());
-    addSystemTo(ht, 'Commands: /advisor — set up an advisor model · /clear — new conversation · /compact — compact the conversation into a summary · /context — show context window usage for this conversation · /mcp — manage MCP servers · /model — switch model · /remote-control — continue this conversation on the web or your phone · /rewind — restore code and fork from an earlier message · /workflows — watch live progress of a running workflow · /help — this list. Type / to see them. The Agents panel has its own toolbar button in the composer.');
+    addSystemTo(ht, 'Commands: /advisor — set up an advisor model · /clear — new conversation · /compact — compact the conversation into a summary · /context — show context window usage for this conversation · /mcp — manage MCP servers · /model — switch model · /remote-control — continue this conversation on the web or your phone · /rewind — restore code and fork from an earlier message · /help — this list. Type / to see them. The Agents panel has its own toolbar button in the composer.');
     return true;
   }
   return false; // unknown slash: let it pass through to Claude
@@ -142,36 +142,6 @@ function handleModelCommand(text) {
   // "〰 Switched to X 〰" divider would just say it twice.
   selectModel(id, { noDivider: true });
   addSystemTo(t, 'Set model to ' + modelLabelFor(id) + ' for this session only');
-}
-
-/* ---- /context ----
-   Same reasoning as /model above: the headless CLI (-p --input-format stream-json) has no
-   interactive surface to answer "/context" over, so this reproduces it locally from the
-   same numbers already computed for the native ClaudeStatusBar strip
-   (ClaudeGuiView#buildStatus) via the _getContextStatus bridge, rather than forwarding a
-   command that would get no useful reply. pct is clamped defensively here too — belt and
-   suspenders alongside the chat.rs/ClaudeStatusBar.java clamps, in case an older core
-   without the fix is ever paired with a newer page. */
-function handleContextCommand(text) {
-  const t = activeTab();
-  addUserMessage(text, null, null, null, nowIso());
-  let s = {};
-  try { s = window._getContextStatus ? JSON.parse(window._getContextStatus()) : {}; } catch (e) {}
-  const ctxWindow = s.contextWindow || 0;
-  if (typeof s.contextPct !== 'number' || !ctxWindow) {
-    addSystemTo(t, 'No context usage recorded yet for this conversation.');
-    return;
-  }
-  const pct = Math.min(100, Math.max(0, s.contextPct));
-  const lines = [
-    'Context usage: ' + Math.floor(pct) + '% of ' + ctxWindow.toLocaleString() + ' tokens',
-    '  Input: ' + (s.inputTokens || 0).toLocaleString(),
-    '  Cache read: ' + (s.cacheReadTokens || 0).toLocaleString(),
-    '  Cache creation: ' + (s.cacheCreationTokens || 0).toLocaleString(),
-    '  Output (last turn): ' + (s.outputTokens || 0).toLocaleString(),
-  ];
-  if (typeof s.costUsd === 'number') lines.push('  Session cost: $' + s.costUsd.toFixed(4));
-  addSystemTo(t, lines.join('\n'));
 }
 
 /** Names accepted by /model, in chooser order (disabled ones are omitted). */
@@ -211,7 +181,7 @@ function sendSlashToCli(text) {
   closeSlash();
   if (!queueing) { setStreaming(true); showWorking(); }
   else if (!workingEl) showWorking();
-  if (window._sendToJava) window._sendToJava(text, false, t.sessionId || '', t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', t.id, '', rootPathOf(t));
+  if (window._sendToJava) window._sendToJava(text, false, t.sessionId || '', t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', t.id, '', rootPathOf(t), ultracodeOn);
   persistTabPrefs(t);
 }
 
@@ -229,7 +199,7 @@ function sendCompact() {
   t.compacting = true;
   if (!queueing) { setStreaming(true); showWorking(); }
   else if (!workingEl) showWorking();
-  if (window._sendToJava) window._sendToJava('/compact', false, t.sessionId || '', t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', t.id, '', rootPathOf(t));
+  if (window._sendToJava) window._sendToJava('/compact', false, t.sessionId || '', t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', t.id, '', rootPathOf(t), ultracodeOn);
   persistTabPrefs(t);
 }
 

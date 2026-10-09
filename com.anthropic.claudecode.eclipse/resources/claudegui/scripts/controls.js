@@ -441,3 +441,41 @@ document.addEventListener('mouseup', () => { zoomDragging = false; zoomDragSlide
   setZoom(saved, false);
 })();
 
+/** Plugin + installed Claude Code CLI version, shown under the Settings section.
+ *  Refreshed each time the actions menu opens (toggleMenu, ui.js) rather than cached at
+ *  page load: the CLI version arrives asynchronously and may not be in yet that early. */
+let pluginVersion = null;
+function updateMenuVersionFooter() {
+  const el = document.getElementById('menu-version-footer');
+  if (!el) return;
+  if (pluginVersion === null) {
+    try { pluginVersion = (window._pluginVersion && _pluginVersion()) || ''; } catch (e) { pluginVersion = ''; }
+  }
+  const cliV = (typeof cliVersion !== 'undefined' && cliVersion && cliVersion.installed) || '';
+  const parts = [];
+  if (pluginVersion) parts.push('Plugin v' + pluginVersion);
+  if (cliV) parts.push('Claude Code v' + cliV);
+  el.textContent = parts.join(' · ');
+  // "Report a problem" opens the CLI's own feedback dialog (clidialogs.js), and goes
+  // when the CLI says feedback is off for this account, as the menu's own rows do.
+  const link = document.getElementById('menu-feedback-link');
+  if (link && typeof feedbackMode === 'function') link.hidden = feedbackMode(activeTab()) === 'disabled';
+}
+
+/** The effort row itself is clickable like any other .item, advancing one step per
+ *  click (wrapping past Max back to Low) — dragging the knob (effortDown above) still
+ *  does fine-grained positioning. Ignores clicks that land on the slider itself, which
+ *  already has its own click/drag-to-position behavior; stepping on top of that would
+ *  fight whatever position the click just set. */
+function cycleEffort(e) {
+  if (e.target.closest('.slider')) return;
+  setEffort((effortIdx + 1) % EFFORTS.length);
+}
+
+/** The zoom row itself is clickable like any other .item, same as cycleEffort above —
+ *  advances one step per click (wrapping past 150% back to 50%), ignoring clicks that
+ *  land on the slider, which already drags/positions itself. */
+function cycleZoom(e) {
+  if (e.target.closest('.slider')) return;
+  setZoom((zoomIdx + 1) % ZOOM_LEVELS.length);
+}

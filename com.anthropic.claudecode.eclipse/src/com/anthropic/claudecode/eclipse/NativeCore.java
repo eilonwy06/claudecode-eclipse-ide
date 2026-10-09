@@ -226,7 +226,9 @@ public final class NativeCore {
                                               String claudeCmd, String workspaceRoot,
                                               int mcpPort, String mcpAuthToken,
                                               String resumeId, String permMode, String effort,
-                                              String model, String thinking, String imagesJson);
+                                              String model, String thinking,
+                                              boolean ultracode,
+                                              String imagesJson);
 
     /**
      * Cancels the current turn. Legacy mode kills the claude process; persistent
@@ -366,7 +368,8 @@ public final class NativeCore {
      */
     public static native boolean chatEnsureProcess(long handle, String claudeCmd, String workspaceRoot,
             int mcpPort, String mcpAuthToken, String resumeId, String permMode,
-            String effort, String model, String thinking);
+            String effort, String model, String thinking,
+            boolean ultracode);
     /**
      * Turns Remote Control on or off for this tab's live process.
      *
@@ -495,7 +498,8 @@ public final class NativeCore {
      *         one (the next message makes it, as before).
      */
     public static native boolean chatApplySettings(long handle, String permMode, String effort,
-                                                   String model, String thinking);
+                                                   String model, String thinking,
+                                                   boolean ultracode);
 
     /**
      * Renders a Remote Control session url as a scannable QR code, as SVG.

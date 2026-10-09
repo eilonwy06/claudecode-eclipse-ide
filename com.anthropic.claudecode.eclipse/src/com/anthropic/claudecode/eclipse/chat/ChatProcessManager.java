@@ -153,8 +153,9 @@ public class ChatProcessManager {
      *
      *  @return false if no process could be started; nothing was sent. */
     public boolean remoteControl(boolean enabled, String resumeId, String permMode,
-                                 String effort, String model, String thinking) {
-        if (!ensureProcess(resumeId, permMode, effort, model, thinking)) return false;
+                                 String effort, String model, String thinking,
+                                 boolean ultracode) {
+        if (!ensureProcess(resumeId, permMode, effort, model, thinking, ultracode)) return false;
         return NativeCore.chatRemoteControl(handle, enabled);
     }
 
@@ -167,7 +168,8 @@ public class ChatProcessManager {
      *  (the MCP servers window closed and reopened, Remote Control switched on
      *  meanwhile) would otherwise each spawn one, and the core keeps only the last. */
     public synchronized boolean ensureProcess(String resumeId, String permMode, String effort,
-                                              String model, String thinking) {
+                                              String model, String thinking,
+                                              boolean ultracode) {
         String claudeCmd = claudeCmd();
         String workspaceRoot = workspaceRoot();
 
@@ -182,7 +184,7 @@ public class ChatProcessManager {
         return NativeCore.chatEnsureProcess(handle, claudeCmd, workspaceRoot, mcpPort, mcpAuthToken,
                 resumeId == null ? "" : resumeId, permMode == null ? "" : permMode,
                 effort == null ? "" : effort, model == null ? "" : model,
-                thinking == null ? "" : thinking);
+                thinking == null ? "" : thinking, ultracode);
     }
     /** (toolName, inputJson, rememberLabel) → "allow" | "allowRemember" | "deny" | "deny&lt;message&gt;". Persistent mode. */
     public void setOnPermissionRequest(PermissionHandler cb) {
@@ -228,12 +230,12 @@ public class ChatProcessManager {
     // ── Operations ────────────────────────────────────────────────────────────
 
     public void sendMessage(String message) {
-        sendMessage(message, "", "", "", "", "");
+        sendMessage(message, "", "", "", "", "", false, "");
     }
 
     public void sendMessage(String message, String resumeId, String permMode, String effort,
-                            String model, String thinking) {
-        sendMessage(message, resumeId, permMode, effort, model, thinking, "");
+                            String model, String thinking, boolean ultracode) {
+        sendMessage(message, resumeId, permMode, effort, model, thinking, ultracode, "");
     }
 
     /**
@@ -243,10 +245,12 @@ public class ChatProcessManager {
      * @param effort   claude effort level: low|medium|high|xhigh|max (empty = claude default)
      * @param model    claude model alias (sonnet|opus|haiku|sonnet[1m]|<custom>); empty = default
      * @param thinking "0" disables extended thinking; anything else leaves it to effort
+     * @param ultracode orchestrates background subagents more aggressively (a preference)
      * @param imagesJson JSON array of {@code {media_type,data}} (base64) pasted images, or "" for none
      */
     public void sendMessage(String message, String resumeId, String permMode, String effort,
-                            String model, String thinking, String imagesJson) {
+                            String model, String thinking, boolean ultracode,
+                            String imagesJson) {
         String claudeCmd = claudeCmd();
         String workspaceRoot = workspaceRoot();
 
@@ -261,7 +265,8 @@ public class ChatProcessManager {
         NativeCore.chatSendMessage(handle, message, claudeCmd, workspaceRoot, mcpPort, mcpAuthToken,
                 resumeId == null ? "" : resumeId, permMode == null ? "" : permMode,
                 effort == null ? "" : effort, model == null ? "" : model,
-                thinking == null ? "" : thinking, imagesJson == null ? "" : imagesJson);
+                thinking == null ? "" : thinking, ultracode,
+                imagesJson == null ? "" : imagesJson);
     }
 
     public void cancel() {
@@ -310,8 +315,9 @@ public class ChatProcessManager {
      *
      *  @return false if no process could be started or the request was refused. */
     public boolean mcpRequest(String token, String requestJson, String resumeId, String permMode,
-                              String effort, String model, String thinking) {
-        if (!ensureProcess(resumeId, permMode, effort, model, thinking)) return false;
+                              String effort, String model, String thinking,
+                              boolean ultracode) {
+        if (!ensureProcess(resumeId, permMode, effort, model, thinking, ultracode)) return false;
         return NativeCore.chatMcpRequest(handle, token, requestJson);
     }
 
@@ -328,8 +334,8 @@ public class ChatProcessManager {
      *
      *  @return false if no process could be started or the request was refused. */
     public boolean cliRequest(String token, String requestJson, String resumeId, String permMode,
-                              String effort, String model, String thinking) {
-        if (!ensureProcess(resumeId, permMode, effort, model, thinking)) return false;
+                              String effort, String model, String thinking, boolean ultracode) {
+        if (!ensureProcess(resumeId, permMode, effort, model, thinking, ultracode)) return false;
         return NativeCore.chatCliRequest(handle, token, requestJson);
     }
 
@@ -363,10 +369,12 @@ public class ChatProcessManager {
 
     /** Pushes the tab's launch settings to its live process now — see
      *  {@link NativeCore#chatApplySettings}. Non-blocking beyond a stdin write. */
-    public boolean applySettings(String permMode, String effort, String model, String thinking) {
+    public boolean applySettings(String permMode, String effort, String model, String thinking,
+                                 boolean ultracode) {
         return NativeCore.chatApplySettings(handle,
                 permMode == null ? "" : permMode, effort == null ? "" : effort,
-                model == null ? "" : model, thinking == null ? "" : thinking);
+                model == null ? "" : model, thinking == null ? "" : thinking,
+                ultracode);
     }
 
     /** Whether switching this conversation back to the default model would restart

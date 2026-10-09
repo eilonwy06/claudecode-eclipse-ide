@@ -182,8 +182,9 @@
     <div class="item" data-mode="auto" data-icon="BOLT" onclick="selectMode(this)"><span class="ic">__BOLT__</span><div class="txt"><span class="lbl">Auto</span><span class="desc">Claude will approve actions that pass a safety check and pause for anything risky</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
     <div class="item" id="mode-bypass" data-mode="bypassPermissions" data-icon="BYPASS" onclick="selectMode(this)"><span class="ic">__BYPASS__</span><div class="txt"><span class="lbl">Bypass permissions</span><span class="desc">Claude will not ask for approval before running potentially dangerous commands</span></div><span class="check" style="visibility:hidden">__CHECK__</span></div>
     <div class="sep"></div>
-    <div class="effort"><span class="lbl"><span class="ic">__GAUGE__</span><span class="lbl-t">Effort<span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span></span>
+    <div class="effort steps" onclick="cycleEffort(event)"><span class="lbl"><span class="ic">__GAUGE__</span><span class="lbl-t">Effort<span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span></span>
       <span class="slider eff-slider" title="Effort" onmousedown="effortDown(event)"><span class="track"></span><span class="fill eff-fill"></span><span class="knob eff-knob"></span></span></div>
+    <div class="item" onclick="toggleUltracode(event)"><span class="ic">__BOLT__</span><div class="txt"><span class="lbl">Ultracode</span></div><span class="sw ultracode-sw"></span></div>
   </div>
 
   <!-- actions menu (the / button, and typing / in the composer): cmdmenu.js draws its rows
@@ -193,10 +194,14 @@
     <input id="actions-slash-filter" type="text" placeholder="Filter actions…" oninput="filterActionsSlash(this.value)">
     <div class="menu-scroll">
     <div id="actions-rows"></div>
+    <div class="menu-footer">
+      <a href="#" id="menu-feedback-link" onclick="closeMenus(); openFeedbackDialog(); return false;">Report a problem</a>
+      <span id="menu-version-footer"></span>
+    </div>
     <div id="actions-parts" hidden>
-      <div class="effort" id="row-effort"><span class="lbl"><span class="ic">__GAUGE__</span><span class="lbl-t">Effort<span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span></span>
+      <div class="effort steps" id="row-effort" onclick="cycleEffort(event)"><span class="lbl"><span class="ic">__GAUGE__</span><span class="lbl-t">Effort<span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span></span>
         <span class="slider eff-slider" title="Effort" onmousedown="effortDown(event)"><span class="track"></span><span class="fill eff-fill"></span><span class="knob eff-knob"></span></span></div>
-      <div class="effort" id="row-zoom"><span class="lbl"><span class="ic">__ZOOM__</span><span class="lbl-t">Zoom level<span class="zoom-lbl" style="color:var(--fg-dim)">(100%)</span></span></span>
+      <div class="effort steps" id="row-zoom" onclick="cycleZoom(event)"><span class="lbl"><span class="ic">__ZOOM__</span><span class="lbl-t">Zoom level<span class="zoom-lbl" style="color:var(--fg-dim)">(100%)</span></span></span>
         <span class="slider zoom-slider" title="Zoom level" onmousedown="zoomDown(event)"><span class="track"></span><span class="fill zoom-fill"></span><span class="knob zoom-knob"></span></span></div>
     </div>
     </div>
@@ -206,6 +211,9 @@
        commands, Memory, Instructions, Status and the rest share this one window. -->
   <div id="cli-overlay"><div id="cli-win"></div></div>
 
+  <!-- /context popup — the CLI's own get_context_usage control request, see tabs.js -->
+  <div id="context-overlay"><div id="context-win"></div></div>
+
   <!-- model chooser: the heading and the list scroll together (.menu-scroll); the effort
        row under them stays put. -->
   <div class="menu" id="model-menu">
@@ -214,8 +222,9 @@
       <div id="model-list"></div>
     </div>
     <div class="sep"></div>
-    <div class="effort"><span class="lbl"><span class="ic">__GAUGE__</span><span class="lbl-t">Effort<span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span></span>
+    <div class="effort steps" onclick="cycleEffort(event)"><span class="lbl"><span class="ic">__GAUGE__</span><span class="lbl-t">Effort<span class="eff-lbl" style="color:var(--fg-dim)">(High)</span></span></span>
       <span class="slider eff-slider" title="Effort" onmousedown="effortDown(event)"><span class="track"></span><span class="fill eff-fill"></span><span class="knob eff-knob"></span></span></div>
+    <div class="item" onclick="toggleUltracode(event)"><span class="ic">__BOLT__</span><div class="txt"><span class="lbl">Ultracode</span></div><span class="sw ultracode-sw"></span></div>
   </div>
 
   <!-- account & usage window -->

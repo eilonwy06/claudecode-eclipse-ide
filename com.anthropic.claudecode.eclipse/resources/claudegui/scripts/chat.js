@@ -339,6 +339,9 @@ function appendAssistant(t) {
 function endAssistant() {
   finalizeThink();
   markToolsDone(curTurn);   // every tool in this turn ran to completion → green dots
+  // Re-synced here, not just left to the last relinkTurn a streaming chunk triggered:
+  // the summary's own dot would otherwise stay stuck on "running" after markToolsDone
+  // just turned every real tool-line dot above green.
   if (curBody) curBody.classList.remove('streaming');
   if (curTurn && !curTurn.querySelector('.a-item') && curTurn.parentNode) curTurn.remove();
   curTurn = null; curBody = null; curText = '';
@@ -1198,6 +1201,9 @@ function applyToolResult(payload) {
   if (line.classList.contains('pending')) return;
   const dot = line.querySelector('.dot');
   if (dot) dot.className = info.isError ? 'dot red' : 'dot done';
+  // Focus view's summary shows the running tool's own name in place of "N tool calls"
+  // while it's in flight (below) — this result is what flips it back, and the next
+  // tool to start won't exist yet for a while if this was the turn's last one.
   // The dot's class (just set above) already reflects the outcome — agents.js reads that
   // straight off the DOM, so this is just a poke to re-render if the popup is open.
   if (AGENT_KEYS.has(line.dataset.tname)) {
@@ -1456,7 +1462,7 @@ function doSend() {
   else if (!workingEl) showWorking();
   // Last arg is this conversation's working root — claude is spawned with it as its
   // cwd, so two tabs under different supertabs run in different folders.
-  if (window._sendToJava) window._sendToJava(text, withCtx, t.sessionId || '', t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', t.id, imagesJson, rootPathOf(t));
+  if (window._sendToJava) window._sendToJava(text, withCtx, t.sessionId || '', t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', t.id, imagesJson, rootPathOf(t), ultracodeOn);
   persistTabPrefs(t);   // resumed tab already has a sessionId; new ones persist on onSessionId
 }
 function doCancel() {

@@ -422,6 +422,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatSend
     effort: JString,
     model: JString,
     thinking: JString,
+    ultracode: jboolean,
     images_json: JString,
 ) {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -439,7 +440,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatSend
         let model: String = jstr(&mut env, &model);
         let thinking: String = jstr(&mut env, &thinking);
         let images_json: String = jstr(&mut env, &images_json);
-        manager.send_message(message, claude_cmd, workspace_root, mcp_port as u16, mcp_auth_token, resume_id, perm_mode, effort, model, thinking, images_json);
+        manager.send_message(message, claude_cmd, workspace_root, mcp_port as u16, mcp_auth_token, resume_id, perm_mode, effort, model, thinking, ultracode != 0, images_json);
     }));
     finish_export(&mut env, "chatSendMessage", result, ())
 }
@@ -695,6 +696,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatEnsu
     effort: JString,
     model: JString,
     thinking: JString,
+    ultracode: jboolean,
 ) -> jboolean {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if handle == 0 {
@@ -712,6 +714,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatEnsu
         manager.ensure_process(
             claude_cmd, workspace_root, mcp_port as u16, mcp_auth_token,
             resume_id, perm_mode, effort, model, thinking,
+            ultracode != 0,
         ) as jboolean
     }));
     finish_export(&mut env, "chatEnsureProcess", result, jni::sys::JNI_FALSE)
@@ -806,6 +809,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatAppl
     effort: JString,
     model: JString,
     thinking: JString,
+    ultracode: jboolean,
 ) -> jboolean {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if handle == 0 {
@@ -815,7 +819,7 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatAppl
         let mut text = |s: JString| jstr(&mut env, &s);
         let (perm_mode, effort, model, thinking) =
             (text(perm_mode), text(effort), text(model), text(thinking));
-        manager.apply_settings_now(&perm_mode, &effort, &model, &thinking) as jboolean
+        manager.apply_settings_now(&perm_mode, &effort, &model, &thinking, ultracode != 0) as jboolean
     }));
     finish_export(&mut env, "chatApplySettings", result, jni::sys::JNI_FALSE)
 }

@@ -384,7 +384,8 @@ function persistTabPrefs(t) {
         + ' <- ' + caller);
     }
   } catch (e) {}
-  try { if (window._saveSessionPrefs) window._saveSessionPrefs(t.sessionId, String(t.effortIdx), t.model || '', t.thinking ? '1' : '0', t.permMode || DEFAULT_PERM_MODE); }
+  try { if (window._saveSessionPrefs) window._saveSessionPrefs(t.sessionId, String(t.effortIdx), t.model || '', t.thinking ? '1' : '0', t.permMode || DEFAULT_PERM_MODE,
+      t.ultracode ? '1' : '0'); }
   catch (e) {}
 }
 
@@ -403,7 +404,7 @@ function notifyStatusSelection() {
    Active tab only: the values below mirror whichever tab is in front. */
 function pushLaunchSettings(t) {
   if (!t || t !== activeTab() || !window._applySettings) return;
-  try { _applySettings(t.id, t.permMode || permMode, effort, curModel, thinkingOn ? "1" : "0"); }
+  try { _applySettings(t.id, t.permMode || permMode, effort, curModel, thinkingOn ? "1" : "0", ultracodeOn); }
   catch (e) {}
 }
 
@@ -568,22 +569,121 @@ function toggleThinking(e) {
   persistTabPrefs(t); notifyStatusSelection(); pushLaunchSettings(t);
 }
 
-/* ---- Account & usage window ---- */
+/* ---- Ultracode toggle (per-conversation, mirrors Thinking above) ---- */
+let ultracodeOn = false;
+
+function updateUltracodeToggle() {
+  document.querySelectorAll('.ultracode-sw').forEach(el => el.classList.toggle('on', ultracodeOn));
+}
+
+function toggleUltracode(e) {
+  if (e) e.stopPropagation();
+  ultracodeOn = !ultracodeOn;
+  const t = activeTab(); if (t) t.ultracode = ultracodeOn;
+  updateUltracodeToggle();
+  persistTabPrefs(t); pushLaunchSettings(t);
+}
+
+/* ---- Account & usage window ----
+   Who is signed in is read from the CLI's own account file (_accountInfo). The usage under
+   it is the CLI's get_usage control request (cli_ask.rs), asked like any other dialog's
+   data (clidialogs.js cliAsk): this window opens at once and the figures fill in when the
+   answer comes. /usage opens it too. */
+function awRow(k, v) {
+  return (v !== undefined && v !== null && v !== '') ? '<div class="aw-row"><span class="k">' + k + '</span><span class="v">' + escapeHtml(String(v)) + '</span></div>' : '';
+}
+/** 672 -> "672ms", 4300 -> "4s", 7969000 -> "2h 12m 49s". */
+function awDuration(ms) {
+  ms = Number(ms) || 0;
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  const total = Math.round(ms / 1000);
+  const h = Math.floor(total / 3600), m = Math.floor(total % 3600 / 60), s = total % 60;
+  if (h) return h + 'h ' + m + 'm ' + s + 's';
+  if (m) return m + 'm ' + s + 's';
+  return s + 's';
+}
+/** 14100 -> "14.1k", 5700000 -> "5.7m", 210 -> "210". */
+function awTokens(n) {
+  n = Number(n) || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'm';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+/** What one model used this session, as a line: tokens in each kind, then what it cost. */
+function awModelDetail(u) {
+  const parts = [awTokens(u.inputTokens) + ' input', awTokens(u.outputTokens) + ' output',
+                 awTokens(u.cacheReadInputTokens) + ' cache read', awTokens(u.cacheCreationInputTokens) + ' cache write'];
+  return parts.join(', ') + (typeof u.costUSD === 'number' ? ' ($' + u.costUSD.toFixed(2) + ')' : '');
+}
+/* The plan's rate-limit windows, as the CLI's own usage dialog names them. Each is
+   {utilization: percent used 0-100, resets_at: an ISO 8601 time}; any may be null. */
+const AW_LIMIT_WINDOWS = [
+  ['five_hour', 'Current session'],
+  ['seven_day', 'Current week (all models)'],
+  ['seven_day_opus', 'Current week (Opus only)'],
+  ['seven_day_sonnet', 'Current week (Sonnet only)'],
+];
+/** "34% used · resets in 2h" for one window, or '' when it has no figure. */
+function awLimitText(w) {
+  if (!w || typeof w.utilization !== 'number') return '';
+  const at = w.resets_at ? Date.parse(w.resets_at) : NaN;
+  return Math.round(w.utilization) + '% used' + (isNaN(at) ? '' : ' · resets ' + resetIn(at / 1000));
+}
+/** What the CLI said about usage, into the window's Usage section. `r` is its answer —
+    {session, subscription_type, rate_limits_available, rate_limits, …} — or null with
+    `error` saying why there is none. */
+function fillAccountUsage(slot, r, error) {
+  if (!slot || !slot.isConnected) return;   // closed, or opened again since
+  const manage = '<a href="https://claude.ai/settings/usage">Manage usage on claude.ai</a>';
+  if (!r) {
+    slot.innerHTML = '<div class="aw-note">' + escapeHtml(error || 'Could not read usage.') + ' ' + manage + '</div>';
+    return;
+  }
+  let h = awRow('Subscription', typeof r.subscription_type === 'string' ? r.subscription_type : '');
+  // The plan's limits, where the CLI has them: a window is shown by its percentage used.
+  const rl = r.rate_limits && typeof r.rate_limits === 'object' ? r.rate_limits : null;
+  let limits = 0;
+  const shown = (label, w) => { const t = awLimitText(w); if (t) { h += awRow(label, t); limits++; } };
+  AW_LIMIT_WINDOWS.forEach(([key, label]) => shown(label, rl && rl[key]));
+  // Per-model weekly buckets the server lists by name (the model-specific rows above are
+  // the fixed ones), each with its own label.
+  if (rl && Array.isArray(rl.model_scoped)) rl.model_scoped.forEach(m => shown('Current week (' + (m.display_name || 'model') + ' only)', m));
+  const s = r.session || {};
+  h += '<div class="aw-sub">Session</div>';
+  if (typeof s.total_cost_usd === 'number') h += awRow('Total cost', '$' + s.total_cost_usd.toFixed(2));
+  if (typeof s.total_api_duration_ms === 'number') h += awRow('Total duration (API)', awDuration(s.total_api_duration_ms));
+  if (typeof s.total_duration_ms === 'number') h += awRow('Total duration (wall)', awDuration(s.total_duration_ms));
+  if (typeof s.total_lines_added === 'number' || typeof s.total_lines_removed === 'number') {
+    const n = (v, one) => (v || 0) + (v === 1 ? ' line ' : ' lines ') + one;
+    h += awRow('Total code changes', n(s.total_lines_added, 'added') + ', ' + n(s.total_lines_removed, 'removed'));
+  }
+  const used = s.model_usage && typeof s.model_usage === 'object' ? s.model_usage : {};
+  const models = Object.keys(used);
+  if (models.length) {
+    h += '<div class="aw-sub dim">Usage by model</div>';
+    models.forEach(id => {
+      h += '<div class="aw-model"><div class="n">' + escapeHtml(modelLabelFor(id)) + '</div>'
+         + '<div class="d">' + escapeHtml(awModelDetail(used[id] || {})) + '</div></div>';
+    });
+  }
+  if (limits) h += '<div class="aw-note">' + manage + '</div>';
+  slot.innerHTML = h;
+}
 function openAccount() {
   closeMenus();
   let acc = {};
   try { acc = JSON.parse(window._accountInfo ? window._accountInfo() : '{}'); } catch (e) {}
   const win = document.getElementById('account-win');
-  function row(k, v) { return v ? '<div class="aw-row"><span class="k">' + k + '</span><span class="v">' + escapeHtml(v) + '</span></div>' : ''; }
   let h = '<div class="aw-head"><span class="t">Account &amp; Usage</span><span class="x" onclick="closeAccount()">' + ICONS.X + '</span></div>';
   h += '<div class="aw-sec">Account</div>';
-  h += row('Auth method', acc.authMethod);
-  h += row('Email', acc.email);
-  h += row('Organization', acc.organization);
-  h += row('Plan', acc.plan);
-  if (!acc.email) h += '<div class="aw-note">Not signed in, or account info is unavailable.</div>';
-  h += '<div class="aw-sec">Usage</div>';
-  h += '<div class="aw-note">Usage limits live on your Claude account — the CLI doesn\'t expose the percentages here. <a href="https://claude.ai/settings/usage">Manage usage on claude.ai</a></div>';
+  h += awRow('Auth method', acc.authMethod);
+  h += awRow('Email', acc.email);
+  h += awRow('Organization', acc.organization);
+  h += awRow('Plan', acc.plan);
+  // No account file means no claude.ai sign-in: the login may still be a key or a token,
+  // which the CLI's own status says (below), so the note waits for that answer.
+  if (!acc.email) h += '<div id="aw-auth"><div class="aw-note">Loading…</div></div>';
+  h += '<div class="aw-sec">Usage</div><div id="aw-usage"><div class="aw-note">Loading…</div></div>';
   win.innerHTML = h;
   document.getElementById('account-overlay').classList.add('open');
   // Closable by keyboard, not just the X. No hint is drawn — this window shows none and
@@ -592,6 +692,28 @@ function openAccount() {
   // Emacs, where Esc is a multi-stroke prefix that never reaches the page.
   document.addEventListener('keydown', accountKey, true);
   registerOverlayCancel(closeAccount, false);   // not tab-owned — no visibility guard
+  const slot = document.getElementById('aw-usage'), auth = document.getElementById('aw-auth'), t = activeTab();
+  if (!t || typeof cliAsk !== 'function') {
+    fillAccountAuth(auth, null);
+    fillAccountUsage(slot, null, 'Usage is not available in this build.');
+    return;
+  }
+  if (auth) cliAsk(t, 'get_status').then((d) => fillAccountAuth(auth, d), () => fillAccountAuth(auth, null));
+  cliAsk(t, 'get_usage').then((r) => fillAccountUsage(slot, r, ''), (e) => fillAccountUsage(slot, null, e && e.message));
+}
+/** The login method of a login that has no claude.ai account file, from the CLI's own
+    status: its Session section names where the credential comes from ("API key",
+    "Auth token"). Either is an Anthropic Console login, as the CLI's own panel calls it. */
+function accountAuthMethod(status) {
+  const labels = [];
+  ((status && status.sections) || []).forEach(sec => (sec.rows || []).forEach(r => labels.push(Array.isArray(r) ? r[0] : r.label)));
+  return (labels.includes('API key') || labels.includes('Auth token')) ? 'Anthropic Console' : '';
+}
+function fillAccountAuth(slot, status) {
+  if (!slot || !slot.isConnected) return;   // closed, or opened again since
+  const method = accountAuthMethod(status);
+  slot.innerHTML = method ? awRow('Auth method', method)
+                          : '<div class="aw-note">Not signed in, or account info is unavailable.</div>';
 }
 function accountKey(e) {
   if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAccount(); }

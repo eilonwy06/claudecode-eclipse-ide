@@ -15,6 +15,7 @@
  * @property {string} model           per-conversation model ("" = Default)
  * @property {number} effortIdx       index into EFFORTS
  * @property {boolean} thinking       extended-thinking toggle
+ * @property {boolean} [ultracode]    per-conversation Ultracode toggle (default false)
  * @property {boolean} [streaming]    a turn is in flight on this tab's process
  * @property {boolean} [cancelled]    Stop pressed — withTab drops stream callbacks until the next send
  * @property {boolean} [compacting]   /compact (or auto-compact) running — gerund pinned to "Compacting…"
@@ -39,6 +40,7 @@ let editingTabId = null;
 // Defaults a NEW conversation starts with (not inherited from the last-viewed tab).
 const DEFAULT_EFFORT_IDX = 2;      // "high"
 const DEFAULT_THINKING = true;     // thinking on, unless the preference says otherwise
+const DEFAULT_ULTRACODE = false;
 /* The preference behind a NEW conversation's thinking toggle ("Enable Thinking by
    default"). Read per call rather than cached, so changing it takes effect on the next
    conversation without a restart; DEFAULT_THINKING covers a page with no view behind
@@ -162,6 +164,7 @@ function storedTabSettings(sessionId) {
   if (!isNaN(ei)) out.effortIdx = ei;
   if (saved.thinking === '1') out.thinking = true; else if (saved.thinking === '0') out.thinking = false;
   if (saved.permMode) out.permMode = saved.permMode;
+  if (saved.ultracode === '1') out.ultracode = true; else if (saved.ultracode === '0') out.ultracode = false;
   return out;
 }
 /**
@@ -189,7 +192,8 @@ function createTab(opts) {
     model: setting('model', defaultModel()),
     effortIdx: setting('effortIdx', DEFAULT_EFFORT_IDX),
     thinking: setting('thinking', defaultThinking()),
-    permMode: setting('permMode', defaultPermMode()) });
+    permMode: setting('permMode', defaultPermMode()),
+    ultracode: setting('ultracode', DEFAULT_ULTRACODE) });
   switchTab(id);
   const created = tabs[tabs.length - 1];
   // With "Enable Remote Control for all sessions" set, a new conversation comes up
@@ -340,6 +344,9 @@ function applyTabSettings(t) {
   // Each conversation keeps its own permission mode (VSCode-style).
   permMode = (t.permMode !== undefined ? t.permMode : DEFAULT_PERM_MODE);
   if (typeof applyModeUI === 'function') applyModeUI(permMode);
+  ultracodeOn = (t.ultracode !== undefined ? t.ultracode : DEFAULT_ULTRACODE);
+  if (typeof updateUltracodeToggle === 'function') updateUltracodeToggle();
+  if (typeof updateSwitchModelsOnFlagToggle === 'function') updateSwitchModelsOnFlagToggle();
   if (typeof notifyStatusSelection === 'function') notifyStatusSelection();
 }
 /**
@@ -711,5 +718,112 @@ function clearTab(t) {
   if (typeof renderPendingImages === 'function') renderPendingImages();
   if (typeof syncComposer === 'function') syncComposer();
   if (typeof updateAgentsBtn === 'function') updateAgentsBtn();   // pane emptied — no agents left in it
+}
+
+/* The CLI's own get_context_usage control request (cli_ask.rs) — the /context popup.
+   Typing "/context" itself as a message gets no answer in this plugin's headless
+   stream-json mode, but the request does. Every category, token count and percentage
+   here is exactly what the CLI itself returns; nothing is computed locally. It is asked
+   like any other dialog's data (clidialogs.js cliAsk), so it may have to start the tab's
+   process, and an answer that never comes ends in an error instead of waiting forever. */
+let contextOpenTab = '';
+function openContextDialog() {
+  closeMenus();
+  const t = activeTab();
+  if (!t) return;
+  contextOpenTab = t.id;
+  const win = document.getElementById('context-win');
+  win.innerHTML =
+    '<div class="aw-head"><span class="t">Context usage</span>' +
+    '<span class="x" onclick="closeContext()">' + ICONS.X + '</span></div>' +
+    '<div class="ew-body">Loading…</div>';
+  document.getElementById('context-overlay').classList.add('open');
+  document.addEventListener('keydown', contextKey, true);
+  registerOverlayCancel(closeContext, false);
+  const asked = t.id;
+  cliAsk(t, 'get_context_usage').then(
+    (r) => { if (contextOpenTab === asked) drawContextUsage(r, ''); },
+    (e) => { if (contextOpenTab === asked) drawContextUsage(null, e && e.message); });
+}
+function contextKey(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeContext(); } }
+function closeContext() {
+  document.getElementById('context-overlay').classList.remove('open');
+  document.removeEventListener('keydown', contextKey, true);
+  unregisterOverlayCancel();
+  contextOpenTab = '';
+}
+/** 27466 -> "27.5k", 939534 -> "939.5k", 210 -> "210", 1000000 -> "1.0M" — matches the
+ *  real popup's abbreviated columns. */
+function fmtCtxTokens(n) {
+  n = Number(n) || 0;
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return String(n);
+}
+function fmtCtxPct(tokens, max) {
+  if (!max) return '0%';
+  const p = (Number(tokens) || 0) / max * 100;
+  if (p > 0 && p < 0.1) return '<0.1%';
+  return p.toFixed(1) + '%';
+}
+/* Keyed by category NAME, not the API's own opaque "color" field (e.g. "promptBorder",
+   "purple_FOR_SUBAGENTS_ONLY") — those are the real extension's internal theme tokens,
+   not hex values this page can reuse, so this picks its own from the existing palette
+   instead. "Free space" is deliberately absent: it renders with no dot at all, below. */
+const CTX_CATEGORY_COLOR = {
+  'System prompt': 'var(--accent)',
+  'System tools': 'var(--sel)',
+  'Memory files': 'var(--green)',
+  'Skills': 'var(--warn-fg)',
+  'Messages': 'var(--hunk)',
+  'Autocompact buffer': 'var(--red)',
+};
+/** Draws the popup. `r` is the CLI's own answer — {categories, totalTokens, maxTokens,
+ *  percentage, memoryFiles, agents, …} — or null with `error` saying why there is none. */
+function drawContextUsage(r, error) {
+  const win = document.getElementById('context-win');
+  if (!win) return;
+  const head = '<div class="aw-head"><span class="t">Context usage</span>' +
+    '<span class="x" onclick="closeContext()">' + ICONS.X + '</span></div>';
+  if (!r || !Array.isArray(r.categories)) {
+    const err = error || 'Could not read context usage for this conversation.';
+    win.innerHTML = head + '<div class="ew-body">' + escapeHtml(err) + '</div>' +
+      '<div class="ew-btn" onclick="closeContext()">Close</div>';
+    return;
+  }
+  const max = r.maxTokens || 1;
+  // "deferred" tools aren't a row in the real popup either — they're folded into
+  // nothing visible, so this drops them rather than inventing a row for them.
+  const cats = (r.categories || []).filter(c => c.kind !== 'deferred');
+  const bar = cats.map(c => {
+    const pct = Math.max((Number(c.tokens) || 0) / max * 100, 0);
+    const color = c.kind === 'free' ? 'var(--track)' : (CTX_CATEGORY_COLOR[c.name] || 'var(--fg-dim)');
+    return '<span class="ctx-seg" style="width:' + pct + '%;background:' + color + '"></span>';
+  }).join('');
+  const rows = cats.map(c => {
+    const dot = c.kind === 'free' ? '<span></span>' :
+      '<span class="ctx-dot" style="background:' + (CTX_CATEGORY_COLOR[c.name] || 'var(--fg-dim)') + '"></span>';
+    return '<div class="ctx-row">' + dot +
+      '<span class="ctx-name">' + escapeHtml(c.name) + '</span>' +
+      '<span class="ctx-tokens">' + fmtCtxTokens(c.tokens) + '</span>' +
+      '<span class="ctx-pct">' + fmtCtxPct(c.tokens, max) + '</span></div>';
+  }).join('');
+  const mem = (r.memoryFiles || []).map(f =>
+    '<div class="ctx-mem-row"><span class="ctx-mem-path">' + escapeHtml(f.path || '') + '</span>' +
+    '<span class="ctx-mem-tokens">' + fmtCtxTokens(f.tokens) + '</span></div>'
+  ).join('');
+  const agents = (r.agents || []).map(a =>
+    '<div class="ctx-mem-row"><span class="ctx-mem-path">' + escapeHtml(a.agentType || '') + '</span>' +
+    '<span class="ctx-mem-tokens">' + fmtCtxTokens(a.tokens) + '</span></div>'
+  ).join('');
+  win.innerHTML = head +
+    '<div class="ctx-model">' + escapeHtml(r.model || '') + '</div>' +
+    '<div class="ctx-total">' + fmtCtxTokens(r.totalTokens) + ' / ' + fmtCtxTokens(max) +
+      ' tokens (' + (r.percentage != null ? r.percentage : 0) + '%)</div>' +
+    '<div class="ctx-bar">' + bar + '</div>' +
+    '<div class="ctx-table"><div class="ctx-head-row"><span></span><span>Category</span>' +
+      '<span class="ctx-tokens">Tokens</span><span class="ctx-pct">Usage</span></div>' + rows + '</div>' +
+    (mem ? '<div class="ctx-mem-head">Memory files</div><div class="ctx-mem-list">' + mem + '</div>' : '') +
+    (agents ? '<div class="ctx-mem-head">Custom agents</div><div class="ctx-mem-list">' + agents + '</div>' : '');
 }
 

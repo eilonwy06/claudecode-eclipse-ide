@@ -183,15 +183,23 @@ struct LiveSettings {
     effort: String,
     model: String,
     thinking: String,
+    ultracode: bool,
 }
 
 impl LiveSettings {
-    fn new(perm_mode: &str, effort: &str, model: &str, thinking: &str) -> Self {
+    fn new(
+        perm_mode: &str,
+        effort: &str,
+        model: &str,
+        thinking: &str,
+        ultracode: bool,
+    ) -> Self {
         LiveSettings {
             perm_mode: perm_mode.to_string(),
             effort: effort.to_string(),
             model: model.to_string(),
             thinking: thinking.to_string(),
+            ultracode,
         }
     }
 
@@ -239,6 +247,14 @@ fn spawn_signature(
     let auto_at_launch = perm_mode == "bypassPermissions" && !auto_live;
     format!("{}|{}|{}|{}|auto_at_launch={}",
             claude_cmd, workspace_root, mcp_port, mcp_auth_token, auto_at_launch)
+}
+
+/// The `--settings` JSON for Ultracode at launch. A plain boolean with no Default state
+/// (unlike model/effort), so always passed explicitly — the GUI's per-tab preference
+/// overrides the user's own settings.json, same as --effort/--model/--permission-mode
+/// already do.
+fn flag_settings_arg(ultracode: bool) -> String {
+    serde_json::json!({ "ultracode": ultracode }).to_string()
 }
 
 /// The `set_max_thinking_tokens` request for a GUI thinking value: "0" turns thinking
@@ -315,6 +331,13 @@ fn apply_live_settings(p: &ProcHandle, want: &LiveSettings) -> std::io::Result<(
             "mode": want.perm_mode
         })))?;
         live.perm_mode = want.perm_mode.clone();
+    }
+    if live.ultracode != want.ultracode {
+        p.write_line(&live_request_line(serde_json::json!({
+            "subtype": "apply_flag_settings",
+            "settings": { "ultracode": want.ultracode }
+        })))?;
+        live.ultracode = want.ultracode;
     }
     Ok(())
 }
@@ -618,6 +641,7 @@ impl ChatManager {
         effort: String,
         model: String,
         thinking: String,
+        ultracode: bool,
         images_json: String,
     ) {
         // Mid-turn sends: legacy drops them; persistent mode QUEUES them onto the
@@ -660,7 +684,8 @@ impl ChatManager {
         if self.state.lock().unwrap().persistent {
             self.send_persistent(
                 message, claude_cmd, workspace_root, mcp_port, mcp_auth_token,
-                resume_id, perm_mode, effort, model, thinking, images_json, java_vm, callbacks_obj,
+                resume_id, perm_mode, effort, model, thinking, ultracode,
+                images_json, java_vm, callbacks_obj,
             );
             return;
         }
@@ -690,6 +715,7 @@ impl ChatManager {
                     &effort,
                     &model,
                     &thinking,
+                    ultracode,
                     &images_json,
                     &cancel,
                     &java_vm,
@@ -816,6 +842,7 @@ impl ChatManager {
         effort: String,
         model: String,
         thinking: String,
+        ultracode: bool,
     ) -> bool {
         let (java_vm, callbacks) = {
             let guard = self.callbacks.lock().unwrap();
@@ -827,7 +854,7 @@ impl ChatManager {
 
         let sig = spawn_signature(&claude_cmd, &workspace_root, mcp_port, &mcp_auth_token, &perm_mode,
                                   allow_skip_flag(&claude_cmd));
-        let want = LiveSettings::new(&perm_mode, &effort, &model, &thinking);
+        let want = LiveSettings::new(&perm_mode, &effort, &model, &thinking, ultracode);
 
         let mut proc_opt = { self.state.lock().unwrap().proc.clone() };
         let reusable = proc_opt.as_ref().is_some_and(|p| {
@@ -843,7 +870,7 @@ impl ChatManager {
 
         match spawn_persistent(
             &claude_cmd, &workspace_root, mcp_port, &mcp_auth_token,
-            &resume_id, &perm_mode, &effort, &model, &thinking, sig,
+            &resume_id, &perm_mode, &effort, &model, &thinking, ultracode, sig,
             Arc::clone(&self.state), Arc::clone(&java_vm), Arc::clone(&callbacks),
         ) {
             Ok(p) => {
@@ -897,13 +924,20 @@ impl ChatManager {
     ///
     /// False when there is no live process, or when the change needs a new one — the
     /// next message makes it, as before.
-    pub fn apply_settings_now(&self, perm_mode: &str, effort: &str, model: &str, thinking: &str) -> bool {
+    pub fn apply_settings_now(
+        &self,
+        perm_mode: &str,
+        effort: &str,
+        model: &str,
+        thinking: &str,
+        ultracode: bool,
+    ) -> bool {
         let proc = self.state.lock().unwrap().proc.clone();
         let Some(p) = proc else { return false };
         if p.is_dead() {
             return false;
         }
-        apply_live_settings(&p, &LiveSettings::new(perm_mode, effort, model, thinking)).is_ok()
+        apply_live_settings(&p, &LiveSettings::new(perm_mode, effort, model, thinking, ultracode)).is_ok()
     }
 
     /// Whether switching this conversation back to a Default model would have to
@@ -1138,6 +1172,7 @@ impl ChatManager {
         effort: String,
         model: String,
         thinking: String,
+        ultracode: bool,
         images_json: String,
         java_vm: Arc<jni::JavaVM>,
         callbacks: Arc<jni::objects::GlobalRef>,
@@ -1157,7 +1192,7 @@ impl ChatManager {
 
                 let sig = spawn_signature(&claude_cmd, &workspace_root, mcp_port, &mcp_auth_token, &perm_mode,
                                           allow_skip_flag(&claude_cmd));
-                let want = LiveSettings::new(&perm_mode, &effort, &model, &thinking);
+                let want = LiveSettings::new(&perm_mode, &effort, &model, &thinking, ultracode);
 
                 // Reuse only when the process is alive, has nothing in its spawn
                 // signature that differs (the rest is sent to it live), and carries
@@ -1188,7 +1223,8 @@ impl ChatManager {
                     None => {
                         match spawn_persistent(
                             &claude_cmd, &workspace_root, mcp_port, &mcp_auth_token,
-                            &resume_id, &perm_mode, &effort, &model, &thinking, sig,
+                            &resume_id, &perm_mode, &effort, &model, &thinking,
+                            ultracode, sig,
                             Arc::clone(&state), Arc::clone(&java_vm), Arc::clone(&callbacks),
                         ) {
                             Ok(p) => {
@@ -1343,6 +1379,7 @@ fn run_turn(
     effort: &str,
     model: &str,
     thinking: &str,
+    ultracode: bool,
     _images_json: &str,   // legacy spawn-per-message path passes the message as a -p arg; images are GUI-only (persistent path)
     cancel: &Arc<AtomicBool>,
     java_vm: &Arc<jni::JavaVM>,
@@ -1389,6 +1426,8 @@ fn run_turn(
         cmd_args.push("--permission-mode".into());
         cmd_args.push(perm_mode.to_string());
     }
+    cmd_args.push("--settings".into());
+    cmd_args.push(flag_settings_arg(ultracode));
     // Expose our server as a named config server ("eclipse") so its tools become
     // referenceable. The IDE auto-connect (CLAUDE_CODE_SSE_PORT) does NOT make tools
     // eligible for --permission-prompt-tool or steerable by name, so we register the
@@ -1597,6 +1636,7 @@ fn spawn_persistent(
     effort: &str,
     model: &str,
     thinking: &str,
+    ultracode: bool,
     spawn_sig: String,
     state: Arc<Mutex<ChatState>>,
     java_vm: Arc<jni::JavaVM>,
@@ -1646,6 +1686,8 @@ fn spawn_persistent(
         cmd_args.push("--permission-mode".into());
         cmd_args.push(perm_mode.to_string());
     }
+    cmd_args.push("--settings".into());
+    cmd_args.push(flag_settings_arg(ultracode));
     if mcp_port > 0 {
         // Keep the eclipse MCP server registered so its IDE tools stay available
         // to the chat exactly as before.
@@ -1742,7 +1784,7 @@ fn spawn_persistent(
         chrome_enabled: AtomicBool::new(false),
         spawn_resume: resume_id.to_string(),
         rc_session: Mutex::new(None),
-        live: Mutex::new(LiveSettings::new(perm_mode, effort, model, thinking)),
+        live: Mutex::new(LiveSettings::new(perm_mode, effort, model, thinking, ultracode)),
         settings_poll: AtomicBool::new(false),
         fdescfs_diagnosed: AtomicBool::new(false),
         last_applied: Mutex::new(None),
@@ -3282,7 +3324,7 @@ mod tests {
         assert_ne!(live("default"), spawn_signature("claude", "C:\\ws", 2, "tok", "default", true));
 
         // Model and effort are sent live (max included).
-        let live = |effort: &str, model: &str| LiveSettings::new("default", effort, model, "2");
+        let live = |effort: &str, model: &str| LiveSettings::new("default", effort, model, "2", false);
         assert!(live("max", "opus[1m]").reachable_from(&live("high", "sonnet"), false));
         // A Default tab adopting the model its first turn ran on keeps its process.
         assert!(live("high", "claude-sonnet-5").reachable_from(&live("high", ""), false));

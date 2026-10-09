@@ -925,6 +925,9 @@ function restoreSettings(t, id, said) {
   // is the only source. A conversation with none saved (one from before permMode
   // existed, or from the Claude Terminal) starts in the mode a new one would.
   t.permMode = saved.permMode || defaultPermMode();
+  // Ultracode is likewise a launch-time
+  // flag with no transcript trace — same sidecar, same missing-entry fallback.
+  if (saved.ultracode === '1') t.ultracode = true; else if (saved.ultracode === '0') t.ultracode = false;
 
   // One chokepoint for the composer + status bar, and it already sequences thinking
   // before effort (the effort cap depends on the thinking flag) and reconciles an
