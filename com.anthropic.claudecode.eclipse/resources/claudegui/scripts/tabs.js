@@ -123,7 +123,11 @@ function renderTerminalTip() {
   const el = document.getElementById('terminal-tip');
   if (!el) return;
   const t = activeTab();
-  const showing = !!(t && t.pane && t.pane.querySelector('.welcome') && !terminalBannerDismissed);
+  // The welcome state is the pane's first children (see clearWelcome in chat.js).
+  const first = t && t.pane && t.pane.firstElementChild;
+  const welcome = !!first && (first.classList.contains('welcome') || (first.classList.contains('wc-wordmark')
+      && !!first.nextElementSibling && first.nextElementSibling.classList.contains('welcome')));
+  const showing = welcome && !terminalBannerDismissed;
   el.hidden = !showing;
 }
 function WELCOME_HTML() {
@@ -301,7 +305,7 @@ const RESTORED_AT_END_SLOP = 200;
 function placeRestoredTab(t, rs, readerMoved) {
   if (!(rs.scrollTop > 0) || readerMoved) return;
   // A frame on. The blocks drawn last are cut to size in a frame of their own
-  // (measureWhenShown), and the distance was taken in a page where they already were.
+  // (measureLater), and the distance was taken in a page where they already were.
   requestAnimationFrame(() => {
     if (t !== activeTab() || t.opening) return;
     if (rs.scrollTop >= messagesEl.scrollHeight - messagesEl.clientHeight - RESTORED_AT_END_SLOP) return;

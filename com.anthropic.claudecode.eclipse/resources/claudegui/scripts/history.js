@@ -703,7 +703,7 @@ function drawHistoryPart(t, id, items, parts, from, to, foldAt, modelBefore) {
   function markBefore() {
     for (let el = box.firstElementChild; el; el = el.nextElementSibling) el.classList.add('pre-compact');
   }
-  for (let i = from; i < to; i++) {
+  const renderItem = i => {
     const it = items[i], ty = histKind(it);
     // What was said above the last compaction is folded away the moment the loop
     // reaches it: before its own line, and the /compact bubble that line follows, are drawn.
@@ -749,12 +749,12 @@ function drawHistoryPart(t, id, items, parts, from, to, foldAt, modelBefore) {
       // matching the two labels doCancel picks between) — a reload shows the same.
       if (/^\[Request interrupted by user[^\]]*\]$/.test(marker)) {
         addInterrupted(/for tool use/i.test(marker) ? 'Tool interrupted' : 'Interrupted', box);
-        continue;
+        return;
       }
       // Image-scaling note the CLI injects beside an upload ("[Image: original
       // 2352x4160, displayed at …]"). Internal metadata with no image block of
       // its own — nothing to show, so it renders nothing at all.
-      if (/^\[Image:[^\]]*\]$/.test(marker)) continue;
+      if (/^\[Image:[^\]]*\]$/.test(marker)) return;
       // Messages sent with pasted images carry them as {media_type,data} blocks —
       // rebuild the same chips the live bubble showed.
       if (!invisible) addUserMessage(p.text, p.chip, imgs, it.id, it.ts, box, p.target);
@@ -808,7 +808,11 @@ function drawHistoryPart(t, id, items, parts, from, to, foldAt, modelBefore) {
       flushCompact();
       appendTextStatic(assistantTurn(), it.text || it.content || '', it.id, it.at);
     }
-  }
+  };
+  // Scrolling is held off for the whole rebuild (bulkRendering, chat.js): the view is pinned
+  // to the newest message once, below, instead of after every message.
+  bulkRendering = true;
+  try { for (let i = from; i < to; i++) renderItem(i); } finally { bulkRendering = false; }
   flushCompact();
   if (to <= foldAt) markBefore();
   // draw the connector rails
