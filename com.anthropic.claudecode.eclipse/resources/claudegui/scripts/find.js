@@ -318,8 +318,13 @@ function reHighlight(tab, allowJump) {
   if (st.active && !rangeIntersectsViewport(st.active)) {
     st.active = null;
   }
+  // A match whose box is in the viewport but clipped away (a long prompt's third line, a
+  // collapsed card's output) is not one anybody can see: it neither counts as a visible match
+  // here nor is adopted as the active one. With only such matches on screen, the jump below
+  // goes to one through goToMatch, which opens what hides it.
   const matches = matchesInViewport(tab.pane, needle);
-  if (matches.length) {
+  const shown = matches.filter(shownInClip);
+  if (shown.length) {
     // No active match at all (a fresh query, one just invalidated above, or one dropped
     // by a manual scroll — see onFindScroll): adopt the first VISIBLE one rather than
     // leaving nothing marked. Safe without an allowJump check unlike goToMatch — this
@@ -328,13 +333,13 @@ function reHighlight(tab, allowJump) {
     // "selected" until the user presses an arrow once, which is confusing with a screen
     // full of identical-looking matches and made Enter/Shift+Enter's very first press
     // look like it did nothing.
-    if (!st.active) st.active = matches[0];
+    if (!st.active) st.active = shown[0];
     paintHighlights(matches, st.active);
     updateFindCount(null);
     return;
   }
   // st.active can't be non-null here: the check above already dropped it unless it's
-  // in-viewport, and an in-viewport active match would have made matches.length > 0.
+  // in-viewport, and an in-viewport active match would have made shown.length > 0.
   if (!allowJump) { paintHighlights([], null); return; }
   // nextMatch's "no starting point" case begins at the first/last VISIBLE turn — if the
   // viewport has no turns at all (pane not laid out yet, or scrolled into a gap between
@@ -369,6 +374,7 @@ function activeStillMatches(active, needle) {
 function goToMatch(tab, range) {
   const st = findStateOf(tab);
   st.active = range;
+  revealMatch(range);
   // The user pressing Enter/an arrow to jump to a match is what means they've left the
   // tail — not merely "we happened to scroll to get there" (see scrollToMatch's own
   // comment for the rest of this story). Set this here, before the wasVisible branch, so
@@ -457,7 +463,11 @@ function matchesInTurn(turn, needle) {
   const walker = document.createTreeWalker(turn, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const tag = node.parentElement && node.parentElement.tagName;
-      return (tag === 'SCRIPT' || tag === 'STYLE') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      if (tag === 'SCRIPT' || tag === 'STYLE') return NodeFilter.FILTER_REJECT;
+      // The labels of a card's and a long prompt's own buttons ("Show all", "Show more", …)
+      // are controls, not conversation.
+      return node.parentElement && node.parentElement.closest('.card-bar, .clamp-toggle, .copy-btn')
+          ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     }
   });
   let node;
@@ -482,6 +492,50 @@ function matchesInTurn(turn, needle) {
  *  on a match far outside the viewport — see the file header on why Enter jumps freely). */
 function hasAnyRect(r) {
   return r.getClientRects().length > 0;
+}
+
+/* ── Matches in text that is cut off or folded away ──────────────────────────────────────
+   A long prompt is clamped to two lines, a tool's cards can be collapsed or previewed, a
+   thinking block, a compacted summary and an agent's log are folded: the text is in the
+   page, but not on screen. Such a match is still a match. Landing on one opens exactly
+   what hides it (revealMatch), and it stays open, as a browser's own find leaves a
+   revealed <details>. Only CONTENT counts, not the buttons beside it — hidden "Show all" and
+   "Collapse" labels must not turn up as results. */
+const REVEALABLE = '.io-item pre, .code-block.edit pre, .result-item, .comp-body, .think-body, .agent-log-body';
+const OPENS_BY_CLASS = '.compacted, .a-item.think.has-body, .agent-log';
+function nodeEl(n) { return n && (n.nodeType === 1 ? n : n.parentElement); }
+/** A match worth stopping at: drawn, or hidden by something revealMatch can open. */
+function findable(r) { return hasAnyRect(r) || !!nodeEl(r.startContainer).closest(REVEALABLE); }
+/** Whether the match is drawn inside the box that clips it, not merely laid out behind it. */
+function shownInClip(range) {
+  const rr = range.getClientRects()[0];
+  if (!rr) return false;
+  const clip = nodeEl(range.startContainer).closest('.user-msg .body.clampable, .io-item pre, .code-block pre, .result-list');
+  if (!clip) return true;
+  const cr = clip.getBoundingClientRect();
+  return rr.top >= cr.top - 1 && rr.bottom <= cr.bottom + 1;
+}
+/** Opens whatever hides the match, a step at a time and no further than it takes. */
+function revealMatch(range) {
+  const el = nodeEl(range.startContainer);
+  if (!el) return;
+  for (let a = el.closest(OPENS_BY_CLASS); a; a = a.parentElement && a.parentElement.closest(OPENS_BY_CLASS)) a.classList.add('open');
+  const msg = el.closest('.user-msg');
+  const body = msg && msg.querySelector('.body.clampable');
+  if (body && !shownInClip(range)) {
+    msg.classList.add('expanded');
+    // Opened, a prompt is capped to a fraction of the view and scrolls inside itself.
+    const rr = range.getClientRects()[0], br = body.getBoundingClientRect();
+    if (rr && !shownInClip(range)) body.scrollTop += (rr.top - br.top) - (br.height - rr.height) / 2;
+  }
+  const card = el.closest('.tool-line .io-item, .tool-line .code-block.edit, .tool-line .result-list');
+  if (card) {
+    // collapsed → preview → expanded: the first of them in which the match is on screen.
+    // Only the card that holds the match opens, not the rest of its tool line.
+    for (let i = CARD_MODES.indexOf(card.dataset.mode); !shownInClip(range) && i < CARD_MODES.length - 1; ) {
+      applyCardMode(card, CARD_MODES[++i]);
+    }
+  }
 }
 
 // A screenful can't usefully show more distinct highlighted matches than this regardless
@@ -559,7 +613,7 @@ function nextMatch(pane, from, dir, needle) {
     turn = from.startContainer.parentElement && from.startContainer.parentElement.closest('.turn');
   }
   if (turn) {
-    withinTurn = matchesInTurn(turn, needle).filter(r => hasAnyRect(r) &&
+    withinTurn = matchesInTurn(turn, needle).filter(r => findable(r) &&
       (dir < 0 ? r.compareBoundaryPoints(Range.START_TO_START, from) < 0
                : r.compareBoundaryPoints(Range.START_TO_START, from) > 0)
     );
@@ -580,7 +634,7 @@ function nextMatch(pane, from, dir, needle) {
   while (t) {
     t = turnSibling(t, dir);
     if (!t) return null;
-    const m = matchesInTurn(t, needle).filter(hasAnyRect);
+    const m = matchesInTurn(t, needle).filter(findable);
     if (m.length) return dir < 0 ? m[m.length - 1] : m[0];
   }
   return null;
@@ -593,13 +647,13 @@ function firstMatchInDocument(pane, dir, needle) {
   const turns = pane.querySelectorAll(':scope > .turn');
   if (dir > 0) {
     for (const t of turns) {
-      const m = matchesInTurn(t, needle).filter(hasAnyRect);
+      const m = matchesInTurn(t, needle).filter(findable);
       if (m.length) return m[0];
     }
     return null;
   }
   for (let i = turns.length - 1; i >= 0; i--) {
-    const m = matchesInTurn(turns[i], needle).filter(hasAnyRect);
+    const m = matchesInTurn(turns[i], needle).filter(findable);
     if (m.length) return m[m.length - 1];
   }
   return null;
