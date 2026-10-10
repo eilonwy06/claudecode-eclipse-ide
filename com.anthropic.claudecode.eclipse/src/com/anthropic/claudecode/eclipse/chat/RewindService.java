@@ -87,8 +87,12 @@ public final class RewindService {
         try {
             if (snapshotFor(workspaceRoot, sessionId, messageId) == null) {
                 // The CLI never checkpointed this message (it predates checkpointing
-                // being enabled) — distinct from "checkpoint matches disk".
+                // being enabled) — distinct from "checkpoint matches disk". `queued` is
+                // the other reason: a message sent while Claude was working is never
+                // checkpointed (the CLI itself answers "No file checkpoint found for this
+                // message." to a rewind to one), so the page words the two differently.
                 out.addProperty("noCheckpoint", true);
+                if (isQueuedMessage(workspaceRoot, sessionId, messageId)) out.addProperty("queued", true);
                 return out.toString();
             }
             for (Restore r : restorePlan(workspaceRoot, sessionId, messageId)) {
@@ -169,6 +173,7 @@ public final class RewindService {
                 }
                 if (prompt.isEmpty()) {
                     JsonObject m = typedUserMessage(line);
+                    if (m == null) m = queuedUserMessage(line);
                     if (m != null && messageId.equals(m.get("id").getAsString()))
                         prompt = m.get("text").getAsString();
                 }
@@ -349,11 +354,24 @@ public final class RewindService {
 
     /** The fork keeps everything before the selected message — cutting at its
      *  own snapshot line (which the CLI writes just ahead of the message). */
-    private static boolean isCutPoint(JsonObject line, String messageId) {
+    static boolean isCutPoint(JsonObject line, String messageId) {
         String type = str(line, "type");
         if ("user".equals(type) && messageId.equals(str(line, "uuid"))) return true;
         if ("file-history-snapshot".equals(type) && messageId.equals(str(line, "messageId"))
                 && !bool(line, "isSnapshotUpdate")) return true;
+        // A message sent while Claude was working has no user line and no snapshot of its
+        // own: the attachment that hands it to Claude is the line to cut at.
+        if (queuedUserMessage(line) != null && messageId.equals(str(line, "uuid"))) return true;
+        return false;
+    }
+
+    /** Whether {@code messageId} is a message sent while Claude was working. */
+    private static boolean isQueuedMessage(String workspaceRoot, String sessionId, String messageId) {
+        try {
+            for (JsonObject line : readSession(workspaceRoot, sessionId)) {
+                if (messageId.equals(str(line, "uuid")) && queuedUserMessage(line) != null) return true;
+            }
+        } catch (Throwable ignored) {}
         return false;
     }
 
@@ -417,6 +435,32 @@ public final class RewindService {
         out.addProperty("id", uuid);
         out.addProperty("text", text);
         out.addProperty("ts", str(line, "timestamp"));
+        return out;
+    }
+
+    /**
+     * A message the user sent while Claude was working, as {@code {id,text,ts}}, or null for
+     * anything else. The CLI does not write a user line for it: it queues it and, when it
+     * hands it over, writes an attachment of type {@code queued_command} carrying the words
+     * ({@code commandMode} "prompt"; a background task's notice is queued the same way and is
+     * nobody's message). The {@code id} is that line's own uuid — its {@code source_uuid}
+     * matches no line when the sender gave the message none, as this plugin does not. Not in
+     * {@link #list}: the message may also have a user line of its own (an interrupted turn
+     * writes both), and that line is the one the list names.
+     */
+    static JsonObject queuedUserMessage(JsonObject line) {
+        if (!"attachment".equals(str(line, "type"))) return null;
+        JsonObject a = obj(line, "attachment");
+        if (a == null || !"queued_command".equals(str(a, "type")) || !"prompt".equals(str(a, "commandMode")))
+            return null;
+        String text = promptText(a.get("prompt"));
+        String uuid = str(line, "uuid");
+        if (text == null || uuid.isEmpty()) return null;
+        JsonObject out = new JsonObject();
+        out.addProperty("id", uuid);
+        out.addProperty("text", text);
+        String ts = str(a, "timestamp");
+        out.addProperty("ts", ts.isEmpty() ? str(line, "timestamp") : ts);
         return out;
     }
 

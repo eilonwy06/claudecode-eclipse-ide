@@ -71,9 +71,17 @@ function rwOptions(win, st, opts) {
 }
 /** The action behind option 1 for each confirm-style phase. */
 function rwAccept(phase) {
+  // A message sent while Claude was working has no file checkpoint to restore, so there is
+  // nothing for "Rewind" to do: say so (renderRewind) and let the key just close the card.
+  if (phase === 'code' && rwQueuedNoCode()) return closeRewindDialog;
   return phase === 'delete' ? rwDeleteConfirm
        : phase === 'code'   ? rwCodeConfirm
        : rwContinue;
+}
+/** The open "Rewind code" card is for a message that was queued, whose code cannot be rewound to. */
+function rwQueuedNoCode() {
+  const st = rwState;
+  return !!(st && st.phase === 'code' && st.preview && st.preview.queued);
 }
 /* List → confirm: fetch the file restore preview for the chosen message. */
 function rwSelect(i) {
@@ -258,6 +266,11 @@ function renderRewind() {
       if (st.preview && st.preview.error) {
         sum.textContent = '⚠ Could not read the checkpoint (' + st.preview.error + ')'
           + (codeOnly ? '.' : ' — only the conversation will be forked.');
+      } else if (st.preview && st.preview.queued) {
+        // Not "before checkpointing was enabled": the CLI takes its file checkpoints at the
+        // messages it starts a turn for, and one sent mid-turn never starts one.
+        sum.textContent = 'This message was sent while Claude was working, so the CLI took no file checkpoint for it and code cannot be restored'
+          + (codeOnly ? '.' : ' — only the conversation will be forked.');
       } else if (st.preview && st.preview.noCheckpoint) {
         sum.textContent = 'This message has no file checkpoint (it was sent before checkpointing was enabled), so code cannot be restored'
           + (codeOnly ? '.' : ' — only the conversation will be forked.');
@@ -274,8 +287,10 @@ function renderRewind() {
     const note = document.createElement('div'); note.className = 'rw-note';
     note.textContent = 'ⓘ Rewinding does not affect files edited manually or via bash.';
     win.appendChild(note);
-    rwOptions(win, st, [[codeOnly ? 'Rewind' : 'Continue', rwAccept(st.phase)],
-                        ['Never mind', closeRewindDialog]]);
+    rwOptions(win, st, rwQueuedNoCode()
+      ? [['Close', closeRewindDialog]]
+      : [[codeOnly ? 'Rewind' : 'Continue', rwAccept(st.phase)],
+         ['Never mind', closeRewindDialog]]);
   }
 }
 

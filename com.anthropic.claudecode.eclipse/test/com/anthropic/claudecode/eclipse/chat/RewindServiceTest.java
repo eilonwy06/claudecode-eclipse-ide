@@ -2,6 +2,9 @@ package com.anthropic.claudecode.eclipse.chat;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -93,5 +96,62 @@ class RewindServiceTest {
 
         assertEquals(2, list.size());
         for (JsonElement e : list) assertFalse("s".equals(e.getAsJsonObject().get("id").getAsString()));
+    }
+
+    // ── A message sent while Claude was working ──────────────────────────────
+
+    /** The attachment the CLI writes when it hands such a message over. */
+    private static String queued(String lineId, Object prompt, String mode) {
+        String p = prompt instanceof String ? "\"" + prompt + "\"" : prompt.toString();
+        return "{\"type\":\"attachment\",\"uuid\":\"" + lineId + "\",\"timestamp\":\"2026-10-10T07:10:48.000Z\","
+                + "\"attachment\":{\"type\":\"queued_command\",\"prompt\":" + p + ",\"source_uuid\":\"src\","
+                + "\"commandMode\":\"" + mode + "\",\"timestamp\":\"2026-10-10T07:10:38.563Z\"}}";
+    }
+
+    private static JsonObject line(String json) {
+        return JsonParser.parseString(json).getAsJsonObject();
+    }
+
+    @Test
+    void aQueuedMessageIsTheAttachmentLineAndItsIdIsThatLinesOwn() {
+        JsonObject m = RewindService.queuedUserMessage(line(queued("att-1", "wait", "prompt")));
+
+        assertNotNull(m);
+        assertEquals("att-1", m.get("id").getAsString());   // not the attachment's source_uuid
+        assertEquals("wait", m.get("text").getAsString());
+        assertEquals("2026-10-10T07:10:38.563Z", m.get("ts").getAsString());   // when it was sent
+    }
+
+    @Test
+    void aQueuedMessageSentWithTheEditorsContextKeepsItsTextBlocks() {
+        String blocks = "[{\"type\":\"text\",\"text\":\"<ide_opened_file>a.java</ide_opened_file>\"},"
+                + "{\"type\":\"text\",\"text\":\"the words\"}]";
+        JsonObject m = RewindService.queuedUserMessage(
+                line(queued("att-1", JsonParser.parseString(blocks).getAsJsonArray(), "prompt")));
+
+        assertNotNull(m);
+        assertTrue(m.get("text").getAsString().endsWith("the words"));
+    }
+
+    @Test
+    void aBackgroundTasksNoticeIsNotAMessageAndNeitherIsAnythingThatIsNotAQueuedCommand() {
+        assertNull(RewindService.queuedUserMessage(line(queued("att-1", "<task-notification/>", "task-notification"))));
+        assertNull(RewindService.queuedUserMessage(line(typed("u1", "hello"))));
+        assertNull(RewindService.queuedUserMessage(line(reply("a1"))));
+    }
+
+    @Test
+    void aForkCutsAtTheQueuedMessagesAttachmentAndOnlyThere() {
+        assertTrue(RewindService.isCutPoint(line(queued("att-1", "wait", "prompt")), "att-1"));
+        assertFalse(RewindService.isCutPoint(line(queued("att-1", "wait", "prompt")), "att-2"));
+        // Another kind of attachment with the same uuid is not a message to cut at.
+        assertFalse(RewindService.isCutPoint(line(queued("att-1", "<task-notification/>", "task-notification")), "att-1"));
+    }
+
+    @Test
+    void aQueuedMessageIsNotInTheRewindList() {
+        // The list names user lines, which a message that also has one is already among.
+        assertEquals(List.of("u1", "u2"),
+                listed(typed("u1", "first"), queued("att-1", "wait", "prompt"), typed("u2", "second")));
     }
 }

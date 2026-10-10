@@ -208,6 +208,7 @@ function sendSlashToCli(text) {
   loadRender(t);
   const queueing = !!t.streaming;
   addUserMessage(text, null, null, null, nowIso());
+  if (queueing) noteQueuedSend(t);
   closeSlash();
   if (!queueing) { setStreaming(true); showWorking(); }
   else if (!workingEl) showWorking();

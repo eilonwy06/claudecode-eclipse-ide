@@ -20,7 +20,7 @@ window.onStreamText    = (tabId, t) => withTab(tabId, () => appendAssistant(t));
    stay hidden until then). */
 window.onStreamEnd     = (tabId) => withTab(tabId, (t) => { t.compacting = false; hideWorking(); endAssistant(); setStreaming(false); backfillMessageIds(t); if (typeof refreshReplies === 'function') refreshReplies(t); refreshTabTitle(t); });
 window.onToolStart     = (tabId, n) => withTab(tabId, () => addToolLine(n));
-window.onToolEnd       = (tabId, j) => withTab(tabId, () => applyToolResult(j));
+window.onToolEnd       = (tabId, j) => withTab(tabId, (t) => { applyToolResult(j); startTurnAfterQueuedSend(t); });
 /* A running subagent's own current step (chat.rs never gives its OWN tool calls a
    top-level onToolStart — that would interleave a bogus line into the main
    transcript) — agents.js reads this to show what a running Agent is doing right now. */
@@ -304,5 +304,20 @@ function startFreshTurn() {
   finalizeThink();
   curTurn = null; curBody = null; curText = '';
   showWorking();
+}
+/* A message sent while Claude is working. Its bubble is drawn at once, at the end of the
+   pane, but Claude does not read it until the tool it is running is done: the CLI hands it
+   over right after that tool's result (in 70 of the 80 queued messages in the transcripts
+   examined, the line it follows is a tool_result). What Claude writes before that belongs
+   above the bubble, and what it writes after, below it. So the send is remembered, and the
+   next tool result starts a new turn under the bubble, for the rest to stream into —
+   without that, the turn that was open above the bubble keeps taking everything and the
+   bubble stays stuck at the bottom. A turn that ends first takes the message as the next
+   turn, which opens below the bubble by itself. */
+function noteQueuedSend(t) { if (t) t.queuedSends = (t.queuedSends || 0) + 1; }
+function startTurnAfterQueuedSend(t) {
+  if (!t || !t.queuedSends) return;
+  t.queuedSends = 0;
+  startFreshTurn();
 }
 

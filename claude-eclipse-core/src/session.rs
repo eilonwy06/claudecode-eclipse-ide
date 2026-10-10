@@ -820,10 +820,130 @@ impl Pass {
     const OPEN: Pass = Pass { reply_ids: true, tools: true };
 }
 
+/// A message the user sent while Claude was working, as the CLI keeps it.
+///
+/// It is not written as a user line. The CLI queues it, and when it hands it over, at the
+/// end of a tool call, it writes an attachment of type `queued_command` that carries the
+/// words (`prompt`: a string, or text blocks with the editor's context in front). Only
+/// when the turn was interrupted is a user line written as well, for the same words and
+/// after them. So a conversation reopened without reading these lacks the messages that
+/// were sent mid-turn, which is how a bubble that was on screen went missing.
+struct QueuedPrompt {
+    /// What was said, with the editor's context taken off.
+    text: String,
+    /// When it was sent, as the attachment says.
+    ts: String,
+    /// The attachment line's own `uuid`: the one id there is for this message. Not the
+    /// attachment's `source_uuid`, which matches no line when the sender gave the message
+    /// none (this plugin does not), and is the same for a delivery written twice.
+    id: String,
+    /// Where in the items it goes: the number of items there were when it was read.
+    at: usize,
+}
+
+/// The words a queued-message attachment carries, as written: its `prompt` is a string, or
+/// text blocks (with the editor's context in front, and a browser's). None for any line
+/// that is not a `queued_command` in `prompt` mode, which is the only mode somebody talks in.
+fn queued_prompt_raw(event: &serde_json::Value) -> Option<String> {
+    let a = &event["attachment"];
+    if event["type"].as_str() != Some("attachment")
+        || a["type"].as_str() != Some("queued_command")
+        || a["commandMode"].as_str() != Some("prompt")
+    {
+        return None;
+    }
+    match &a["prompt"] {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Array(blocks) => Some(
+            blocks
+                .iter()
+                .filter(|b| b["type"].as_str() == Some("text"))
+                .filter_map(|b| b["text"].as_str())
+                .filter(|t| !is_browser_context(t))
+                .collect::<Vec<_>>()
+                .join("
+"),
+        ),
+        _ => None,
+    }
+}
+
+impl QueuedPrompt {
+    /// The queued message an attachment line carries, None when it is not one. Only the
+    /// `prompt` mode is somebody talking: a background task's notice is queued the same
+    /// way and, like its user line, is nothing the user typed.
+    fn of(event: &serde_json::Value, at: usize) -> Option<QueuedPrompt> {
+        let a = &event["attachment"];
+        let raw = queued_prompt_raw(event)?;
+        // A task notice can come in a prompt too, and a bare slash command is the page's
+        // own to draw, so those are not messages to show here.
+        let text = strip_ide_preamble(&raw).trim().to_string();
+        if text.is_empty() || is_task_notification(&serde_json::Value::Null, &text) {
+            return None;
+        }
+        let ts = a["timestamp"].as_str().or_else(|| event["timestamp"].as_str()).unwrap_or("").to_string();
+        let id = event["uuid"].as_str().unwrap_or("").to_string();
+        Some(QueuedPrompt { text, ts, id, at })
+    }
+}
+
+/// How close, in milliseconds, a user line has to be to a queued message's send time for
+/// the two to be the same message. Measured over every transcript on this machine: the
+/// ones that are, come within a minute of the send. A longer gap is somebody saying the
+/// same thing again.
+const QUEUED_TWIN_MS: i64 = 120_000;
+
+/// Remembers a user bubble's words and time, for [`splice_queued`].
+fn note_typed(typed: &mut Vec<(String, i64)>, text: &str, ts: Option<&str>) {
+    let at = ts.and_then(crate::promptcache::iso_ms).unwrap_or(i64::MIN);
+    typed.push((strip_ide_preamble(text).trim().to_string(), at));
+}
+
+/// Puts the queued messages into `items`, each where it was handed over, and returns how
+/// many went in. A message that also has a user line of its own, the same words within
+/// [`QUEUED_TWIN_MS`] of when it was sent, is left out: that line is its bubble, and a
+/// second would say it twice. Nothing is added twice for a delivery the CLI wrote more
+/// than once either: the same words from the same send are one message.
+fn splice_queued(items: &mut Vec<serde_json::Value>, queued: Vec<QueuedPrompt>, typed: &[(String, i64)]) -> usize {
+    let mut keep: Vec<QueuedPrompt> = Vec::new();
+    for q in queued {
+        let sent = crate::promptcache::iso_ms(&q.ts);
+        let has_line = typed.iter().any(|(text, at)| {
+            *text == q.text && sent.map_or(true, |s| (at - s).abs() <= QUEUED_TWIN_MS)
+        });
+        let repeated = keep.iter().any(|k| k.text == q.text && k.ts == q.ts);
+        if !has_line && !repeated {
+            keep.push(q);
+        }
+    }
+    let n = keep.len();
+    // Last place first: an insertion moves what is after it, never what is before.
+    for q in keep.into_iter().rev() {
+        // The `id` is the attachment line, the one thing rewind, fork and delete can name
+        // it by: it has no user line.
+        let mut item = serde_json::json!({ "t": "user", "content": q.text });
+        if !q.id.is_empty() {
+            item["id"] = serde_json::Value::from(q.id);
+        }
+        if !q.ts.is_empty() {
+            item["ts"] = serde_json::Value::from(q.ts);
+        }
+        items.insert(q.at.min(items.len()), item);
+    }
+    n
+}
+
 /// [`history_items`] over lines of a transcript, whichever part of it they are. `dir` is
 /// the folder the transcript is in, where a subagent's own log is looked for.
 fn items_of(dir: &Path, session_id: &str, lines: impl Iterator<Item = impl AsRef<str>>, pass: Pass) -> Vec<serde_json::Value> {
     let mut items: Vec<serde_json::Value> = Vec::new();
+    // Messages the user sent while Claude was working, which the CLI records as
+    // attachments rather than as user lines (see [`QueuedPrompt`]), and where in `items`
+    // each one was handed over.
+    let mut queued: Vec<QueuedPrompt> = Vec::new();
+    // The user lines, by cleaned text and time, for telling a queued message that also
+    // has a line of its own from one that has none.
+    let mut typed: Vec<(String, i64)> = Vec::new();
     // tool_use ids of askUserQuestion calls, so their answers can be surfaced.
     let mut ask_ids: HashSet<String> = HashSet::new();
     // Map each tool_use id → the index of its item in `items`, so a later
@@ -884,6 +1004,7 @@ fn items_of(dir: &Path, session_id: &str, lines: impl Iterator<Item = impl AsRef
                                 item["ts"] = serde_json::Value::from(ts);
                             }
                         }
+                        note_typed(&mut typed, c, event["timestamp"].as_str());
                         items.push(item);
                     }
                 } else if let Some(blocks) = content.as_array() {
@@ -971,6 +1092,7 @@ fn items_of(dir: &Path, session_id: &str, lines: impl Iterator<Item = impl AsRef
                                 item["ts"] = serde_json::Value::from(ts);
                             }
                         }
+                        note_typed(&mut typed, &text, event["timestamp"].as_str());
                         items.push(item);
                     }
                     for b in blocks {
@@ -1097,6 +1219,14 @@ fn items_of(dir: &Path, session_id: &str, lines: impl Iterator<Item = impl AsRef
                     }
                 }
             }
+            // A message sent while Claude was working. The CLI keeps it as the user's words
+            // in an attachment at the point it handed them over, and writes no user line for
+            // it (unless the turn was interrupted, when it writes one later).
+            Some("attachment") => {
+                if let Some(q) = QueuedPrompt::of(&event, items.len()) {
+                    queued.push(q);
+                }
+            }
             Some("system") => {
                 // Compaction marker (written by /compact or auto-compact). The
                 // jsonl uses camelCase compactMetadata (unlike the stream's
@@ -1118,6 +1248,22 @@ fn items_of(dir: &Path, session_id: &str, lines: impl Iterator<Item = impl AsRef
                 }
             }
             _ => {}
+        }
+    }
+
+    // What was queued goes in at the place it was handed over, which is where Claude
+    // read it. Last place first, so each insertion leaves the places of the earlier ones
+    // where they were counted. Nothing below this holds an index but the tool stamps,
+    // and those are made against the order as it now stands.
+    let inserted = splice_queued(&mut items, queued, &typed);
+    if inserted > 0 {
+        tool_idx.clear();
+        for (i, it) in items.iter().enumerate() {
+            if it["t"].as_str() == Some("tool") {
+                if let Some(id) = it["id"].as_str() {
+                    tool_idx.insert(id.to_string(), i);
+                }
+            }
         }
     }
 
@@ -1711,7 +1857,18 @@ fn holds_prompt(v: &serde_json::Value, needle: &str) -> bool {
     }
 }
 
-/// Permanently removes one user message from a session transcript.
+/// Any string anywhere in the line that is exactly `needle`, once the editor's context is off.
+fn holds_exactly(v: &serde_json::Value, needle: &str) -> bool {
+    match v {
+        serde_json::Value::String(s) => strip_ide_preamble(s).trim() == needle,
+        serde_json::Value::Array(a) => a.iter().any(|x| holds_exactly(x, needle)),
+        serde_json::Value::Object(o) => o.values().any(|x| holds_exactly(x, needle)),
+        _ => false,
+    }
+}
+
+/// Permanently removes one message from a session transcript: a user line, or a message
+/// sent while Claude was working (the attachment that hands it over, and any copy of it).
 /// Returns `{"ok":true,"stripped":N}` or `{"error":"…"}` — N being the unchained
 /// bookkeeping copies cleared alongside the message itself.
 pub fn delete_message(workspace_root: &str, session_id: &str, message_id: &str) -> String {
@@ -1753,19 +1910,56 @@ fn delete_message_inner(
         })
         .collect();
 
+    // A message is a user line, or, when it was sent while Claude was working, the
+    // attachment that hands it over (see `QueuedPrompt`): the one id the page has for it.
     let target = parsed
         .iter()
         .position(|e| {
             e.as_ref().map_or(false, |e| {
-                e["type"].as_str() == Some("user") && e["uuid"].as_str() == Some(message_id)
+                e["uuid"].as_str() == Some(message_id)
+                    && (e["type"].as_str() == Some("user") || queued_prompt_raw(e).is_some())
             })
         })
         .ok_or("That message is no longer in this conversation.")?;
-    let text = parsed[target].as_ref().and_then(prompt_text).unwrap_or_default();
-    let dead_parent = parsed[target]
+    let queued = parsed[target].as_ref().map_or(false, |e| queued_prompt_raw(e).is_some());
+    let text = parsed[target]
         .as_ref()
-        .map(|e| e["parentUuid"].clone())
-        .unwrap_or(serde_json::Value::Null);
+        .and_then(|e| if queued { queued_prompt_raw(e) } else { prompt_text(e) })
+        .unwrap_or_default();
+    let needle = strip_ide_preamble(&text).trim().to_string();
+
+    // The lines that go. A queued message's delivery is sometimes written twice, and a
+    // copy left behind would draw the bubble again, so every copy of it goes.
+    let mut gone: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    gone.insert(target);
+    if queued {
+        let sent = parsed[target].as_ref().map(|e| e["attachment"]["timestamp"].clone());
+        for (i, e) in parsed.iter().enumerate() {
+            let Some(e) = e else { continue };
+            if i != target
+                && Some(e["attachment"]["timestamp"].clone()) == sent
+                && queued_prompt_raw(e).map_or(false, |t| strip_ide_preamble(&t).trim() == needle)
+            {
+                gone.insert(i);
+            }
+        }
+    }
+    // Each removed line's parent, so what hung below one of them is handed up to the
+    // nearest line that stays (the copies can hang below one another).
+    let removed: std::collections::HashMap<String, serde_json::Value> = gone
+        .iter()
+        .filter_map(|&i| parsed[i].as_ref())
+        .filter_map(|e| Some((e["uuid"].as_str()?.to_string(), e["parentUuid"].clone())))
+        .collect();
+    let survivor = |mut parent: serde_json::Value| {
+        for _ in 0..=removed.len() {
+            match parent.as_str().and_then(|u| removed.get(u)) {
+                Some(up) => parent = up.clone(),
+                None => break,
+            }
+        }
+        parent
+    };
 
     // The span this message owns: from the previous typed prompt to the next one.
     // Its bookkeeping copies live inside that window (queue-operation just ahead
@@ -1780,17 +1974,47 @@ fn delete_message_inner(
             .as_ref()
             .map_or(false, |e| prompt_text(e).is_some())
     };
-    let start = (0..target).rev().find(|&i| is_boundary(i)).map_or(0, |i| i + 1);
-    let end = ((target + 1)..parsed.len())
-        .find(|&i| is_boundary(i))
-        .unwrap_or(parsed.len());
+    // A queued message sits in the middle of a turn, so the span between typed prompts
+    // would be the whole turn, and a short message ("wait") would then match half of it.
+    // Its own span is the queue log around its delivery: the enqueue when it was sent, and
+    // the remove after, found by their exact words.
+    let queue_op = |i: usize, op: &str| {
+        parsed[i].as_ref().map_or(false, |e| {
+            e["type"].as_str() == Some("queue-operation")
+                && e["operation"].as_str() == Some(op)
+                && e["content"].as_str().map_or(false, |c| strip_ide_preamble(c).trim() == needle)
+        })
+    };
+    let last_gone = gone.iter().copied().max().unwrap_or(target);
+    let (start, end) = if queued {
+        (
+            (0..target).rev().find(|&i| queue_op(i, "enqueue")).unwrap_or(target),
+            ((last_gone + 1)..parsed.len())
+                .find(|&i| queue_op(i, "remove"))
+                .map_or(last_gone + 1, |i| i + 1),
+        )
+    } else {
+        (
+            (0..target).rev().find(|&i| is_boundary(i)).map_or(0, |i| i + 1),
+            ((target + 1)..parsed.len()).find(|&i| is_boundary(i)).unwrap_or(parsed.len()),
+        )
+    };
+    // How a bookkeeping field is told to be this message's: a user message's is compared
+    // loosely (the queue log keeps the text wrapped in context), a queued one's exactly.
+    let is_this = |s: &str| {
+        if queued {
+            strip_ide_preamble(s).trim() == needle
+        } else {
+            same_prompt(s, &text)
+        }
+    };
 
     let mut out: Vec<String> = Vec::with_capacity(lines.len());
     let mut span_check: Vec<serde_json::Value> = Vec::new();
     let mut stripped = 0usize;
     for (i, line) in lines.iter().enumerate() {
-        if i == target {
-            continue; // the message itself
+        if gone.contains(&i) {
+            continue; // the message itself, and any copy of it
         }
         let Some(orig) = parsed[i].as_ref() else {
             out.push((*line).to_string());
@@ -1805,11 +2029,12 @@ fn delete_message_inner(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            // Children of the removed line adopt its parent, so the chain still
-            // closes for `--resume`.
+            // Children of a removed line adopt its parent, so the chain still closes
+            // for `--resume`.
             for key in ["parentUuid", "logicalParentUuid", "leafUuid"] {
-                if obj.get(key).and_then(|v| v.as_str()) == Some(message_id) {
-                    obj.insert(key.to_string(), dead_parent.clone());
+                if obj.get(key).and_then(|v| v.as_str()).map_or(false, |u| removed.contains_key(u)) {
+                    let up = survivor(obj[key].clone());
+                    obj.insert(key.to_string(), up);
                     changed = true;
                 }
             }
@@ -1824,7 +2049,7 @@ fn delete_message_inner(
                     && obj
                         .get(field)
                         .and_then(|v| v.as_str())
-                        .map_or(false, |s| same_prompt(s, &text));
+                        .map_or(false, |s| is_this(s));
                 if hit {
                     obj.remove(field);
                     changed = true;
@@ -1847,9 +2072,12 @@ fn delete_message_inner(
         });
     }
 
-    let needle = strip_ide_preamble(&text).trim().to_string();
     if !needle.is_empty() {
-        if let Some(bad) = span_check.iter().find(|e| holds_prompt(e, &needle)) {
+        // A user message's words are looked for anywhere in a line; a queued message's only
+        // as a whole string, since the span is narrow and a message whose words contain
+        // these ("wait please" around "wait") is somebody else's.
+        let holds = |e: &serde_json::Value| if queued { holds_exactly(e, &needle) } else { holds_prompt(e, &needle) };
+        if let Some(bad) = span_check.iter().find(|e| holds(e)) {
             return Err(format!(
                 "The message text is still present in a \"{}\" line — the transcript was left untouched.",
                 bad["type"].as_str().unwrap_or("transcript")
@@ -2307,6 +2535,140 @@ mod tests {
         assert_eq!(full_v.as_array().unwrap().len(), 1, "full-conversation scope finds the assistant match: {full}");
         let own_v: serde_json::Value = serde_json::from_str(&own_only).unwrap();
         assert_eq!(own_v.as_array().unwrap().len(), 0, "own_messages_only must not match assistant text: {own_only}");
+    }
+
+    // ---- messages sent while Claude was working ----
+
+    /// The history items of some transcript lines, with no tool stamping.
+    fn items_of_lines(lines: &[&str]) -> Vec<serde_json::Value> {
+        super::items_of(std::path::Path::new("."), "s", lines.iter(), super::Pass::REPLY_IDS)
+    }
+    fn user_line(text: &str, ts: &str) -> String {
+        serde_json::json!({"type":"user","uuid":"u","timestamp":ts,"message":{"role":"user","content":text}}).to_string()
+    }
+    fn tool_use_line(id: &str) -> String {
+        serde_json::json!({"type":"assistant","uuid":"a","message":{"content":[{"type":"tool_use","id":id,"name":"Bash","input":{}}]}}).to_string()
+    }
+    fn tool_result_line(id: &str) -> String {
+        serde_json::json!({"type":"user","uuid":"r","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":id,"content":"ok"}]}}).to_string()
+    }
+    fn queued_line(prompt: serde_json::Value, mode: &str, ts: &str, delivery: &str) -> String {
+        serde_json::json!({"type":"attachment","uuid":"q","attachment":{
+            "type":"queued_command","prompt":prompt,"source_uuid":"x","delivery_id":delivery,"commandMode":mode,"timestamp":ts}}).to_string()
+    }
+    fn contents(items: &[serde_json::Value]) -> Vec<String> {
+        items.iter().map(|i| format!("{}:{}", i["t"].as_str().unwrap_or("?"), i["content"].as_str().unwrap_or(""))).collect()
+    }
+
+    #[test]
+    fn a_message_sent_mid_turn_is_there_when_the_conversation_is_reopened() {
+        // The real shape: no user line for it, only the attachment after the tool result.
+        let lines = [
+            user_line("start", "2026-10-09T12:50:00.000Z"),
+            tool_use_line("t1"),
+            tool_result_line("t1"),
+            queued_line(serde_json::json!("wait"), "prompt", "2026-10-09T12:53:20.347Z", "d1"),
+            tool_use_line("t2"),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let items = items_of_lines(&refs);
+        let got = contents(&items);
+        assert_eq!(got, vec!["user:start", "tool:", "user:wait", "tool:"], "it sits where Claude was handed it");
+        assert_eq!(items[2]["ts"], "2026-10-09T12:53:20.347Z", "with the time it was sent, which the page can show");
+    }
+
+    #[test]
+    fn a_queued_message_carries_the_id_of_its_attachment_line() {
+        // Rewind, fork and delete need an id to act on; the attachment line has the only
+        // one there is (its source_uuid matches no line when the sender gave none).
+        let lines = [
+            user_line("start", "2026-10-09T12:50:00.000Z"),
+            tool_use_line("t1"),
+            tool_result_line("t1"),
+            queued_line(serde_json::json!("wait"), "prompt", "2026-10-09T12:53:20.347Z", "d1"),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let items = items_of_lines(&refs);
+        let queued = items.iter().find(|i| i["content"] == "wait").expect("the queued bubble");
+        assert_eq!(queued["id"], "q", "the attachment line's own uuid, not its source_uuid (\"x\")");
+    }
+
+    #[test]
+    fn a_queued_message_with_a_user_line_of_its_own_is_that_line() {
+        let lines = [
+            queued_line(serde_json::json!("no dont do the hint"), "prompt", "2026-10-09T13:42:37.000Z", "d1"),
+            user_line("no dont do the hint", "2026-10-09T13:42:36.000Z"),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let items = items_of_lines(&refs);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["id"], "u", "the user line's id, which has the checkpoint");
+    }
+
+    #[test]
+    fn the_editors_context_is_taken_off_a_queued_message() {
+        let blocks = serde_json::json!([
+            {"type":"text","text":"<ide_opened_file>The user opened the file C:/a.java in the IDE.</ide_opened_file>"},
+            {"type":"text","text":"not above, below"},
+        ]);
+        let line = queued_line(blocks, "prompt", "2026-10-09T12:00:00.000Z", "d1");
+        assert_eq!(contents(&items_of_lines(&[line.as_str()])), vec!["user:not above, below"]);
+    }
+
+    #[test]
+    fn a_queued_message_with_a_user_line_of_its_own_is_shown_once() {
+        // An interrupted turn writes both: the attachment, then the user line a moment later.
+        let lines = [
+            queued_line(serde_json::json!("no dont do the hint"), "prompt", "2026-10-09T13:42:37.000Z", "d1"),
+            user_line("no dont do the hint", "2026-10-09T13:42:36.000Z"),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        assert_eq!(contents(&items_of_lines(&refs)), vec!["user:no dont do the hint"]);
+    }
+
+    #[test]
+    fn the_same_words_said_again_later_are_a_new_message() {
+        // Minutes apart, so the later user line is not this message's twin.
+        let lines = [
+            queued_line(serde_json::json!("wait"), "prompt", "2026-10-09T12:00:00.000Z", "d1"),
+            user_line("wait", "2026-10-09T12:30:00.000Z"),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        assert_eq!(contents(&items_of_lines(&refs)), vec!["user:wait", "user:wait"]);
+    }
+
+    #[test]
+    fn a_background_task_notice_is_not_something_the_user_said() {
+        let notice = "<task-notification><task-id>1</task-id></task-notification>";
+        let lines = [
+            queued_line(serde_json::json!(notice), "task-notification", "2026-10-09T12:00:00.000Z", "d1"),
+            queued_line(serde_json::json!(notice), "prompt", "2026-10-09T12:00:01.000Z", "d2"),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        assert!(items_of_lines(&refs).is_empty());
+    }
+
+    #[test]
+    fn a_delivery_the_cli_wrote_twice_is_one_message() {
+        let a = queued_line(serde_json::json!("wait"), "prompt", "2026-10-09T12:00:00.000Z", "d1");
+        let refs = [a.as_str(), a.as_str()];
+        assert_eq!(contents(&items_of_lines(&refs)), vec!["user:wait"]);
+    }
+
+    #[test]
+    fn queued_messages_leave_the_tool_stamps_on_the_right_tools() {
+        // Splicing a bubble in shifts the items after it; the tools' outcomes follow them.
+        let lines = [
+            tool_use_line("t1"),
+            queued_line(serde_json::json!("wait"), "prompt", "2026-10-09T12:00:00.000Z", "d1"),
+            tool_use_line("t2"),
+            tool_result_line("t2"),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let items = super::items_of(std::path::Path::new("."), "s", refs.iter(), super::Pass::RENDER);
+        let status = |id: &str| items.iter().find(|i| i["id"] == id).map(|i| i["status"].as_str().unwrap_or("").to_string());
+        assert_eq!(status("t2").as_deref(), Some("done"), "t2 had a result");
+        assert_eq!(status("t1").as_deref(), Some("interrupted"), "t1 had none");
     }
 
     /// Regression test for a real crash: certain characters (German ẞ, Turkish İ, …)
@@ -2972,6 +3334,28 @@ mod tests {
     }
 
     #[test]
+    fn the_id_list_names_a_queued_message() {
+        let mut env = EnvGuard::lock();
+        let (home, dir) = msg_home("queued-ids");
+        let lines = [
+            user_line("start", "2026-10-09T12:50:00.000Z"),
+            tool_use_line("t1"),
+            tool_result_line("t1"),
+            queued_line(serde_json::json!("wait"), "prompt", "2026-10-09T12:53:20.347Z", "d1"),
+        ];
+        fs::write(dir.join("sess1.jsonl"), lines.join("\n")).unwrap();
+        env.set_home(&home);
+        let ids = super::message_ids(r"C:\msgtest", "sess1");
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&ids).unwrap();
+        let list = v.as_array().unwrap();
+        assert_eq!(list.len(), 2, "{ids}");
+        assert_eq!((list[0]["id"].as_str(), list[0]["text"].as_str()), (Some("u"), Some("start")));
+        assert_eq!((list[1]["id"].as_str(), list[1]["text"].as_str()), (Some("q"), Some("wait")));
+    }
+
+    #[test]
     fn message_ids_track_the_rendered_user_bubbles() {
         let mut env = EnvGuard::lock();
         let (home, dir) = msg_home("ids");
@@ -3123,6 +3507,107 @@ mod tests {
             after.iter().any(|l| l["uuid"] == serde_json::json!("tr1")),
             "a tool_result echoing the text is not treated as a copy"
         );
+    }
+
+    /// A transcript with a message sent mid-turn, in the shape the CLI writes it: the queue
+    /// log's enqueue when it is sent, the attachment that hands it over (written twice), the
+    /// log's remove after. Another message, "wait please", is queued in the same turn, and
+    /// a reply hangs below the second copy of the delivery.
+    fn queued_fixture(extra: Option<serde_json::Value>) -> String {
+        let stamp = "2026-10-10T07:10:38.563Z";
+        let delivery = |uuid: &str, parent: &str| {
+            serde_json::json!({"type":"attachment","uuid":uuid,"parentUuid":parent,"timestamp":stamp,
+                "attachment":{"type":"queued_command","prompt":"wait","source_uuid":"src","commandMode":"prompt","timestamp":stamp}})
+        };
+        let mut v = vec![
+            serde_json::json!({"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"start"}}),
+            serde_json::json!({"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}),
+            serde_json::json!({"type":"user","uuid":"r1","parentUuid":"a1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}),
+            serde_json::json!({"type":"queue-operation","operation":"enqueue","content":"wait"}),
+            serde_json::json!({"type":"queue-operation","operation":"enqueue","content":"wait please"}),
+            delivery("q1", "r1"),
+            delivery("q2", "q1"),
+            serde_json::json!({"type":"queue-operation","operation":"remove","content":"wait"}),
+            serde_json::json!({"type":"assistant","uuid":"a2","parentUuid":"q2","message":{"content":[{"type":"text","text":"ok, waiting"}]}}),
+            serde_json::json!({"type":"last-prompt","lastPrompt":"start"}),
+        ];
+        if let Some(line) = extra {
+            v.insert(6, line);
+        }
+        v.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n")
+    }
+
+    #[test]
+    fn deleting_a_queued_message_takes_every_copy_and_hands_what_hung_below_to_a_line_that_stays() {
+        let mut env = EnvGuard::lock();
+        let (home, dir) = msg_home("del-queued");
+        let path = dir.join("sess1.jsonl");
+        fs::write(&path, queued_fixture(None)).unwrap();
+        env.set_home(&home);
+
+        let res = super::delete_message(r"C:\msgtest", "sess1", "q1");
+        let after = lines_of(&path);
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "{res}");
+        assert_eq!(v["stripped"], serde_json::json!(2), "its enqueue and its remove: {res}");
+        // Both copies of the delivery are gone, so the bubble is not drawn again on reopen.
+        assert!(!after.iter().any(|l| l["attachment"]["type"] == "queued_command"), "{after:?}");
+        // The reply that hung below the second copy now hangs below what the first one did.
+        let a2 = after.iter().find(|l| l["uuid"] == "a2").unwrap();
+        assert_eq!(a2["parentUuid"], "r1");
+        let uuids: std::collections::HashSet<&str> = after.iter().filter_map(|l| l["uuid"].as_str()).collect();
+        for l in &after {
+            if let Some(p) = l["parentUuid"].as_str() {
+                assert!(uuids.contains(p), "dangling parentUuid {p} in {l}");
+            }
+        }
+        // Only this message's words were taken out of the queue log.
+        let ops: Vec<(&str, bool)> = after
+            .iter()
+            .filter(|l| l["type"] == "queue-operation")
+            .map(|l| (l["operation"].as_str().unwrap(), l.get("content").is_some()))
+            .collect();
+        assert_eq!(ops, vec![("enqueue", false), ("enqueue", true), ("remove", false)], "{after:?}");
+        let please = after.iter().find(|l| l["content"] == "wait please").expect("the other message's enqueue is left alone");
+        assert_eq!(please["operation"], "enqueue");
+        assert!(after.iter().any(|l| l["lastPrompt"] == "start"), "another message's bookkeeping is left alone");
+    }
+
+    #[test]
+    fn a_queued_message_that_leaves_its_words_in_an_unknown_line_aborts_the_delete() {
+        let mut env = EnvGuard::lock();
+        let (home, dir) = msg_home("del-queued-abort");
+        let path = dir.join("sess1.jsonl");
+        let fixture = queued_fixture(Some(serde_json::json!({"type":"mystery_carrier","note":"wait"})));
+        fs::write(&path, &fixture).unwrap();
+        env.set_home(&home);
+
+        let res = super::delete_message(r"C:\msgtest", "sess1", "q1");
+        let on_disk = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert!(v["error"].as_str().map_or(false, |e| e.contains("mystery_carrier")), "{res}");
+        assert_eq!(on_disk, fixture, "the transcript was left untouched");
+    }
+
+    #[test]
+    fn a_background_tasks_notice_is_not_a_message_to_delete() {
+        let mut env = EnvGuard::lock();
+        let (home, dir) = msg_home("del-queued-notice");
+        let path = dir.join("sess1.jsonl");
+        let notice = serde_json::json!({"type":"attachment","uuid":"n1","parentUuid":null,
+            "attachment":{"type":"queued_command","prompt":"<task-notification/>","commandMode":"task-notification"}});
+        fs::write(&path, notice.to_string()).unwrap();
+        env.set_home(&home);
+
+        let res = super::delete_message(r"C:\msgtest", "sess1", "n1");
+        let _ = fs::remove_dir_all(&home);
+
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert!(v["error"].as_str().map_or(false, |e| e.contains("no longer in this conversation")), "{res}");
     }
 
     /// The guard that matters most: a prompt carrier this code does not know

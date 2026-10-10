@@ -452,6 +452,7 @@ send.addEventListener('click', () => { if (activeStreaming()) doCancel(); else d
 function setStreaming(v) {
   const t = rtab || activeTab();
   if (t) t.streaming = v;
+  if (!v && t) t.queuedSends = 0;   // a turn over takes what was waiting for it (stream.js, noteQueuedSend)
   // Turn over → the gerund goes with it. The callers all hide it themselves; doing
   // it here too means no future turn-ending path can forget to.
   if (!v && typeof stopWorkingFor === 'function') stopWorkingFor(t);

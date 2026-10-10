@@ -1449,6 +1449,7 @@ function doSend() {
   const withCtx = ctxActive();   // exactly when the composer's file chip is showing
   const imagesJson = (typeof pendingImagesJson === 'function') ? pendingImagesJson(t) : '';
   addUserMessage(text, withCtx ? ctxChipLabel() : null, imgs, null, nowIso(), null, withCtx ? ctxChipTarget() : null);
+  if (queueing) noteQueuedSend(t);
   input.value = ''; input.style.height = 'auto'; t.draft = ''; t.histIdx = -1; closeSlash();
   if (typeof closeMention === 'function') closeMention();
   if (typeof clearPendingImages === 'function') clearPendingImages(t);   // consumed → clear the strip

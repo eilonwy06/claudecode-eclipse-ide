@@ -328,7 +328,7 @@ fn record_of(lines: impl Iterator<Item = impl AsRef<str>>) -> Option<Record> {
 
 /// A transcript timestamp in milliseconds since 1970: `2026-07-30T10:00:00.000Z`, with
 /// or without the fraction, `Z` or a `+08:00` offset. None for anything else.
-fn iso_ms(text: &str) -> Option<i64> {
+pub(crate) fn iso_ms(text: &str) -> Option<i64> {
     let bytes = text.as_bytes();
     let number = |from: usize, to: usize| -> Option<i64> {
         let digits = bytes.get(from..to)?;
