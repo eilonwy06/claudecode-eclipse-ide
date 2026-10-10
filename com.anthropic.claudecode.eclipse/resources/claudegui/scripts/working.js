@@ -209,7 +209,7 @@ function showWorking() {
   // Also runs while a bridge is being established: that is a wait with nothing
   // streaming, and it deserves the same "something is happening" indicator.
   if (!owner || (!owner.streaming && !owner.rcConnecting)) return;
-  turnStart = Date.now();
+  stepStart = Date.now();
   lastTokens = 0;
   const compacting = !!(rtab && rtab.compacting);
   const connecting = !!(owner && owner.rcConnecting);

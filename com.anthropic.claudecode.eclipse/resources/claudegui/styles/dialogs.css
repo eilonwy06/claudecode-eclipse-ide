@@ -102,6 +102,9 @@
 #cli-win .cw-pre { border: 1px solid var(--border); border-radius: 6px; background: var(--bg-code); color: var(--fg);
   font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px; line-height: 1.45; padding: 10px 12px;
   max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
+/* A list of paths or names, in the code face, with no box round it. */
+#cli-win .cw-mono { font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px; line-height: 1.5;
+  color: var(--fg); word-break: break-word; padding: 0 0 8px; }
 #cli-win textarea.cw-pre { width: 100%; box-sizing: border-box; min-height: 220px; resize: vertical; outline: none; }
 #cli-win .cw-status-ok { color: var(--green); }
 #cli-win .cw-status-off { color: var(--fg-dim); }
@@ -141,6 +144,21 @@
 #cli-win .cw-opt.selected { background: var(--bg-hover); border-color: var(--fg-faint); }
 #cli-win .cw-opt .name { color: var(--fg); font-size: 12.5px; }
 #cli-win .cw-opt .desc { color: var(--fg-dim); font-size: 11.5px; word-break: break-all; }
+/* A mode row (Sandbox): its text on the left, the check of the one in use on the right.
+   .locked is a mode a higher-priority configuration has fixed: shown, not clickable. */
+#cli-win .cw-opt.has-check { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#cli-win .cw-opt .ck { color: var(--accent); display: flex; flex-shrink: 0; }
+#cli-win .cw-opt.locked { cursor: default; opacity: .6; }
+#cli-win .cw-opt.locked:hover { background: transparent; }
+#cli-win .cw-opt.locked.selected:hover { background: var(--bg-hover); }
+/* A toggle whose whole row is the click target (Sandbox's override); .frozen is one that cannot change now. */
+#cli-win .cw-toggle.row { cursor: pointer; }
+#cli-win .cw-toggle.frozen, #cli-win .cw-toggle.frozen .sw { cursor: default; }
+#cli-win .cw-toggle.frozen { opacity: .5; }
+/* A text field with its button beside it (Sandbox's "Exclude"), not under it like .cw-btn. */
+#cli-win .cw-addrow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+#cli-win .cw-addrow .cw-input { flex: 1 1 auto; min-width: 0; }
+#cli-win .cw-addrow .cw-btn { flex: 0 0 auto; width: auto; margin-top: 0; padding: 7px 14px; }
 #cli-win .cw-check { display: block; color: var(--fg); font-size: 12.5px; margin: 10px 0 2px; cursor: pointer; }
 #cli-win .cw-input.mono { font-family: 'Cascadia Code','Consolas',monospace; }
 #cli-win textarea.cw-input { min-height: 62px; resize: vertical; }

@@ -3,7 +3,10 @@
 
 /* ===================== Chat (live, local) ===================== */
 let curTurn = null, curBody = null, curText = '';
-let curThink = null, curThinkText = '', thinkStart = 0, turnStart = 0;
+let curThink = null, curThinkText = '', thinkStart = 0;
+// When the step now running began: the turn's start, then each tool result. A thinking
+// block is timed from this, as the CLI reports no duration for it.
+let stepStart = 0;
 
 // .wc-wordmark is WELCOME_HTML's other top-level element (a sibling of .welcome, not a
 // child — see that function's own comment), so it has to be swept here too or it's
@@ -1184,6 +1187,9 @@ function addToolLine(payload) {
 function applyToolResult(payload) {
   let info; try { info = JSON.parse(payload); } catch (e) { return; }
   if (!info || !info.id) return;
+  // The tool is back, so what Claude does next, thinking included, is timed from here
+  // and not from the start of the turn.
+  stepStart = Date.now();
   const pane = streamPane() || (activeTab() ? activeTab().pane : null);
   if (!pane) return;
   // Matched by walking the nodes rather than an attribute selector — tool ids come
@@ -1358,7 +1364,7 @@ function buildToolDiff(name, input, startMode) {
 function ensureThink() {
   if (!ensureTurn()) return null;
   if (!curThink) {
-    thinkStart = turnStart || Date.now();
+    thinkStart = stepStart || Date.now();
     const el = document.createElement('div'); el.className = 'a-item think muted live';
     el.innerHTML = '<span class="dot gray"></span>'
       + '<span class="think-head"><span class="think-label">Thinking…</span>'
@@ -1394,6 +1400,7 @@ function finalizeThink() {
     const lbl = curThink.querySelector('.think-label');
     if (lbl) lbl.textContent = 'Thought for ' + secs + 's';
     curThink.classList.remove('live');
+    stepStart = Date.now();   // the next step starts where this one ended
   }
   curThink = null; curThinkText = '';
 }

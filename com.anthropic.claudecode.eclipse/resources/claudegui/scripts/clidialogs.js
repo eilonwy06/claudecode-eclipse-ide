@@ -323,17 +323,137 @@ function openStatusDialog() {
 }
 
 /* ===================== Sandbox ===================== */
+/** Why the sandbox cannot be configured, in words. The CLI answers with a code
+    (`unsupported_reason`: wsl1, platform or excluded_platform); "platform" is its own
+    sentence for it, the other two are said here from what the codes mean. */
+function sandboxUnsupportedText(reason) {
+  switch (reason) {
+    case 'wsl1': return 'Sandboxing needs WSL2, and this is WSL1.';
+    case 'excluded_platform': return "Sandboxing is turned off for this platform by the organization's enabledPlatforms setting.";
+    default: return 'Sandboxing is not available on this platform.';
+  }
+}
+/** The sandbox's restrictions, as the CLI lists them: one labelled, comma-joined list for
+    each that has anything in it. Paths and domains are the user's own words, so they are
+    set as text. */
+const SANDBOX_RESTRICTIONS = [
+  ['fs_deny_read', 'Denied reads'],
+  ['fs_allow_read', 'Allowed within denied reads'],
+  ['fs_allow_write', 'Allowed writes'],
+  ['fs_deny_write', 'Denied within allowed writes'],
+  ['network_allowed_domains', 'Allowed domains'],
+  ['network_denied_domains', 'Denied domains'],
+  ['unix_sockets', 'Allowed Unix sockets'],
+];
+/** The three modes `edit-sandbox-settings` takes (`mode`), in the order the extension lists
+    them. `needs` names the status field that says whether the CLI offers it. */
+const SANDBOX_MODES = [
+  { id: 'auto-allow', name: 'Sandbox commands, with auto-allow', needs: 'auto_allow_available',
+    desc: 'Sandboxed commands run without a permission prompt; your ask and deny rules still apply' },
+  { id: 'regular', name: 'Sandbox commands, with regular permissions',
+    desc: 'Commands run inside the sandbox; the usual permission prompts apply' },
+  { id: 'disabled', name: 'No sandbox', needs: 'no_sandbox_allowed',
+    desc: 'Commands run outside the sandbox' },
+];
+/** Mode, the unsandboxed-fallback override and the excluded commands can be changed here;
+    the restrictions are only listed, as they come from the settings files. Each change is
+    shown at once and saved with the CLI's own `claude edit-sandbox-settings`, then asked
+    for again until the running process agrees (it takes a moment to see a settings file
+    that was just written); if the save fails the dialog goes back to what it showed. */
 function openSandboxDialog() {
-  openAskedDialog('Sandbox', 'get_sandbox_dialog', (body, d) => {
-    if (!d.supported) { body.appendChild(cwEl('div', 'cw-dim', d.unsupported_reason || '')); return; }
-    const kv = (k, v) => {
-      const row = cwEl('div', 'cw-kv');
-      row.appendChild(cwEl('span', 'k', k)); row.appendChild(cwEl('span', 'v', v));
+  const dlg = {
+    data: null, error: null, note: null,
+    draw() {
+      const body = cwFrame('Sandbox', null, false);
+      if (dlg.error) { body.appendChild(cwEl('div', 'cw-msg', dlg.error)); return; }
+      if (!dlg.data) { body.appendChild(cwEl('div', 'cw-dim', 'Loading…')); return; }
+      const d = dlg.data;
+      if (!d.supported) {
+        body.appendChild(cwEl('div', 'cw-dim', sandboxUnsupportedText(d.unsupported_reason)));
+      } else {
+        dlg.drawControls(body, d);
+      }
+      dlg.drawRestrictions(body, d);
+    },
+    drawControls(body, d) {
+      if (dlg.note) { body.appendChild(cwEl('div', 'cw-msg', dlg.note)); dlg.note = null; }
+      body.appendChild(cwEl('div', 'cw-sec', 'Mode'));
+      SANDBOX_MODES.filter(m => !m.needs || d[m.needs] !== false).forEach(m => {
+        const opt = cwEl('div', 'cw-opt has-check' + (d.mode === m.id ? ' selected' : '') + (d.locked ? ' locked' : ''));
+        const txt = cwEl('div', 'txt');
+        txt.appendChild(cwEl('div', 'name', m.name));
+        txt.appendChild(cwEl('div', 'desc', m.desc));
+        opt.appendChild(txt);
+        if (d.mode === m.id) { const ck = cwEl('span', 'ck'); ck.innerHTML = ICONS.CHECK; opt.appendChild(ck); }
+        if (!d.locked) opt.onclick = () => { if (d.mode !== m.id) dlg.save({ mode: m.id }, (res) => res.mode === m.id); };
+        body.appendChild(opt);
+      });
+      if (d.locked) body.appendChild(cwEl('div', 'cw-dim', 'The mode is set by a higher-priority configuration.'));
+
+      body.appendChild(cwEl('div', 'cw-sec', 'Overrides'));
+      // Shown, but not changeable, with the sandbox off (there is nothing to fall back from)
+      // or when a higher-priority configuration has set it.
+      const frozen = d.mode === 'disabled' || !!d.overrides_locked;
+      const tg = cwEl('div', 'cw-toggle row' + (frozen ? ' frozen' : ''));
+      tg.appendChild(cwEl('span', '', 'Allow unsandboxed fallback'));
+      const sw = cwEl('span', 'sw' + (d.unsandboxed_fallback ? ' on' : ''));
+      if (!frozen) tg.onclick = () => {
+        const want = !d.unsandboxed_fallback;
+        dlg.save({ allowUnsandboxedCommands: want }, (res) => !!res.unsandboxed_fallback === want);
+      };
+      tg.appendChild(sw);
+      body.appendChild(tg);
+      body.appendChild(cwEl('div', 'cw-dim',
+        'When a command fails because of a sandbox restriction, Claude may retry it outside the sandbox, with the usual '
+        + 'permission prompts.' + (d.overrides_locked ? ' This is set by a higher-priority configuration.'
+          : d.mode === 'disabled' ? ' Turn the sandbox on to change this.' : '')));
+
+      body.appendChild(cwEl('div', 'cw-sec', 'Excluded commands'));
+      body.appendChild(cwEl('div', 'cw-dim', 'Commands matching these patterns run outside the sandbox.'));
+      const ex = d.excluded_commands || [];
+      body.appendChild(ex.length ? cwEl('div', 'cw-mono', ex.join(', ')) : cwEl('div', 'cw-dim', 'None'));
+      const row = cwEl('div', 'cw-addrow');
+      const box = cwEl('input', 'cw-input mono');
+      box.type = 'text'; box.placeholder = 'Command pattern, for example npm run test:*';
+      const add = cwBtn('Exclude', '', () => {
+        const pattern = box.value.trim();
+        if (!pattern || ex.indexOf(pattern) >= 0) return;
+        dlg.save({ excludeCommand: pattern }, (res) => (res.excluded_commands || []).indexOf(pattern) >= 0);
+      });
+      box.oninput = () => { add.disabled = !box.value.trim(); };
+      box.onkeydown = (e) => { if (e.key === 'Enter' && !add.disabled) { e.preventDefault(); add.click(); } };
+      add.disabled = true;
+      row.appendChild(box); row.appendChild(add);
       body.appendChild(row);
-    };
-    kv('Sandbox', d.enabled ? 'Enabled' : 'Disabled');
-    if (d.mode) kv('Mode', String(d.mode));
-  });
+    },
+    drawRestrictions(body, d) {
+      const r = d.restrictions || {};
+      // The domains are not the user's to set here: a higher-priority configuration has them.
+      if (r.network_managed) body.appendChild(cwEl('div', 'cw-dim', 'The allowed domains are set by a higher-priority configuration.'));
+      const shown = SANDBOX_RESTRICTIONS.filter(([key]) => Array.isArray(r[key]) && r[key].length);
+      if (!shown.length) return;
+      body.appendChild(cwEl('div', 'cw-sec', 'Restrictions'));
+      shown.forEach(([key, label]) => {
+        body.appendChild(cwEl('div', 'cw-dim', label));
+        body.appendChild(cwEl('div', 'cw-mono', r[key].join(', ')));
+      });
+    },
+    save(edit, settled) {
+      const before = JSON.parse(JSON.stringify(dlg.data));
+      const d = dlg.data;
+      if (edit.mode) d.mode = edit.mode;
+      if (edit.allowUnsandboxedCommands !== undefined) d.unsandboxed_fallback = edit.allowUnsandboxedCommands;
+      if (edit.excludeCommand) d.excluded_commands = (d.excluded_commands || []).concat(edit.excludeCommand);
+      dlg.draw();   // shown at once, confirmed below
+      cliEdit(dlg.tab, 'edit-sandbox-settings', edit)
+        .then(() => cliAskUntil(dlg.tab, 'get_sandbox_dialog', settled, 6))
+        .then((res) => { dlg.data = res; }, (err) => { dlg.data = before; dlg.note = (err && err.message) || 'Unknown error'; })
+        .then(() => { if (cliDlg === dlg) dlg.draw(); });
+    },
+  };
+  openCliDialog(dlg);
+  cliAsk(dlg.tab, 'get_sandbox_dialog').then((res) => { if (cliDlg === dlg) { dlg.data = res; dlg.draw(); } },
+                                             (err) => { if (cliDlg === dlg) { dlg.error = (err && err.message) || 'Unknown error'; dlg.draw(); } });
 }
 
 /* ===================== Memory, and Instructions =====================

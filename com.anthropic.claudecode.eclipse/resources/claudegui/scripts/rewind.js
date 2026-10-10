@@ -92,6 +92,15 @@ function rwContinue() {
   closeRewindDialog();
   forkFrom(tab, mid, window._rewindApply, 'Rewind failed: ');
 }
+/* A fork is named after the conversation it came from, with "(fork)" after it. Forking a
+   fork keeps the one suffix rather than stacking them. A tab that has no name of its own
+   yet has nothing to add it to, and is left as it was. */
+function forkTitle(title, titled) {
+  if (!titled) return title;
+  const base = String(title || '').replace(/\s*\(fork\)\s*$/i, '').trim();
+  return base ? base + ' (fork)' : title;
+}
+
 /* Shared fork tail: run the native fork, then open the forked conversation in a
    NEW tab with the selected message back in the composer (the source tab is
    untouched). "Fork conversation and rewind code" and "Fork conversation from
@@ -102,7 +111,8 @@ function forkFrom(tab, mid, fn, errPrefix) {
   let res = {};
   try { res = JSON.parse(fn(tab.sessionId || '', mid) || '{}') || {}; } catch (e) {}
   if (res.error) { addSystem('⚠ ' + errPrefix + res.error); return; }
-  const title = tab.title, titled = tab.titled;
+  const titled = tab.titled;
+  const title = forkTitle(tab.title, titled);
   createTab({ title, titled });
   if (res.sessionId) {
     loadHistory(res.sessionId, title);   // fills the new (now active) tab

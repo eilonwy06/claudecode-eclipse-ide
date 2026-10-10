@@ -73,12 +73,12 @@ let rtab = null;   // the tab whose render state is currently loaded into the gl
 /** @param {Tab} tab */
 function loadRender(tab) {
   if (!tab || rtab === tab) return;
-  if (rtab) rtab._r = { curTurn, curBody, curText, curThink, curThinkText, thinkStart, turnStart, workingEl };
+  if (rtab) rtab._r = { curTurn, curBody, curText, curThink, curThinkText, thinkStart, stepStart, workingEl };
   rtab = tab;
   const r = tab._r || {};
   curTurn = r.curTurn || null; curBody = r.curBody || null; curText = r.curText || '';
   curThink = r.curThink || null; curThinkText = r.curThinkText || '';
-  thinkStart = r.thinkStart || 0; turnStart = r.turnStart || 0; workingEl = r.workingEl || null;
+  thinkStart = r.thinkStart || 0; stepStart = r.stepStart || 0; workingEl = r.workingEl || null;
 }
 function streamPane() { return rtab ? rtab.pane : (activeTab() ? activeTab().pane : null); }
 function activeStreaming() { return !!(activeTab() && activeTab().streaming); }

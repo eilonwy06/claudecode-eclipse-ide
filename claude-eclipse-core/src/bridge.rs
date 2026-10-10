@@ -436,10 +436,18 @@ pub(crate) fn rc_state_json(state: &str) -> String {
 /// is what a `failed` is matched against, so the failure of a bridge the tab no
 /// longer shows is not read as the failure of the one it does — the VS Code
 /// extension's rule.
-pub(crate) fn rc_bridge_state_json(state: &str, bridge_epoch: Option<i64>) -> String {
+///
+/// `detail` is the CLI's own words for why a bridge failed ("Remote Control requires a
+/// claude.ai subscription…"). It arrives on the `failed` event itself, ahead of the
+/// control reply, so it is passed along rather than leaving the page to announce a
+/// failure it cannot explain. Left out when the CLI sent none or an empty one.
+pub(crate) fn rc_bridge_state_json(state: &str, bridge_epoch: Option<i64>, detail: Option<&str>) -> String {
     let mut v = serde_json::json!({ "bridgeState": state });
     if let Some(epoch) = bridge_epoch {
         v["bridgeEpoch"] = serde_json::json!(epoch);
+    }
+    if let Some(detail) = detail.map(str::trim).filter(|d| !d.is_empty()) {
+        v["detail"] = serde_json::json!(detail);
     }
     v.to_string()
 }
@@ -717,11 +725,25 @@ mod rc_tests {
         let j: serde_json::Value = serde_json::from_str(&rc_reply_json(&rc_parse_reply(&inner))).unwrap();
         assert_eq!(j["bridgeEpoch"], 3);
 
-        let s: serde_json::Value = serde_json::from_str(&rc_bridge_state_json("failed", Some(3))).unwrap();
+        let s: serde_json::Value = serde_json::from_str(&rc_bridge_state_json("failed", Some(3), None)).unwrap();
         assert_eq!(s["bridgeState"], "failed");
         assert_eq!(s["bridgeEpoch"], 3);
-        let bare: serde_json::Value = serde_json::from_str(&rc_bridge_state_json("failed", None)).unwrap();
+        let bare: serde_json::Value = serde_json::from_str(&rc_bridge_state_json("failed", None, None)).unwrap();
         assert!(bare.get("bridgeEpoch").is_none());
+        assert!(bare.get("detail").is_none());
+    }
+
+    #[test]
+    fn a_failed_bridge_carries_the_reason_the_cli_gave() {
+        let why = "Remote Control requires a claude.ai subscription. Run `claude auth login`.";
+        let s: serde_json::Value =
+            serde_json::from_str(&rc_bridge_state_json("failed", None, Some(&format!("  {why}\n")))).unwrap();
+        assert_eq!(s["detail"], why);
+        // Nothing to say is nothing sent: an empty or blank detail is not a reason.
+        for blank in ["", "   "] {
+            let s: serde_json::Value = serde_json::from_str(&rc_bridge_state_json("failed", None, Some(blank))).unwrap();
+            assert!(s.get("detail").is_none());
+        }
     }
 
     #[test]

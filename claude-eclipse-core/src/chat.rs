@@ -1538,10 +1538,8 @@ fn run_turn(
     // top-level one; a single shared counter would corrupt delta math for whichever
     // lineage didn't own it at the moment (see process_event_value).
     let mut cursors: std::collections::HashMap<String, (usize, usize, u64)> = std::collections::HashMap::new();
-    // Live output-token counter state (from --include-partial-messages):
-    // base from message_start, +1/4 char estimate per text_delta, exact at message_delta.
-    let mut tok_base: u64 = 0;
-    let mut tok_chars: u64 = 0;
+    // Live output-token counter state (from --include-partial-messages).
+    let mut tokens = TokenCounter::default();
 
     for line in reader.lines() {
         if cancel.load(Ordering::Relaxed) {
@@ -1551,7 +1549,7 @@ fn run_turn(
             Ok(l) if !l.is_empty() => l,
             _ => continue,
         };
-        process_event(&line, java_vm, callbacks, &mut cursors, &mut tok_base, &mut tok_chars);
+        process_event(&line, java_vm, callbacks, &mut cursors, &mut tokens);
     }
 
     let exit_ok = if cancel.load(Ordering::Relaxed) {
@@ -1802,8 +1800,7 @@ fn reader_loop(
     let reader = BufReader::new(stdout);
     // See run_turn's own declaration of this for why it's keyed per lineage, not a bare pair.
     let mut cursors: std::collections::HashMap<String, (usize, usize, u64)> = std::collections::HashMap::new();
-    let mut tok_base: u64 = 0;
-    let mut tok_chars: u64 = 0;
+    let mut tokens = TokenCounter::default();
     // Raw model id from the init event (e.g. "claude-opus-4-8") — reported to the
     // GUI status bar, which maps it to a display name.
     let mut current_model = String::new();
@@ -1961,8 +1958,7 @@ fn reader_loop(
                 }
                 fire_void(&java_vm, &callbacks, "onStreamEnd");
                 cursors.clear();
-                tok_base = 0;
-                tok_chars = 0;
+                tokens = TokenCounter::default();
                 continue;
             }
             "system" => {
@@ -1994,7 +1990,11 @@ fn reader_loop(
                         if state == "failed" {
                             *proc.rc_session.lock().unwrap() = None;
                         }
-                        let json = crate::bridge::rc_bridge_state_json(state, event["bridge_epoch"].as_i64());
+                        let json = crate::bridge::rc_bridge_state_json(
+                            state,
+                            event["bridge_epoch"].as_i64(),
+                            event["detail"].as_str(),
+                        );
                         fire_string(&java_vm, &callbacks, "onRemoteControl", &json);
                         continue;
                     }
@@ -2133,7 +2133,7 @@ fn reader_loop(
             }
         }
 
-        process_event_value(&event, &java_vm, &callbacks, &mut cursors, &mut tok_base, &mut tok_chars);
+        process_event_value(&event, &java_vm, &callbacks, &mut cursors, &mut tokens);
         queue_fdescfs_diagnosis(&event, &proc, &java_vm, &callbacks);
     }
 
@@ -2195,6 +2195,62 @@ fn reader_loop(
             fire_string(&java_vm, &callbacks, "onError", msg);
         }
         fire_void(&java_vm, &callbacks, "onStreamEnd");
+    }
+}
+
+/// The live output-token count shown beside "Thinking…", kept for one turn.
+///
+/// A turn is several API messages when Claude uses tools, and each message counts its own
+/// output tokens from zero. So the count is a running total: what the finished messages
+/// came to, plus the message under way. That message's tokens are exact at its start and
+/// its end (`message_start`, `message_delta`) and an estimate between, a quarter of a
+/// token for each character that streams. Text, thinking and tool arguments all stream, and
+/// all of them are counted; the estimate used to move for text alone, so it stood still
+/// through thinking and while a tool call was being written.
+#[derive(Default)]
+struct TokenCounter {
+    /// Output tokens of the messages of this turn that have ended.
+    done: u64,
+    /// The message under way: what the CLI last said it came to, which is exact.
+    base: u64,
+    /// Characters streamed in it since then.
+    chars: u64,
+}
+
+impl TokenCounter {
+    /// Takes one `stream_event` of the top-level conversation and returns the count to
+    /// show, or None when the event does not move it.
+    fn on_event(&mut self, ev: &serde_json::Value) -> Option<u64> {
+        match ev["type"].as_str()? {
+            "message_start" => {
+                // The message before this one is over, with what it ended on.
+                self.done += self.current();
+                self.base = ev["message"]["usage"]["output_tokens"].as_u64().unwrap_or(0);
+                self.chars = 0;
+            }
+            "content_block_delta" => {
+                let d = &ev["delta"];
+                // The signature that closes a thinking block is not output text.
+                let text = match d["type"].as_str()? {
+                    "text_delta" => d["text"].as_str()?,
+                    "thinking_delta" => d["thinking"].as_str()?,
+                    "input_json_delta" => d["partial_json"].as_str()?,
+                    _ => return None,
+                };
+                self.chars += text.chars().count() as u64;
+            }
+            "message_delta" => {
+                self.base = ev["usage"]["output_tokens"].as_u64()?;
+                self.chars = 0;
+            }
+            _ => return None,
+        }
+        Some(self.done + self.current())
+    }
+
+    /// The message under way, as far as it is known.
+    fn current(&self) -> u64 {
+        self.base + self.chars / 4
     }
 }
 
@@ -2597,14 +2653,13 @@ fn process_event(
     java_vm: &Arc<jni::JavaVM>,
     callbacks: &Arc<jni::objects::GlobalRef>,
     cursors: &mut std::collections::HashMap<String, (usize, usize, u64)>,
-    tok_base: &mut u64,
-    tok_chars: &mut u64,
+    tokens: &mut TokenCounter,
 ) {
     let event: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
         Err(_) => return,
     };
-    process_event_value(&event, java_vm, callbacks, cursors, tok_base, tok_chars);
+    process_event_value(&event, java_vm, callbacks, cursors, tokens);
 }
 
 /// Pre-parsed variant shared by the legacy per-turn reader and the persistent
@@ -2614,8 +2669,7 @@ fn process_event_value(
     java_vm: &Arc<jni::JavaVM>,
     callbacks: &Arc<jni::objects::GlobalRef>,
     cursors: &mut std::collections::HashMap<String, (usize, usize, u64)>,
-    tok_base: &mut u64,
-    tok_chars: &mut u64,
+    tokens: &mut TokenCounter,
 ) {
     // A message belonging to a subagent's own nested conversation (Task/Agent tool),
     // multiplexed onto this SAME stream alongside the top-level conversation's own
@@ -2879,34 +2933,14 @@ fn process_event_value(
             }
         }
         // Fine-grained streaming events (only with --include-partial-messages) —
-        // used solely to drive the live output-token counter. Text/thinking/tools
+        // used solely to drive the live output-token counter ([`TokenCounter`]). Text/thinking/tools
         // still render from the complete "assistant" events above.
         // A concurrent background subagent's own token usage must not skew the
         // top-level turn's live counter — this bar reports the turn the user is
         // actually watching, not the sum of everything running underneath it.
         "stream_event" if !is_subagent => {
-            let ev = &event["event"];
-            match ev["type"].as_str().unwrap_or("") {
-                "message_start" => {
-                    *tok_chars = 0;
-                    *tok_base = ev["message"]["usage"]["output_tokens"].as_u64().unwrap_or(0);
-                    fire_string(java_vm, callbacks, "onTokens", &tok_base.to_string());
-                }
-                "content_block_delta" => {
-                    if ev["delta"]["type"].as_str() == Some("text_delta") {
-                        if let Some(txt) = ev["delta"]["text"].as_str() {
-                            *tok_chars += txt.chars().count() as u64;
-                            let est = *tok_base + *tok_chars / 4;
-                            fire_string(java_vm, callbacks, "onTokens", &est.to_string());
-                        }
-                    }
-                }
-                "message_delta" => {
-                    if let Some(n) = ev["usage"]["output_tokens"].as_u64() {
-                        fire_string(java_vm, callbacks, "onTokens", &n.to_string());
-                    }
-                }
-                _ => {}
+            if let Some(n) = tokens.on_event(&event["event"]) {
+                fire_string(java_vm, callbacks, "onTokens", &n.to_string());
             }
         }
         _ => {}
@@ -3490,5 +3524,91 @@ Last 7d · 1048 requests · 17 sessions
             "message": { "content": [{ "type": "text", "text": "Sure, here's the fix." }] }
         });
         assert_eq!(v["isApiErrorMessage"].as_bool().unwrap_or(false), false);
+    }
+}
+
+#[cfg(test)]
+mod token_counter_tests {
+    use super::TokenCounter;
+    use serde_json::json;
+
+    fn start(base: u64) -> serde_json::Value { json!({"type":"message_start","message":{"usage":{"output_tokens":base}}}) }
+    fn end(n: u64) -> serde_json::Value { json!({"type":"message_delta","usage":{"output_tokens":n}}) }
+    fn text(s: &str) -> serde_json::Value { json!({"type":"content_block_delta","delta":{"type":"text_delta","text":s}}) }
+    fn thinking(s: &str) -> serde_json::Value { json!({"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":s}}) }
+    fn args(s: &str) -> serde_json::Value { json!({"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":s}}) }
+    fn signature() -> serde_json::Value { json!({"type":"content_block_delta","delta":{"type":"signature_delta","signature":"EqQBCkYI"}}) }
+
+    #[test]
+    fn it_moves_while_claude_thinks_and_while_a_tool_call_is_written() {
+        let mut c = TokenCounter::default();
+        assert_eq!(c.on_event(&start(4)), Some(4));
+        // 40 characters of thinking is about 10 tokens more.
+        assert_eq!(c.on_event(&thinking(&"a".repeat(40))), Some(14));
+        assert_eq!(c.on_event(&args(&"b".repeat(20))), Some(19));
+    }
+
+    #[test]
+    fn a_signature_is_not_output_text() {
+        let mut c = TokenCounter::default();
+        c.on_event(&start(4));
+        assert_eq!(c.on_event(&signature()), None, "it does not move the count");
+    }
+
+    #[test]
+    fn the_count_is_a_total_for_the_turn_and_does_not_start_over_with_each_message() {
+        // The real shape of a turn with one tool call: two messages, 112 then 10 tokens.
+        let mut c = TokenCounter::default();
+        c.on_event(&start(4));
+        assert_eq!(c.on_event(&end(112)), Some(112));
+        // The second message starts at 1: the turn is at 113, not back to 1.
+        assert_eq!(c.on_event(&start(1)), Some(113));
+        assert_eq!(c.on_event(&text(&"c".repeat(16))), Some(117));
+        assert_eq!(c.on_event(&end(10)), Some(122), "the CLI's own total for that turn was 122");
+    }
+
+    #[test]
+    fn the_estimate_is_replaced_by_the_exact_count_at_the_end_of_a_message() {
+        let mut c = TokenCounter::default();
+        c.on_event(&start(1));
+        c.on_event(&text(&"d".repeat(400)));      // an estimate of 100 more
+        assert_eq!(c.on_event(&end(37)), Some(37), "the exact figure wins, even when it is lower");
+    }
+
+    #[test]
+    fn it_ignores_what_is_not_a_token_event_and_a_bare_delta_without_usage() {
+        let mut c = TokenCounter::default();
+        assert_eq!(c.on_event(&json!({"type":"content_block_start","content_block":{"type":"text"}})), None);
+        assert_eq!(c.on_event(&json!({"type":"message_stop"})), None);
+        assert_eq!(c.on_event(&json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})), None);
+        assert_eq!(c.on_event(&json!({})), None);
+    }
+
+    #[test]
+    fn a_new_counter_for_the_next_turn_starts_from_nothing() {
+        let mut c = TokenCounter::default();
+        c.on_event(&start(4));
+        c.on_event(&end(100));
+        let mut next = TokenCounter::default();   // what reader_loop does when a turn's result arrives
+        assert_eq!(next.on_event(&start(3)), Some(3));
+    }
+
+    #[test]
+    fn the_real_turn_from_a_live_cli_ends_on_the_cli_total() {
+        // Every event of a real turn (thinking, one Bash call, a one-line answer), reduced to
+        // what the counter reads. The CLI reported 122 output tokens for it.
+        let events: Vec<serde_json::Value> = serde_json::from_str(include_str!("test_data/token_turn.json")).unwrap();
+        let mut c = TokenCounter::default();
+        let mut last = 0;
+        let mut seen = Vec::new();
+        for e in &events {
+            if let Some(n) = c.on_event(e) {
+                assert!(n >= last || e["type"] == "message_delta", "it only falls when an exact figure replaces an estimate");
+                last = n;
+                seen.push(n);
+            }
+        }
+        assert_eq!(last, 122);
+        assert!(seen.windows(2).filter(|w| w[0] != w[1]).count() > 4, "it moves through the turn, not only at its ends: {seen:?}");
     }
 }

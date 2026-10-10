@@ -271,7 +271,11 @@ window.onRemoteControl = function (tabId, json) {
   if (t.rcConnecting) {
     t.rcBridgeConnected = false;
     endConnecting(t);
-    addSystemTo(t, 'Remote Control could not start.');
+    // The CLI says why on this very event (no claude.ai login, a custom endpoint, an
+    // org policy); its control reply, which also says, comes after the tab has stopped
+    // waiting for it. An older core sends no detail, and the bare line stands.
+    const reason = rcErrorText(d.detail);
+    addSystemTo(t, reason ? 'Remote Control could not start — ' + reason : 'Remote Control could not start.');
     return;
   }
   if (t.remoteControlUrl) {
