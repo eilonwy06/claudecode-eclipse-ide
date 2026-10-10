@@ -297,6 +297,88 @@ function addAnswered(text, pane) {
   const b = document.createElement('div'); b.className = 'ans-body'; b.textContent = text;
   card.appendChild(h); card.appendChild(b); turn.appendChild(card); pane.appendChild(turn);
 }
+/* Which of a question's options an answer names, and what is left over (an "Other" answer).
+   A single-select answer is one label. A multi-select one is the ticked labels joined by ", ",
+   then perhaps the typed text, so labels are taken off the front one at a time, the longest that
+   fits first — a label may itself hold a comma — and whatever no label matches is the Other text. */
+function pickedFromAnswer(q, answer) {
+  const labels = (q.options || []).map(o => (o && o.label) || '');
+  const text = String(answer == null ? '' : answer);
+  if (!q.multiSelect) {
+    const at = labels.indexOf(text);
+    return at >= 0 ? { picked: [at], other: '' } : { picked: [], other: text };
+  }
+  const picked = [];
+  let rest = text;
+  while (rest) {
+    let best = -1;
+    labels.forEach((l, i) => {
+      if (picked.indexOf(i) >= 0 || !l || !rest.startsWith(l)) return;
+      if (rest.length !== l.length && !rest.startsWith(', ', l.length)) return;
+      if (best < 0 || l.length > labels[best].length) best = i;
+    });
+    if (best < 0) break;
+    picked.push(best);
+    rest = rest.slice(labels[best].length + (rest.length > labels[best].length ? 2 : 0));
+  }
+  return { picked, other: rest };
+}
+/* The overview left in the conversation once questions are answered: every question with all
+   its options, the chosen ones marked, under a "Questions — Answered · N questions" header that
+   folds the list away. `answers` is the answer text by question text, as the CLI records it.
+   `outcome` is 'declined' (dismissed) or 'timeout' for questions nobody answered: the same card,
+   under a red dot and "Declined" / "Timed out", with every option left unselected.
+   Drawn live from the card's own state and again when a conversation is reopened. */
+function addQuestionsAnswered(questions, answers, pane, outcome) {
+  pane = pane || streamPane() || (activeTab() ? activeTab().pane : null);
+  if (!pane) return;
+  const unanswered = outcome === 'declined' || outcome === 'timeout';
+  const turn = document.createElement('div'); turn.className = 'turn';
+  const box = document.createElement('div'); box.className = 'a-item q-overview' + (unanswered ? ' unanswered' : '');
+  box.appendChild(Object.assign(document.createElement('span'), { className: unanswered ? 'dot red' : 'dot done' }));
+  const head = document.createElement('div'); head.className = 'qo-head';
+  head.appendChild(Object.assign(document.createElement('div'), { className: 'qo-title', textContent: 'Questions' }));
+  const sub = document.createElement('div'); sub.className = 'qo-sub';
+  sub.appendChild(document.createTextNode((outcome === 'declined' ? 'Declined' : outcome === 'timeout' ? 'Timed out' : 'Answered') + ' \u00b7 ' + questions.length + (questions.length === 1 ? ' question' : ' questions')));
+  const chev = document.createElement('span'); chev.className = 'chev'; chev.innerHTML = ICONS.CHEVRON;
+  sub.appendChild(chev); head.appendChild(sub);
+  head.onclick = () => box.classList.toggle('collapsed');
+  box.appendChild(head);
+  const body = document.createElement('div'); body.className = 'qo-body';
+  questions.forEach(q => {
+    body.appendChild(Object.assign(document.createElement('div'), { className: 'qo-q', textContent: q.question || '' }));
+    const got = pickedFromAnswer(q, answers && answers[q.question]);
+    const row = (label, desc, on) => {
+      const r = document.createElement('div'); r.className = 'qo-opt' + (on ? ' sel' : '');
+      r.appendChild(Object.assign(document.createElement('div'), { className: q.multiSelect ? 'qo-check' : 'qo-radio' }));
+      const t = document.createElement('div'); t.className = 'qo-text';
+      t.appendChild(Object.assign(document.createElement('div'), { className: 'qo-label', textContent: label }));
+      if (desc) t.appendChild(Object.assign(document.createElement('div'), { className: 'qo-desc', textContent: desc }));
+      r.appendChild(t); body.appendChild(r);
+    };
+    (q.options || []).forEach((o, oi) => row((o && o.label) || '', o && o.description, got.picked.indexOf(oi) >= 0));
+    // An "Other" answer is not one of the options, so it is the extra row, with what was typed.
+    if (got.other) row('Other', got.other, true);
+  });
+  box.appendChild(body);
+  turn.appendChild(box); pane.appendChild(turn);
+}
+/* The "Asking" line of the call that asked a set of questions, which the overview of their answers
+   makes redundant: both say the call happened and that it finished, and the overview says more.
+   Taken out only when there IS an overview — a dismissed or timed-out question has none, and
+   that line, with its red dot, is all it leaves. A turn left with nothing in it goes with it. */
+function dropAskingLine(line) {
+  if (!line || !line.parentNode) return;
+  const turn = line.parentNode;
+  line.remove();
+  if (!turn.classList || !turn.classList.contains('turn')) return;
+  if (!turn.querySelector('.a-item') && turn.parentNode) turn.remove(); else relinkTurn(turn);
+}
+function lastAskingLine(turn) {
+  if (!turn) return null;
+  const lines = [].slice.call(turn.querySelectorAll(':scope > .tool-line')).filter(l => l.dataset.tname === 'askuserquestion');
+  return lines.length ? lines[lines.length - 1] : null;
+}
 /* After the user answers a card, end the current assistant turn so Claude's
    follow-up response streams into a NEW turn BELOW the answer card — not into the
    turn that was open above it (which would push the answer card to the bottom). */

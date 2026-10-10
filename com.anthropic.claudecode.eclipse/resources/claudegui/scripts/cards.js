@@ -288,7 +288,7 @@ window.onApprovalRequest = function(tabId, reqId, toolName, detail, rememberLabe
  * AskUserQuestion card. questionsJson is a serialized {@link AskQuestion} array;
  * answers go back via _answerQuestion(reqId, json) ("[]" = dismissed).
  * @typedef {{question: string, header?: string, multiSelect?: boolean,
- *            options: {label: string, description?: string}[]}} AskQuestion
+ *            options: {label: string, description?: string, preview?: string}[]}} AskQuestion
  * @type {(tabId: string, reqId: string, questionsJson: string) => void}
  */
 window.onAskQuestion = function(tabId, reqId, questionsJson) {
@@ -314,12 +314,22 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     if (dot) dot.className = rejected ? 'dot red' : 'dot done';
   };
 
-  const state = questions.map(() => ({ choice: null, other: '' })); // choice = option index or 'other'
+  // choice = option index or 'other' (a single-select question). A multi-select one keeps
+  // `picks`, the option indexes ticked, and `otherOn`, whether its Other box is ticked.
+  const state = questions.map(() => ({ choice: null, other: '', picks: [], otherOn: false }));
   let activeQ = 0, resolved = false, collapsed = false;
   const card = document.createElement('div'); card.className = 'question-card';
 
   function answeredText(i) {
     const st = state[i], q = questions[i];
+    // A multi-select answer is the ticked labels in the order the options are listed, then
+    // the Other text, joined by ", " — the form the CLI and the VS Code card use (they
+    // refuse a label that contains ", " for exactly this reason).
+    if (q.multiSelect) {
+      const labels = (q.options || []).filter((_, oi) => st.picks.indexOf(oi) >= 0).map(o => o.label || '');
+      if (st.otherOn && st.other.trim()) labels.push(st.other.trim());
+      return labels.join(', ');
+    }
     // No "[User typed]: " prefix — this is a legitimate answer on the allow path
     // (updatedInput.answers). The prefix leaked into the visible bubble and made
     // the model read the answer as anomalous tool output (issue #98).
@@ -327,9 +337,12 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     if (st.choice != null && q.options[st.choice]) return q.options[st.choice].label;
     return '';
   }
-  function allAnswered() {
-    return state.every(st => st.choice === 'other' ? !!st.other.trim() : st.choice != null);
+  function isAnswered(i) {
+    const st = state[i];
+    if (questions[i].multiSelect) return (st.picks.length > 0 || st.otherOn) && (!st.otherOn || !!st.other.trim());
+    return st.choice === 'other' ? !!st.other.trim() : st.choice != null;
   }
+  function allAnswered() { return state.every((_, i) => isAnswered(i)); }
   function finish() {
     if (resolved || !allAnswered()) return; resolved = true;
     unregisterCardTimeout(reqId);
@@ -342,9 +355,11 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     }));
     if (window._answerQuestion) window._answerQuestion(reqId, JSON.stringify(answers));
     clearBottomCard(owner);
-    const summary = answers.map(a => questions.length > 1 ? (a.header + ': ' + a.answer) : a.answer).join('\n');
+    const byQuestion = {};
+    answers.forEach(a => { byQuestion[a.question] = a.answer; });
     // force only with Smart Scroll Lock on — see its comment in chat.js.
-    addAnswered(summary, pane); startFreshTurn(); scrollBottom(smartScrollLock);
+    dropAskingLine(pendingTool);
+    addQuestionsAnswered(questions, byQuestion, pane); startFreshTurn(); scrollBottom(smartScrollLock);
   }
   function cancel() {
     if (resolved) return; resolved = true;
@@ -353,8 +368,13 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     document.removeEventListener('keydown', onKey, true);
     resolveDot(true);
     if (window._answerQuestion) window._answerQuestion(reqId, '[]');
+    // The questions stay in the conversation as the overview, marked declined, and Claude's reply to
+    // the dismissal streams below it: the same pairing as an answer (finish).
+    clearBottomCard(owner);
+    dropAskingLine(pendingTool);
+    addQuestionsAnswered(questions, null, pane, 'declined'); startFreshTurn();
     // force only with Smart Scroll Lock on — see its comment in chat.js.
-    clearBottomCard(owner); scrollBottom(smartScrollLock);
+    scrollBottom(smartScrollLock);
   }
 
   function render() {
@@ -385,36 +405,73 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     card.appendChild(Object.assign(document.createElement('div'), { className: 'q-sep' }));
 
     const q = questions[activeQ];
+    const multi = !!q.multiSelect;
+    // Options can each carry a preview (a layout, a snippet), shown beside the list as the
+    // pointer passes over them. Only a single-select question has them, as in VS Code.
+    const hasPreview = !multi && (q.options || []).some(o => o && o.preview);
+    const main = hasPreview ? Object.assign(document.createElement('div'), { className: 'q-main' }) : card;
+    let pvTitle = null, pvBody = null, hovered = -1;
+    // The one the pointer is over; none, the one chosen; none of those, the first.
+    const paintPreview = () => {
+      if (!pvBody) return;
+      const sel = state[activeQ].choice;
+      const at = hovered >= 0 ? hovered : (typeof sel === 'number' ? sel : 0);
+      const opt = (q.options || [])[at] || {};
+      pvTitle.textContent = opt.label || '';
+      pvBody.textContent = opt.preview || '';
+      // A longer preview than the one before it was scrolled into must not hide a shorter one's top.
+      pvBody.parentNode.scrollTop = 0; pvBody.parentNode.scrollLeft = 0;
+    };
     const qt = document.createElement('div'); qt.className = 'q-text'; qt.textContent = q.question || '';
-    card.appendChild(qt);
+    main.appendChild(qt);
 
     const submit = document.createElement('div');
     (q.options || []).forEach((opt, oi) => {
-      const row = document.createElement('div'); row.className = 'q-opt' + (state[activeQ].choice === oi ? ' sel' : '');
-      const radio = document.createElement('div'); radio.className = 'q-radio';
+      const on = multi ? state[activeQ].picks.indexOf(oi) >= 0 : state[activeQ].choice === oi;
+      const row = document.createElement('div'); row.className = 'q-opt' + (on ? ' sel' : '');
+      const radio = document.createElement('div'); radio.className = multi ? 'q-check' : 'q-radio';
       const txt = document.createElement('div'); txt.className = 'q-otext';
       const title = document.createElement('div'); title.className = 'q-otitle'; title.textContent = opt.label || '';
       txt.appendChild(title);
       if (opt.description) { const d = document.createElement('div'); d.className = 'q-odesc'; d.textContent = opt.description; txt.appendChild(d); }
       row.appendChild(radio); row.appendChild(txt);
       row.onclick = () => {
+        if (multi) {
+          // Ticks stay: more can be picked, so this neither moves on nor submits.
+          const at = state[activeQ].picks.indexOf(oi);
+          if (at >= 0) state[activeQ].picks.splice(at, 1); else state[activeQ].picks.push(oi);
+          render();
+          return;
+        }
         state[activeQ].choice = oi;
         // auto-advance to the next question until the last one (then stay so they can submit)
         if (activeQ < questions.length - 1) activeQ++;
         render();
       };
-      card.appendChild(row);
+      if (hasPreview) {
+        row.onmouseenter = () => { hovered = oi; paintPreview(); };
+        row.onmouseleave = () => { hovered = -1; paintPreview(); };
+      }
+      main.appendChild(row);
     });
     // Other
-    const orow = document.createElement('div'); orow.className = 'q-opt' + (state[activeQ].choice === 'other' ? ' sel' : '');
-    orow.appendChild(Object.assign(document.createElement('div'), { className: 'q-radio' }));
+    const otherOn = multi ? state[activeQ].otherOn : state[activeQ].choice === 'other';
+    const orow = document.createElement('div'); orow.className = 'q-opt' + (otherOn ? ' sel' : '');
+    orow.appendChild(Object.assign(document.createElement('div'), { className: multi ? 'q-check' : 'q-radio' }));
     const otxt = document.createElement('div'); otxt.className = 'q-otext';
     otxt.appendChild(Object.assign(document.createElement('div'), { className: 'q-otitle', textContent: 'Other' }));
     orow.appendChild(otxt);
-    orow.onclick = () => { state[activeQ].choice = 'other'; render();
-      setTimeout(() => { const i = card.querySelector('.q-other-in textarea'); if (i) i.focus(); }, 0); };
-    card.appendChild(orow);
-    if (state[activeQ].choice === 'other') {
+    orow.onclick = () => {
+      // A multi-select Other is one more box to tick, and ticking it again clears it.
+      if (multi) state[activeQ].otherOn = !state[activeQ].otherOn; else state[activeQ].choice = 'other';
+      render();
+      setTimeout(() => { const i = card.querySelector('.q-other-in textarea'); if (i) i.focus(); }, 0);
+    };
+    if (hasPreview) {
+      orow.onmouseenter = () => { hovered = -1; paintPreview(); };
+    }
+    main.appendChild(orow);
+    if (otherOn) {
       const oin = document.createElement('div'); oin.className = 'q-other-in';
       // textarea, not input: a single-line <input> has no notion of a newline at
       // all, so Shift+Enter had nothing to fall through to. Mirrors the main
@@ -435,12 +492,28 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
       });
       inp.oninput = () => { state[activeQ].other = inp.value; submit.classList.toggle('ready', allAnswered()); grow(); };
       inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finish(); } };
-      oin.appendChild(inp); card.appendChild(oin);
+      oin.appendChild(inp); main.appendChild(oin);
       // render() re-seeds .value from saved state on every option click / question-tab
       // switch, but oninput (where grow() normally runs) doesn't fire for that — size
       // it once here too, or a revisited multi-line answer comes back collapsed to one
       // row. Needs to be in the DOM first for scrollHeight to mean anything.
       grow();
+    }
+    if (hasPreview) {
+      const pv = document.createElement('div'); pv.className = 'q-preview';
+      pvTitle = document.createElement('div'); pvTitle.className = 'q-pv-title';
+      pvBody = document.createElement('pre'); pvBody.className = 'q-pv-body';
+      pv.appendChild(pvTitle); pv.appendChild(pvBody);
+      // Tall enough for the longest preview (up to the CSS cap, past which it scrolls), whichever one is
+      // showing: a panel that followed the one under the pointer would move the card, and so the options
+      // being pointed at, which swaps the preview again. 17.4px a line is the CSS's 12px * 1.45, and 42px
+      // the title, the padding and the border.
+      const lines = Math.max.apply(null, (q.options || []).map(o => ((o && o.preview) || '').split('\n').length));
+      pv.style.minHeight = Math.min(280, Math.ceil(lines * 17.4) + 42) + 'px';
+      const cols = document.createElement('div'); cols.className = 'q-cols';
+      cols.appendChild(main); cols.appendChild(pv);
+      card.appendChild(cols);
+      paintPreview();
     }
     submit.className = 'q-submit' + (allAnswered() ? ' ready' : '');
     submit.innerHTML = '<span class="num">1</span><span>Submit answers</span>';
@@ -489,10 +562,11 @@ window.onAskQuestion = function(tabId, reqId, questionsJson) {
     }
     resolveDot(true);
     clearBottomCard(owner);
-    // Same pairing as finish(): addAnswered's new sibling turn div requires
-    // startFreshTurn right after it (see the matching comment on the approval
-    // card's timeout handler) so Claude's continuation lands below this note.
-    addAnswered('(No response — the question timed out and was dismissed.)', pane);
+    // Same pairing as finish(): the overview's new sibling turn div requires startFreshTurn right
+    // after it (see the matching comment on the approval card's timeout handler) so Claude's
+    // continuation lands below it.
+    dropAskingLine(pendingTool);
+    addQuestionsAnswered(questions, null, pane, 'timeout');
     startFreshTurn();
     scrollBottom();
   });

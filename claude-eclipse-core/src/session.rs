@@ -826,6 +826,9 @@ fn items_of(dir: &Path, session_id: &str, lines: impl Iterator<Item = impl AsRef
     let mut items: Vec<serde_json::Value> = Vec::new();
     // tool_use ids of askUserQuestion calls, so their answers can be surfaced.
     let mut ask_ids: HashSet<String> = HashSet::new();
+    // What each of those calls asked, by tool_use id: a declined call records no questions of its
+    // own on its result line, so the overview of it is drawn from these.
+    let mut ask_questions: HashMap<String, serde_json::Value> = HashMap::new();
     // Map each tool_use id → the index of its item in `items`, so a later
     // tool_result can stamp that tool's outcome (finished vs. interrupted).
     let mut tool_idx: HashMap<String, usize> = HashMap::new();
@@ -1006,7 +1009,26 @@ fn items_of(dir: &Path, session_id: &str, lines: impl Iterator<Item = impl AsRef
                         }
                         let rc = strip_answer_prefix(&flatten_result_content(b));
                         if !rc.is_empty() {
-                            items.push(serde_json::json!({ "t": "answered", "text": rc }));
+                            let mut item = serde_json::json!({ "t": "answered", "text": rc });
+                            // The result line also keeps what was asked and what was answered,
+                            // by question, which is what the page draws the overview from:
+                            // each question with all its options, the chosen ones marked. A
+                            // declined question's `toolUseResult` is a bare error string and has
+                            // neither, so for that one the questions are the ones it was asked
+                            // (`declined`), and with those missing too it stays the text alone.
+                            let tur = &event["toolUseResult"];
+                            if let (Some(qs), Some(ans)) = (tur["questions"].as_array(), tur["answers"].as_object()) {
+                                if !qs.is_empty() {
+                                    item["questions"] = serde_json::Value::Array(qs.clone());
+                                    item["answers"] = serde_json::Value::Object(ans.clone());
+                                }
+                            } else if b["is_error"].as_bool().unwrap_or(false) {
+                                if let Some(qs) = ask_questions.get(tuid) {
+                                    item["questions"] = qs.clone();
+                                    item["declined"] = serde_json::Value::Bool(true);
+                                }
+                            }
+                            items.push(item);
                         }
                     }
                 }
@@ -1090,6 +1112,9 @@ fn items_of(dir: &Path, session_id: &str, lines: impl Iterator<Item = impl AsRef
                                 tool_idx.insert(id.to_string(), items.len() - 1);
                                 if name.to_ascii_lowercase().contains("askuserquestion") {
                                     ask_ids.insert(id.to_string());
+                                    if input["questions"].as_array().map_or(false, |q| !q.is_empty()) {
+                                        ask_questions.insert(id.to_string(), input["questions"].clone());
+                                    }
                                 }
                             }
                         }
@@ -2408,6 +2433,66 @@ mod tests {
             .find(|s| s["sessionId"] == "sess2").expect("sess2 listed");
         assert_eq!(sess2["display"], "/clear", "command wrappers stripped from title");
         assert_eq!(sess2["timestamp"], "2026-07-03T08:00:02.000Z");
+    }
+
+    /// The answered item for one AskUserQuestion call, from a transcript holding that call and
+    /// its result line (`result` is that line's JSON).
+    fn answered_item(result: serde_json::Value) -> serde_json::Value {
+        answered_item_asking(serde_json::json!({}), result)
+    }
+    fn answered_item_asking(input: serde_json::Value, result: serde_json::Value) -> serde_json::Value {
+        let mut env = EnvGuard::lock();
+        let (home, dir) = msg_home("answered");
+        let ask = serde_json::json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"AskUserQuestion","input":input}]}});
+        fs::write(dir.join("sess1.jsonl"), format!("{ask}\n{result}\n")).unwrap();
+        env.set_home(&home);
+        let loaded = super::load_session_history(r"C:\msgtest", "sess1");
+        let _ = fs::remove_dir_all(&home);
+        let items: Vec<serde_json::Value> = serde_json::from_str(&loaded).unwrap();
+        items.into_iter().find(|i| i["t"] == "answered").expect("an answered item")
+    }
+
+    #[test]
+    fn an_answer_keeps_the_questions_and_answers_the_result_line_records() {
+        let it = answered_item(serde_json::json!({
+            "type":"user",
+            "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"The user answered: \"Pick\"=\"A, B\""}]},
+            "toolUseResult":{
+                "questions":[{"question":"Pick","header":"P","multiSelect":true,"options":[{"label":"A","description":"a"},{"label":"B","description":"b"}]}],
+                "answers":{"Pick":"A, B"}}
+        }));
+        assert_eq!(it["text"], "\"Pick\"=\"A, B\"");
+        assert_eq!(it["questions"][0]["question"], "Pick");
+        assert_eq!(it["questions"][0]["options"][1]["label"], "B");
+        assert_eq!(it["answers"]["Pick"], "A, B");
+    }
+
+    #[test]
+    fn a_declined_question_comes_with_the_questions_it_was_asked() {
+        // A declined call records no questions of its own, only an error; the overview of it is drawn
+        // from the call's input.
+        let it = answered_item_asking(
+            serde_json::json!({"questions":[{"question":"Pick","options":[{"label":"A"},{"label":"B"}]}]}),
+            serde_json::json!({
+                "type":"user",
+                "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,
+                    "content":"The user dismissed the questions without answering."}]},
+                "toolUseResult":"Error: The user dismissed the questions without answering."
+            }),
+        );
+        assert_eq!(it["declined"], true);
+        assert_eq!(it["questions"][0]["options"][1]["label"], "B");
+        assert!(it.get("answers").is_none(), "{it}");
+    }
+
+    #[test]
+    fn a_dismissed_question_is_text_only() {
+        let it = answered_item(serde_json::json!({
+            "type":"user",
+            "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"The user dismissed the questions without answering."}]},
+            "toolUseResult":"Error: The user dismissed the questions without answering."
+        }));
+        assert!(it.get("questions").is_none() && it.get("answers").is_none(), "{it}");
     }
 
     /// Background-task notifications are injected into the transcript as ordinary
