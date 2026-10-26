@@ -21,7 +21,7 @@ base64         = "0.23"
 # Opens the sealed browser instruction (src/chrome.rs). Already built on every
 # target for rustls, so it adds no compile step.
 ring           = "0.17"
-vt100          = "0.16"
+vt100          = "0.18"
 ureq           = { version = "3", features = ["json"] }
 qrcode = { version = "0.14.1", default-features = false }
 # The composer's @-mention file list: ripgrep's own gitignore-aware walker.
