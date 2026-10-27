@@ -1644,6 +1644,69 @@ function openFeedbackDialog(initialText) {
   openCliDialog(dlg);
 }
 
+/* ===================== Create Worktree =====================
+   A git worktree for the tab's folder, named here, made by git in the core (worktree.rs) at
+   .claude/worktrees/<name> on branch worktree-<name>, then opened as a folder of its own
+   with a new conversation in it. Enter creates, the dismiss key or × closes. The name is
+   checked as it is typed, by the same rule the core applies when it creates. */
+let worktreeSeq = 0;
+let worktreeDlg = null;
+window.openCreateWorktree = function() {
+  const dlg = {
+    name: '', creating: false, failed: '', token: '',
+    nameError() {
+      if (!dlg.name) return '';
+      try { return window._worktreeNameError ? (_worktreeNameError(dlg.name) || '') : ''; } catch (e) { return ''; }
+    },
+    draw() {
+      const body = cwFrame('Create Worktree', null, false);
+      body.appendChild(cwEl('div', 'cw-dim', 'New worktree name'));
+      const box = cwEl('input', 'cw-input'); box.type = 'text';
+      box.placeholder = 'e.g. my-feature'; box.value = dlg.name; box.disabled = dlg.creating;
+      body.appendChild(box);
+      const note = cwEl('div');
+      body.appendChild(note);
+      const paint = () => {
+        note.innerHTML = '';
+        const said = dlg.nameError() || dlg.failed;
+        if (dlg.creating) note.appendChild(cwEl('div', 'cw-dim', 'Creating worktree…'));
+        else if (said) note.appendChild(cwEl('div', 'cw-msg', said));
+      };
+      box.oninput = () => { dlg.name = box.value; dlg.failed = ''; paint(); };
+      box.onkeydown = (e) => {
+        if (e.key !== 'Enter' || e.isComposing) return;
+        e.preventDefault();
+        if (dlg.creating || !dlg.name || dlg.nameError()) return;
+        if (!window._createWorktree) { dlg.failed = 'Not supported by this build.'; paint(); return; }
+        dlg.creating = true;
+        dlg.token = 'wt' + (++worktreeSeq);
+        _createWorktree(dlg.token, rootPathOf(dlg.tab), dlg.name);
+        dlg.draw();
+      };
+      paint();
+      if (!dlg.creating) setTimeout(() => box.focus(), 0);
+    },
+    close() { if (worktreeDlg === dlg) worktreeDlg = null; },
+  };
+  worktreeDlg = dlg;
+  openCliDialog(dlg);
+};
+/** Java's answer to _createWorktree: the new folder, or why there is none. */
+window.onWorktreeCreated = function(token, json) {
+  const dlg = worktreeDlg;
+  if (!dlg || dlg.token !== token || !dlg.creating) return;   // closed meanwhile, or another request
+  let res = null;
+  try { res = JSON.parse(json); } catch (e) {}
+  dlg.creating = false;
+  if (res && res.ok && res.path) {
+    closeCliDialog();
+    addRoot(res.path, { select: true });
+    return;
+  }
+  dlg.failed = (res && res.error) || 'Failed to create worktree';
+  if (cliDlg === dlg) dlg.draw();
+};
+
 /* ===================== Claude Design =====================
    Authorizing design-system access is a sign-in of its own, the CLI's `design-login`
    (design_login.rs): whether it is there is asked once, and signing in is a start, a wait

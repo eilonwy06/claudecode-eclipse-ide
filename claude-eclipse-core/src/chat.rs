@@ -752,6 +752,12 @@ fn chrome_set_error(inner: &serde_json::Value) -> Option<String> {
 pub struct ChatManager {
     state: Arc<Mutex<ChatState>>,
     callbacks: Arc<Mutex<Option<CallbacksRef>>>,
+    /// Held from "is there a live process?" to "this is the tab's process now" by every
+    /// path that may start one — a send, [`ChatManager::ensure_process`],
+    /// [`ChatManager::continue_interrupted`]. Without it two of them could each find none
+    /// and each start one, and the second would replace the first without stopping it:
+    /// two processes on one conversation, one of them running unseen.
+    spawn_lock: Arc<Mutex<()>>,
 }
 
 impl ChatManager {
@@ -774,6 +780,7 @@ impl ChatManager {
                 hang_streak: 0,
             })),
             callbacks: Arc::new(Mutex::new(None)),
+            spawn_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -1005,6 +1012,88 @@ impl ChatManager {
         thinking: String,
         ultracode: bool,
     ) -> bool {
+        let _spawning = self.spawn_lock.lock().unwrap();
+        self.ensure_process_locked(claude_cmd, workspace_root, mcp_port, mcp_auth_token, resume_id,
+                                   perm_mode, effort, model, thinking, ultracode, false)
+    }
+
+    /// Continue After Reload: starts this tab's process on the conversation `resume_id`
+    /// asking the CLI to re-run its last turn if Eclipse's closing cut it off. The CLI
+    /// decides whether it was (resume_turn.rs); its turn, when it runs one, comes in like a
+    /// queued message's, opening the stream on its first frame. Nothing is sent.
+    ///
+    /// Only when the transcript is recent, no other live process holds the conversation,
+    /// and this tab has no live process yet — a live one means nothing was cut off here.
+    /// Returns what was decided, for the log: `continued`, `live`, `failed`, `no-session`,
+    /// or one of [`resume_turn::Decision`]'s.
+    ///
+    /// **Blocking** — may spawn a child process. Call it off the UI thread.
+    #[allow(clippy::too_many_arguments)]
+    pub fn continue_interrupted(
+        &self,
+        claude_cmd: String,
+        workspace_root: String,
+        mcp_port: u16,
+        mcp_auth_token: String,
+        resume_id: String,
+        perm_mode: String,
+        effort: String,
+        model: String,
+        thinking: String,
+        ultracode: bool,
+    ) -> &'static str {
+        if resume_id.is_empty() || !crate::bookmarks::plain_id(&resume_id) {
+            return "no-session";
+        }
+        let Some(transcript) = crate::session::projects_dir(&workspace_root)
+            .map(|d| d.join(format!("{resume_id}.jsonl")))
+        else {
+            return crate::resume_turn::Decision::NoTranscript.as_str();
+        };
+        let sessions = crate::session::config_dir().map(|d| d.join("sessions"));
+        let decision = crate::resume_turn::decide(&transcript, sessions.as_deref(), &resume_id,
+                                                  std::time::SystemTime::now(), &crate::resume_turn::pid_alive);
+        if decision != crate::resume_turn::Decision::Continue {
+            return decision.as_str();
+        }
+        // A conversation whose last turn finished, or was stopped, has nothing to continue:
+        // no process is started for it just because it was used within the hour.
+        if !crate::resume_turn::tail_unfinished(&transcript) {
+            return "not-cut-off";
+        }
+        // Checked under the spawn lock: a send that got in first has started the process,
+        // or is about to — it carries the conversation on, and a second start would replace it.
+        let _spawning = self.spawn_lock.lock().unwrap();
+        {
+            let s = self.state.lock().unwrap();
+            if s.awaiting || s.proc.as_ref().is_some_and(|p| !p.is_dead()) {
+                return "live";
+            }
+        }
+        if self.ensure_process_locked(claude_cmd, workspace_root, mcp_port, mcp_auth_token, resume_id,
+                                      perm_mode, effort, model, thinking, ultracode, true) {
+            "continued"
+        } else {
+            "failed"
+        }
+    }
+
+    /// [`ChatManager::ensure_process`]'s work, for a caller holding `spawn_lock`.
+    #[allow(clippy::too_many_arguments)]
+    fn ensure_process_locked(
+        &self,
+        claude_cmd: String,
+        workspace_root: String,
+        mcp_port: u16,
+        mcp_auth_token: String,
+        resume_id: String,
+        perm_mode: String,
+        effort: String,
+        model: String,
+        thinking: String,
+        ultracode: bool,
+        continue_interrupted: bool,
+    ) -> bool {
         let (java_vm, callbacks) = {
             let guard = self.callbacks.lock().unwrap();
             match guard.as_ref() {
@@ -1031,7 +1120,7 @@ impl ChatManager {
 
         match spawn_persistent(
             &claude_cmd, &workspace_root, mcp_port, &mcp_auth_token,
-            &resume_id, &perm_mode, &effort, &model, &thinking, ultracode, sig,
+            &resume_id, &perm_mode, &effort, &model, &thinking, ultracode, sig, continue_interrupted,
             Arc::clone(&self.state), Arc::clone(&java_vm), Arc::clone(&callbacks),
         ) {
             Ok(p) => {
@@ -1347,6 +1436,7 @@ impl ChatManager {
             s.awaiting = true;
         }
         let state = Arc::clone(&self.state);
+        let spawn_lock = Arc::clone(&self.spawn_lock);
 
         std::thread::Builder::new()
             .name("claude-chat-send".into())
@@ -1356,6 +1446,9 @@ impl ChatManager {
                 let sig = spawn_signature(&claude_cmd, &workspace_root, mcp_port, &mcp_auth_token, &perm_mode,
                                           allow_skip_flag(&claude_cmd));
                 let want = LiveSettings::new(&perm_mode, &effort, &model, &thinking, ultracode);
+
+                // From the look at the tab's process to installing a new one (ChatManager::spawn_lock).
+                let spawning = spawn_lock.lock().unwrap();
 
                 // Reuse only when the process is alive, has nothing in its spawn
                 // signature that differs (the rest is sent to it live), and carries
@@ -1387,7 +1480,7 @@ impl ChatManager {
                         match spawn_persistent(
                             &claude_cmd, &workspace_root, mcp_port, &mcp_auth_token,
                             &resume_id, &perm_mode, &effort, &model, &thinking,
-                            ultracode, sig,
+                            ultracode, sig, false,
                             Arc::clone(&state), Arc::clone(&java_vm), Arc::clone(&callbacks),
                         ) {
                             Ok(p) => {
@@ -1406,6 +1499,7 @@ impl ChatManager {
                         }
                     }
                 };
+                drop(spawning);
 
                 let msg_json = serde_json::json!({
                     "type": "user",
@@ -1437,9 +1531,15 @@ impl ChatManager {
 
 impl Drop for ChatManager {
     fn drop(&mut self) {
-        self.cancel();
-        // Persistent process must not outlive the view (chatDestroy → drop).
+        // Persistent process must not outlive the view (chatDestroy → drop). It is ended,
+        // NOT interrupted first: an interrupt is the Stop button, and the CLI writes it into
+        // the transcript as the user stopping the turn. Eclipse closing mid-turn would then
+        // read as a stop, and Continue After Reload would rightly never re-run that turn
+        // (seen 2026-10-27). A tab the user closes mid-turn has had its Stop sent by the
+        // page before this (tabs.js closeTab → _cancelRequest).
         if let Ok(mut s) = self.state.lock() {
+            // The per-message mode's loop ends its own child when it sees this.
+            s.cancel.store(true, Ordering::Relaxed);
             if let Some(p) = s.proc.take() {
                 p.alive.store(false, Ordering::Relaxed);
                 p.kill();
@@ -1678,6 +1778,10 @@ fn run_turn(
     // This path is `-p` too, so its sessions would be tagged `sdk-cli` and hidden
     // from `--resume`/`/resume` as well. Same reasoning as spawn_persistent.
     cmd.env("CLAUDE_CODE_ENTRYPOINT", "claude-eclipse-ide");
+    // Never a continue here: none inherited (see spawn_persistent).
+    for name in crate::resume_turn::inherited_resume_vars(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok())) {
+        cmd.env_remove(name);
+    }
 
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
         // Connect Claude to this instance's MCP server. The CLI auto-connects when
@@ -1794,6 +1898,7 @@ fn spawn_persistent(
     thinking: &str,
     ultracode: bool,
     spawn_sig: String,
+    continue_interrupted: bool,
     state: Arc<Mutex<ChatState>>,
     java_vm: Arc<jni::JavaVM>,
     callbacks: Arc<jni::objects::GlobalRef>,
@@ -1916,6 +2021,18 @@ fn spawn_persistent(
     // too, but it flips the CLI's publish context to "interactive UI available",
     // which is not true of a `-p` session. Confirmed against the CLI bundle.
     cmd.env("CLAUDE_CODE_ENTRYPOINT", "claude-eclipse-ide");
+
+    // Continue After Reload (resume_turn.rs): only the spawn that asks for it may tell the
+    // CLI to re-run an interrupted turn. Never one inherited from whatever started Eclipse —
+    // every send, tab switch and respawn would re-run a turn.
+    for name in crate::resume_turn::inherited_resume_vars(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok())) {
+        cmd.env_remove(name);
+    }
+    if continue_interrupted {
+        for (k, v) in crate::resume_turn::resume_vars() {
+            cmd.env(k, v);
+        }
+    }
 
     if mcp_port > 0 && !mcp_auth_token.is_empty() {
         cmd.env("CLAUDE_CODE_SSE_PORT", mcp_port.to_string())
@@ -2169,7 +2286,7 @@ fn recover_from_hang(
     match spawn_persistent(
         &r.claude_cmd, &r.workspace_root, r.mcp_port, &r.mcp_auth_token, resume,
         &live.perm_mode, &live.effort, &live.model, &live.thinking, live.ultracode,
-        old.spawn_sig.clone(), Arc::clone(state), Arc::clone(&r.java_vm), Arc::clone(&r.callbacks),
+        old.spawn_sig.clone(), false, Arc::clone(state), Arc::clone(&r.java_vm), Arc::clone(&r.callbacks),
     ) {
         Ok(p) => {
             state.lock().unwrap().proc = Some(Arc::clone(&p));

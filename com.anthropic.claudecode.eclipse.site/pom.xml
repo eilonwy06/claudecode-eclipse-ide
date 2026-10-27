@@ -10,4 +10,46 @@
 	</parent>
 	<artifactId>com.anthropic.claudecode.eclipse.site</artifactId>
 	<packaging>eclipse-repository</packaging>
+
+	<profiles>
+		<!--
+			PGP-signs every artifact of the update site, so Eclipse installs
+			it as signed content instead of warning about unsigned content.
+			Release builds only (deploy.yml passes -Psign); local and CI
+			builds have no key and stay as they are.
+
+			The signatures and the public key go into artifacts.xml, not
+			into the jars, so this runs after assemble-repository (also
+			bound to prepare-package, which runs first) and before
+			archive-repository in package.
+
+			The key comes from an armored secret key file given as
+			-Dtycho.pgp.signer.bc.secretKeys=<file>, and its passphrase from
+			the MAVEN_GPG_PASSPHRASE environment variable. The key must have
+			a passphrase: the bc signer fails on a null one.
+		-->
+		<profile>
+			<id>sign</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.eclipse.tycho</groupId>
+						<artifactId>tycho-gpg-plugin</artifactId>
+						<version>${tycho-version}</version>
+						<executions>
+							<execution>
+								<id>pgpsigner</id>
+								<goals>
+									<goal>sign-p2-artifacts</goal>
+								</goals>
+								<configuration>
+									<signer>bc</signer>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 </project>

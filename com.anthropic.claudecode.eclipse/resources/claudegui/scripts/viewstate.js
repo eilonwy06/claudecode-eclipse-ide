@@ -97,12 +97,12 @@ function restoreViewState() {
     if (!s || !s.sessionId) return;
     const r = rootByPath(s.root || '') || roots[0];
     if (!r) return;
-    const t = createTab({ rootId: r.id, sessionId: s.sessionId,
-                          title: s.title || 'Claude Code', titled: true });
     // Deferred on purpose: the transcript is rebuilt the first time the tab is shown,
     // not here. Rendering every conversation up front would make opening the workspace
     // cost one full transcript reconstruction per tab, for panes nobody is looking at.
-    t._restore = { sessionId: s.sessionId, title: s.title || '', scrollTop: s.scrollTop || 0 };
+    // Eclipse's closing may have cut its last turn off: once it is read back, the CLI is
+    // asked to finish it (Continue After Reload). Only conversations restored here.
+    const t = openStoredConversation(r.id, s.sessionId, s.title, s.scrollTop, true);
     if (s.active) wantActive = t.id;
     if (!s.title || s.title === 'Claude Code') untitled.push(t);
   });

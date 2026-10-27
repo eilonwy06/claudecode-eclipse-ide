@@ -379,6 +379,30 @@ public final class NativeCore {
             int mcpPort, String mcpAuthToken, String resumeId, String permMode,
             String effort, String model, String thinking,
             boolean ultracode);
+
+    /**
+     * Continue After Reload: starts the tab's process on {@code resumeId} asking the CLI to
+     * re-run a turn that Eclipse's closing cut off, when that is safe — a recent transcript,
+     * no other live process on the conversation, no live process in this tab yet. The CLI
+     * decides whether there was anything to re-run.
+     *
+     * <p><b>Blocking</b> — may spawn a child process. Off the UI thread.
+     *
+     * @return what was decided: {@code continued}, {@code live}, {@code failed},
+     *         {@code no-session}, {@code no-transcript}, {@code too-old} or {@code held-elsewhere}.
+     */
+    /**
+     * Continue After Reload, asked without starting anything: whether the conversation
+     * {@code resumeId} of {@code workspaceRoot} is recent, held by no other process and cut
+     * off mid-turn — one {@link #chatContinueInterrupted} will start. Reads only the end of
+     * its transcript.
+     */
+    public static native boolean chatContinueCandidate(String workspaceRoot, String resumeId);
+
+    public static native String chatContinueInterrupted(long handle, String claudeCmd, String workspaceRoot,
+            int mcpPort, String mcpAuthToken, String resumeId, String permMode,
+            String effort, String model, String thinking,
+            boolean ultracode);
     /**
      * Turns Remote Control on or off for this tab's live process.
      *
@@ -471,6 +495,20 @@ public final class NativeCore {
      * @return {@code {"ok":true,"output"}} or {@code {"ok":false,"error"}}.
      */
     public static native String cliEdit(String claudeCmd, String cwd, String subcommand, String inputJson);
+
+    /**
+     * Create Worktree: makes {@code .claude/worktrees/<name>} on branch
+     * {@code worktree-<name>} for the git repository {@code startDir} is in — the Claude Code
+     * CLI's own layout. A worktree already there is returned as it is.
+     *
+     * <p><b>Blocking</b> — runs git, and its fetch can take up to a minute. Off the UI thread.
+     *
+     * @return {@code {"ok":true,"path"}} or {@code {"ok":false,"error"}}.
+     */
+    public static native String worktreeCreate(String startDir, String name);
+
+    /** Why {@code name} cannot name a worktree, or {@code ""} when it can. */
+    public static native String worktreeNameError(String name);
 
     /**
      * One step of the Claude Design sign-in, which is the CLI's {@code design-login --json}

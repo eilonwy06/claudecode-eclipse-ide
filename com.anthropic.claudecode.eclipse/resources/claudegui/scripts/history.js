@@ -510,7 +510,8 @@ function setHistoryArchived(session, archived) {
   // VS Code extension leaves a session it has just archived.
   if (archived) {
     const open = tabs.find(t => t.sessionId === session.sessionId);
-    if (open) closeTab(open.id);
+    if (open) closeTab(open.id, { forget: true });
+    forgetClosedSession(session.sessionId);
   }
 }
 /* The view took conversations back out of the archive (the notice's Unarchive): show
@@ -567,8 +568,9 @@ window.onSessionDeleteConfirmed = function(id) {
   const open = tabs.find(t => t.sessionId === id);
   if (open) {
     if (tabs.filter(x => x.rootId === open.rootId).length === 1) createTab({ rootId: open.rootId });
-    closeTab(open.id);
+    closeTab(open.id, { forget: true });
   }
+  forgetClosedSession(id);
   try { if (window._deleteSession) window._deleteSession(id); } catch (e) {}
   histSessions = histSessions.filter(s => s.sessionId !== id);
   renderHistoryList();
@@ -1134,13 +1136,14 @@ function loadHistory(id, title, targetTab, opts) {
   }
   const pane = t.pane;
   pane.innerHTML = '';                  // clear old content (or createTab()'s WELCOME_HTML)
+  pane.style.paddingTop = '';           // and the fraction its last opening held (holdOnPixelGrid)
   pane.classList.remove('pre-open');    // and with it an opened "Messages before compaction"
   t.sessionId = id;                     // continuing this tab resumes the session
   setTabTitle(t, title);
   if (typeof renderTerminalTip === 'function') renderTerminalTip();   // the welcome it goes with is gone
   // What this tab is now waiting on. Whatever it was waiting on before is no longer
   // that, and is dropped when it arrives (stillOpening).
-  const opening = t.opening = { id: id, then: opts.then || null, line: null, joinTo: null, resume: null, touched: false, unwatch: null };
+  const opening = t.opening = { id: id, then: opts.then || null, line: null, joinTo: null, resume: null, touched: false, unwatch: null, evenOut: null };
   t.earlier = null;
   // The pane was emptied above, and a Remote Control bridge coming up in this tab
   // had its indicator in it. Both of the ways a conversation gets reconstructed run
@@ -1248,6 +1251,7 @@ function drawOpened(t, opening, got, inOneGo) {
       if (got.cache) { t.cache = got.cache; if (t === activeTab()) updateCachePill(); }
     }
     const waiting = opening.line && opening.line.parentNode === pane;
+    const newest = box.lastElementChild;
     placeHistoryPart(t, box, waiting ? opening.line.nextSibling : pane.firstChild);
     if (waiting) opening.joinTo = parts.joins[from] ? opening.line.nextElementSibling : null;
     if (t.earlier) ensurePreCompactHead(pane, true);   // its line, for what is still to be fetched
@@ -1265,6 +1269,7 @@ function drawOpened(t, opening, got, inOneGo) {
       holdBottomWhileSettling(t, pinBottom);
     }
     if (!from) { if (opening.then) opening.then(false); return; }
+    holdOnPixelGrid(t, opening, newest);
     if (opening.then) {
       // Whoever asked to be told when it is all in is told whether the reader has moved since.
       const took = () => { opening.touched = true; opening.unwatch(); };
@@ -1292,6 +1297,7 @@ function drawOpened(t, opening, got, inOneGo) {
       opening.joinTo = parts.joins[start] ? opening.line.nextElementSibling : null;
       end = start;
     } while (end > 0 && Date.now() - began < HIST_SLICE_MS);
+    if (opening.evenOut) opening.evenOut();
     if (end > 0) { laterDraw(older); return; }
     openingDone(t, opening);
     if (opening.then) opening.then(opening.touched);
@@ -1304,6 +1310,7 @@ function drawOpened(t, opening, got, inOneGo) {
 function openingDone(t, opening) {
   if (opening.unwatch) opening.unwatch();
   if (opening.line) keepingPlace(t, opening.line.nextElementSibling, () => opening.line.remove());
+  if (opening.evenOut) opening.evenOut();   // what "Loading…" going moved, and the last part's cards
   t.opening = null;
   // A message sent while the conversation was coming in learns its transcript line now
   // that all of it is drawn (a turn that ended meanwhile left it for this).
@@ -1432,6 +1439,40 @@ function holdBottomWhileSettling(t, pinBottom) {
   ro.observe(t.pane);
   timer = setTimeout(stop, 2000);
   settleWatchStop = stop;
+}
+
+/* The older messages of a conversation being opened go in above the newest, a part at a
+   time, while the view shows the newest. Each part is some fraction of a pixel tall and the
+   scroll position is a whole pixel, so after each one what is on screen sat a different
+   fraction off the pixel grid, and the tool cards, which clip what is in them, came out a
+   pixel up or down from the text around them: a long conversation shook while it came in.
+   The pane's own top padding takes the fraction up: in the frame after each part, once the
+   cards in it have been cut to size (their measuring was asked for first, so it runs first)
+   and before anything is painted, it grows or shrinks by under a pixel so that `newest` (the
+   last of what was drawn first) stands the same fraction below the top as it did. The pane's
+   and not "Loading…"'s, which would take the fraction with it when it goes. Not a
+   ResizeObserver: one that resizes what it watches is reported as a loop. */
+function holdOnPixelGrid(t, opening, newest) {
+  const pane = t.pane;
+  if (!newest) return;
+  const frac = v => v - Math.floor(v);
+  const offset = () => newest.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+  const want = frac(offset());
+  let have = 0, asked = false;
+  opening.evenOut = () => {
+    if (asked) return;
+    asked = true;
+    requestAnimationFrame(() => {
+      asked = false;
+      if (t.pane !== pane || !newest.isConnected || t !== activeTab()) return;
+      const more = frac(want - frac(offset()));
+      if (more < 1 / 128 || more > 1 - 1 / 128) return;
+      have = frac(have + more);
+      pane.style.paddingTop = have ? have + 'px' : '';
+      if (followTail) messagesEl.scrollTop = messagesEl.scrollHeight;
+    });
+  };
+  opening.evenOut();
 }
 
 

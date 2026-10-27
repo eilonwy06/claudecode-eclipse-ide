@@ -226,6 +226,8 @@ function cmdMenuRows() {
     { id: 'terminal', sec: 'Customize', label: 'Open Claude in Terminal', icon: 'TERMINAL',
       tip: (t && t.sessionId) ? 'Open this session in the Terminal' : 'Open a new Claude instance in the Terminal',
       show: () => tabInWorkspaceFolder(t), run: () => openTabInTerminal(t) },
+    // A git worktree for the tab's folder, opened as a folder of its own (clidialogs.js).
+    { id: 'worktree', sec: 'Customize', label: 'Create Worktree', icon: 'BRANCH', run: () => openCreateWorktree() },
     { id: 'design', sec: 'Customize', label: 'Claude Design', icon: 'PALETTE',
       tip: 'Authorize design-system access with your claude.ai account',
       disabled: () => authPolicy.thirdParty, why: () => "Claude Design isn't available with your login provider",

@@ -157,7 +157,8 @@ function closeRoot(id, from) {
   relabelRoots();
   const wasActive = (activeRootId === id);
   if (wasActive) activeRootId = (roots[Math.min(idx, roots.length - 1)] || roots[0]).id;
-  doomed.forEach(tid => closeTab(tid, { keepRoot: true }));
+  // The root is already out of `roots`, so its path goes along for Reopen Closed Session.
+  doomed.forEach(tid => closeTab(tid, { keepRoot: true, rootPath: r.path }));
   const own = tabsOfRoot(activeRootId);
   if (!own.length) { createTab({ rootId: activeRootId }); return; }
   const nr = activeRoot();

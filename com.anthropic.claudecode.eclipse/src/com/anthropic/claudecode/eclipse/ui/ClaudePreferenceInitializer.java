@@ -72,6 +72,7 @@ public class ClaudePreferenceInitializer extends AbstractPreferenceInitializer {
         // stay on; dank and the vibecoder claim are opt-in.
         store.setDefault(Constants.PREF_HIDE_ROOT_DIRECTORIES_ROW, false);
         store.setDefault(Constants.PREF_HIDE_BEFORE_COMPACTION, true);
+        store.setDefault(Constants.PREF_CONTINUE_AFTER_RELOAD, true);
 
         store.setDefault(Constants.PREF_SPINNER_DEPRECATED, true);
         store.setDefault(Constants.PREF_SPINNER_PACK_ONE, true);

@@ -351,6 +351,11 @@ public class ClaudePreferencePage extends FieldEditorPreferencePage implements I
                         + "message, answering a card) even while Scroll Lock is on",
                 getFieldEditorParent()));
 
+        addCodeViewOption(new BooleanFieldEditor(
+                Constants.PREF_CONTINUE_AFTER_RELOAD,
+                "Continue after reload",
+                getFieldEditorParent()));
+
         addCodeViewOption(new RadioGroupFieldEditor(
                 Constants.PREF_TOOL_CARD_MODE,
                 "Start a tool's input, output and diff cards:",

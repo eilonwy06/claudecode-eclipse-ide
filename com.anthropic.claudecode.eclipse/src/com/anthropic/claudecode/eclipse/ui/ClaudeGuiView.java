@@ -178,6 +178,10 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     @SuppressWarnings("unused") private SimpleFunction refreshModelsFn;
     @SuppressWarnings("unused") private SimpleFunction ideFn;
     @SuppressWarnings("unused") private SimpleFunction cliEditFn;
+    @SuppressWarnings("unused") private SimpleFunction createWorktreeFn;
+    @SuppressWarnings("unused") private SimpleFunction worktreeNameErrorFn;
+    @SuppressWarnings("unused") private SimpleFunction continueInterruptedFn;
+    @SuppressWarnings("unused") private SimpleFunction continueCandidateFn;
     @SuppressWarnings("unused") private SimpleFunction reloadTabFn;
     @SuppressWarnings("unused") private SimpleFunction designLoginFn;
     @SuppressWarnings("unused") private SimpleFunction userSettingFn;
@@ -443,6 +447,8 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             if (a.length > 0 && a[0] instanceof String s) {
                 boolean withCtx = a.length > 1 && a[1] instanceof Boolean b && b;
                 String resumeId = (a.length > 2 && a[2] instanceof String r) ? r : "";
+                // A message the user sent starts the count of re-runs after a reload anew.
+                if (!resumeId.isEmpty() && continueReruns(resumeId) > 0) setContinueReruns(resumeId, 0);
                 String permMode = (a.length > 3 && a[3] instanceof String m) ? m : "";
                 String effort   = (a.length > 4 && a[4] instanceof String e) ? e : "";
                 String model    = (a.length > 5 && a[5] instanceof String md) ? md : "";
@@ -1394,6 +1400,118 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                 pushCliReply(ti, reply);
             }, "claude-cli-edit").start();
             return null;
+        });
+        // Create Worktree: git does the work, in the Rust core. Blocking (a fetch can take a
+        // minute), so off the UI thread; the page gets the folder or the reason under its token.
+        createWorktreeFn = new SimpleFunction(browser, "_createWorktree", a -> {
+            if (a.length < 3 || !(a[0] instanceof String token) || !(a[1] instanceof String startDir)
+                    || !(a[2] instanceof String name))
+                return null;
+            new Thread(() -> {
+                String json;
+                ClaudeCodeView.debug("[worktree] → " + name + " in " + startDir);
+                try {
+                    json = com.anthropic.claudecode.eclipse.NativeCore.worktreeCreate(startDir, name);
+                } catch (UnsatisfiedLinkError e) {
+                    json = worktreeFailure("Not supported by this build.");   // a native library from before this call
+                } catch (Throwable t) {
+                    ClaudeCodeView.debug("[worktree] " + name + " failed: " + t);
+                    json = worktreeFailure(String.valueOf(t.getMessage()));
+                }
+                ClaudeCodeView.debug("[worktree] ← " + json);
+                final String reply = json;
+                Display.getDefault().asyncExec(() -> executeJS(
+                        "window.onWorktreeCreated && window.onWorktreeCreated('" + esc(token) + "','" + esc(reply) + "')"));
+            }, "claude-worktree").start();
+            return null;
+        });
+        // Continue After Reload: a conversation restored at startup, once drawn, has its process
+        // started so the CLI can finish a turn Eclipse's closing cut off (tabs.js
+        // continueInterruptedTurn). The core decides whether that is safe, the CLI whether
+        // there was anything to finish. Settings go through the same launch* as a send's, so
+        // the next send reuses the process.
+        // Every way out answers the page (onContinueDecided): a cut-off conversation's Remote
+        // Control waits for it, so one left unanswered would never get Remote Control.
+        continueInterruptedFn = new SimpleFunction(browser, "_continueInterrupted", a -> {
+            if (a.length < 1 || !(a[0] instanceof String tabId)) return null;
+            if (a.length < 8 || !(a[1] instanceof String resumeId) || resumeId.isEmpty()) {
+                continueDecided(tabId, "no-session");
+                return null;
+            }
+            if (!Activator.getDefault().getPreferenceStore()
+                    .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_CONTINUE_AFTER_RELOAD)) {
+                continueDecided(tabId, "off");
+                return null;
+            }
+            final String permMode = a[2] instanceof String m ? m : "";
+            final String effort = a[3] instanceof String e ? e : "";
+            final String model = launchModel(a[4] instanceof String md ? md : "");
+            final String thinking = launchThinking(a[5] instanceof String th ? th : "");
+            final String root = a[6] instanceof String rp ? rp : "";
+            final boolean ultracode = a[7] instanceof Boolean b && b;
+            final int before = continueReruns(resumeId);
+            if (before >= com.anthropic.claudecode.eclipse.Constants.CONTINUE_MAX_RERUNS) {
+                ClaudeCodeView.debug("[continue] " + resumeId + ": re-run " + before
+                        + " times since the last message; not again");
+                continueDecided(tabId, "loop-guard");
+                return null;
+            }
+            // Counted before the process starts: a re-run that takes Eclipse down with it
+            // never gets the chance to count itself afterwards.
+            setContinueReruns(resumeId, before + 1);
+            final ChatProcessManager mgr = managerFor(tabId);
+            new Thread(() -> {
+                String said;
+                try {
+                    // At startup the MCP server comes up on a thread of its own (ensureServerAsync,
+                    // ClaudeStartup), and may not be up yet. A process started without it would
+                    // lack the Eclipse tools, and the next send would replace it mid-turn.
+                    if (!waitForServer(CONTINUE_SERVER_WAIT_MS)) {
+                        said = "skipped: the MCP server is not running";
+                    } else {
+                        mgr.setRoot(root);
+                        said = mgr.continueInterrupted(resumeId, permMode, effort, model, thinking, ultracode);
+                    }
+                } catch (UnsatisfiedLinkError e) {
+                    said = "not in this build";   // a native library from before this call
+                } catch (Throwable t) {
+                    said = "failed: " + t;
+                }
+                ClaudeCodeView.debug("[continue] " + resumeId + ": " + said);
+                // Nothing was started, so nothing ran to count.
+                if (!"continued".equals(said)) {
+                    Display.getDefault().asyncExec(() -> setContinueReruns(resumeId, before));
+                }
+                // After the process is up, so Remote Control, which the page switches on next,
+                // reuses it rather than starting one of its own.
+                continueDecided(tabId, said);
+            }, "claude-continue").start();
+            return null;
+        });
+        // Whether a restored conversation is one the continue above will start — asked at
+        // restore, before the tab exists, so the page can hold its Remote Control back.
+        continueCandidateFn = new SimpleFunction(browser, "_continueCandidate", a -> {
+            if (a.length < 2 || !(a[0] instanceof String resumeId) || !(a[1] instanceof String root)) return false;
+            if (!Activator.getDefault().getPreferenceStore()
+                    .getBoolean(com.anthropic.claudecode.eclipse.Constants.PREF_CONTINUE_AFTER_RELOAD)) {
+                return false;
+            }
+            try {
+                boolean cut = com.anthropic.claudecode.eclipse.NativeCore.chatContinueCandidate(root, resumeId);
+                ClaudeCodeView.debug("[continue] " + resumeId + " cut off at restore: " + cut);
+                return cut;
+            } catch (UnsatisfiedLinkError e) {
+                return false;   // an older native library: Remote Control goes on at startup as before
+            }
+        });
+        // Checked as the name is typed; the same rule the core applies when it creates.
+        worktreeNameErrorFn = new SimpleFunction(browser, "_worktreeNameError", a -> {
+            if (a.length < 1 || !(a[0] instanceof String name)) return "";
+            try {
+                return com.anthropic.claudecode.eclipse.NativeCore.worktreeNameError(name);
+            } catch (UnsatisfiedLinkError e) {
+                return "";   // an older native library: the create call says it is not supported
+            }
         });
         // The Claude Design sign-in, a step at a time (start, wait, code, cancel): the CLI's own
         // `design-login`, run in the tab's folder. Blocking, so off the UI thread, each step on
@@ -4465,6 +4583,61 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                 "window.onCliReply && window.onCliReply('" + esc(tabId) + "','" + esc(json) + "')"));
     }
 
+    /** Tells the page the continue for a tab has been decided (tabs.js onContinueDecided). */
+    private void continueDecided(String tabId, String outcome) {
+        Display.getDefault().asyncExec(() -> executeJS(
+                "window.onContinueDecided && window.onContinueDecided('" + esc(tabId) + "','" + esc(outcome) + "')"));
+    }
+
+    /** How long a continue waits at startup for the MCP server before it gives up. */
+    private static final long CONTINUE_SERVER_WAIT_MS = 30_000;
+
+    /** Waits, off the UI thread, for the MCP server to be running; false if it is not by then. */
+    private static boolean waitForServer(long timeoutMs) {
+        long end = System.currentTimeMillis() + timeoutMs;
+        while (true) {
+            Activator activator = Activator.getDefault();
+            if (activator != null && activator.isServerRunning()) return true;
+            if (System.currentTimeMillis() >= end) return false;
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+    }
+
+    /** Continue After Reload: how many times this conversation's turn has been re-run since
+     *  the user last sent in it ({@link com.anthropic.claudecode.eclipse.Constants#PREF_CONTINUE_RERUNS_PREFIX}). */
+    private static int continueReruns(String sessionId) {
+        return Activator.getDefault().getPreferenceStore()
+                .getInt(com.anthropic.claudecode.eclipse.Constants.PREF_CONTINUE_RERUNS_PREFIX + sessionId);
+    }
+
+    /** Sets that count, written to disk at once: it is only worth anything if it survives
+     *  Eclipse going down. Zero removes the key. */
+    private static void setContinueReruns(String sessionId, int n) {
+        var store = Activator.getDefault().getPreferenceStore();
+        String key = com.anthropic.claudecode.eclipse.Constants.PREF_CONTINUE_RERUNS_PREFIX + sessionId;
+        if (n <= 0) store.setToDefault(key);
+        else store.setValue(key, n);
+        if (store instanceof org.eclipse.jface.preference.IPersistentPreferenceStore p && p.needsSaving()) {
+            try {
+                p.save();
+            } catch (java.io.IOException e) {
+                ClaudeCodeView.debug("[continue] could not save the re-run count: " + e);
+            }
+        }
+    }
+
+    private static String worktreeFailure(String error) {
+        com.google.gson.JsonObject o = new com.google.gson.JsonObject();
+        o.addProperty("ok", false);
+        o.addProperty("error", error);
+        return o.toString();
+    }
+
     private static String mcpError(String token, String error) {
         com.google.gson.JsonObject o = new com.google.gson.JsonObject();
         o.addProperty("token", token);
@@ -5135,6 +5308,39 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             return;
         }
         view.browser.execute("window.toggleFindBar && window.toggleFindBar()");
+    }
+
+    private static int lastReopenEventTime = -1;
+
+    /**
+     * Invoked by {@link com.anthropic.claudecode.eclipse.ui.handlers.ReopenClosedSessionHandler}
+     * when the bound key is pressed. The page keeps the list of closed conversations and
+     * reopens the most recent one (tabs.js).
+     */
+    public static void reopenClosedSession(int eventTime) {
+        // Same Event.time dedup as toggleFindInConversation: one press can arrive here more
+        // than once, and each extra call would reopen one more conversation.
+        if (eventTime != -1 && eventTime == lastReopenEventTime) return;
+        lastReopenEventTime = eventTime;
+        ClaudeGuiView view = active;
+        if (view == null || view.browser == null || view.browser.isDisposed()
+                || !view.pageLoaded) {
+            return;
+        }
+        view.browser.execute("window.reopenClosedSession && window.reopenClosedSession()");
+    }
+
+    /**
+     * Invoked by {@link com.anthropic.claudecode.eclipse.ui.handlers.CreateWorktreeHandler}:
+     * opens the page's Create Worktree dialog (clidialogs.js), as its command menu row does.
+     */
+    public static void openCreateWorktree() {
+        ClaudeGuiView view = active;
+        if (view == null || view.browser == null || view.browser.isDisposed()
+                || !view.pageLoaded) {
+            return;
+        }
+        view.browser.execute("window.openCreateWorktree && window.openCreateWorktree()");
     }
 
     /** Pushes the current cancel-key label to the page. UI thread; call before raising a card. */

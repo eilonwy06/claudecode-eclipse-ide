@@ -145,6 +145,9 @@ jobs:
     name: Build p2 site with Tycho
     needs: native
     runs-on: ubuntu-latest
+    # The signing key and its passphrase are secrets of this environment,
+    # not of the repository, so no other workflow or branch can read them.
+    environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -205,7 +208,44 @@ jobs:
           echo "$RUNNER_TEMP/apache-maven-$v/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/apache-maven-$v/bin/mvn" -v
 
-      - run: mvn -B integration-test
+      # The update site's artifacts are PGP-signed (the site pom's "sign"
+      # profile). An empty secret fails here rather than publishing an
+      # unsigned release.
+      - name: Write the signing key
+        env:
+          PGP_SECRET_KEY: ${{ secrets.PGP_SECRET_KEY }}
+        run: |
+          set -eu
+          if [ -z "$PGP_SECRET_KEY" ]; then
+            echo "::error::the release environment has no PGP_SECRET_KEY secret"
+            exit 1
+          fi
+          umask 077
+          printf '%s\n' "$PGP_SECRET_KEY" > "$RUNNER_TEMP/signing-key.asc"
+
+      - run: mvn -B -Psign "-Dtycho.pgp.signer.bc.secretKeys=$RUNNER_TEMP/signing-key.asc" integration-test
+        env:
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+
+      - name: Remove the signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/signing-key.asc"
+
+      # p2 reads artifacts.xml.xz first and artifacts.jar otherwise; every
+      # artifact in both must carry a signature before anything is published.
+      - name: Check every artifact is signed
+        run: |
+          set -eu
+          repo=com.anthropic.claudecode.eclipse.site/target/repository
+          for xml in "unzip -p $repo/artifacts.jar artifacts.xml" "xz -dc $repo/artifacts.xml.xz"; do
+            artifacts=$($xml | grep -c '<artifact ' || true)
+            signed=$($xml | grep -c "name='pgp.signatures'" || true)
+            echo "$xml: $signed of $artifacts artifacts signed"
+            if [ "$artifacts" -eq 0 ] || [ "$signed" -ne "$artifacts" ]; then
+              echo "::error::$signed of $artifacts artifacts are signed"
+              exit 1
+            fi
+          done
 
       # Keep the published p2 site at the same path it has always lived at
       # (.../com.anthropic.claudecode.eclipse.site/) rather than the Pages

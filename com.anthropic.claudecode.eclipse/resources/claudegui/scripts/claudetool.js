@@ -780,7 +780,8 @@
       const listed = listedSession(id);
       if (listed) { listed.archived = req.archived; redrawHistory(); }
       const out = { ok: true, sessionId: id, archived: req.archived };
-      if (req.archived && open) { closeTab(open.id); out.closedTab = open.id; }
+      if (req.archived && open) { closeTab(open.id, { forget: true }); out.closedTab = open.id; }
+      if (req.archived) forgetClosedSession(id);
       return out;
     },
     /* A saved conversation's name, as renaming its row in the history panel sets it. */

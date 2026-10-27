@@ -96,6 +96,15 @@
             name="Find in Conversation"
             description="Search the active Claude Code conversation"
             categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.reopenClosedSession"
+            name="Reopen Closed Session"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
+      <!-- No default key: bindable under Preferences > Keys, and in the view's command menu. -->
+      <command
+            id="com.anthropic.claudecode.eclipse.commands.createWorktree"
+            name="Create Worktree"
+            categoryId="com.anthropic.claudecode.eclipse.commands.category"/>
       <!-- "Send to Claude Terminal" / "Send to Claude Code" in the Problems and Console views. -->
       <command
             id="com.anthropic.claudecode.eclipse.commands.sendProblemsToTerminal"
@@ -174,6 +183,12 @@
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.findInConversation"
             class="com.anthropic.claudecode.eclipse.ui.handlers.FindInConversationHandler"/>
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.reopenClosedSession"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.ReopenClosedSessionHandler"/>
+      <handler
+            commandId="com.anthropic.claudecode.eclipse.commands.createWorktree"
+            class="com.anthropic.claudecode.eclipse.ui.handlers.CreateWorktreeHandler"/>
       <!-- The text after the colon is the view the handler sends to (IExecutableExtension). -->
       <handler
             commandId="com.anthropic.claudecode.eclipse.commands.sendProblemsToTerminal"
@@ -254,6 +269,14 @@
             schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
             contextId="com.anthropic.claudecode.eclipse.contexts.guiViewFocus"
             sequence="M1+F"/>
+      <!-- Not M1+M2+T, the VS Code extension's key: in Eclipse that is Open Type (JDT,
+           window-wide), and LSP4E, CDT and PyDev bind it too. Nothing binds M1+M2+M3+R
+           in any scheme. Same scoping and scheme inheritance as Find in Conversation. -->
+      <key
+            commandId="com.anthropic.claudecode.eclipse.commands.reopenClosedSession"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            contextId="com.anthropic.claudecode.eclipse.contexts.guiViewFocus"
+            sequence="M1+M2+M3+R"/>
    </extension>
 
    <!-- Menus and Toolbar -->
@@ -471,6 +494,14 @@
             activityId="com.anthropic.claudecode.eclipse.activity.codeView"
             isEqualityPattern="true"
             pattern="com.anthropic.claudecode.eclipse/com.anthropic.claudecode.eclipse.commands.findInConversation"/>
+      <activityPatternBinding
+            activityId="com.anthropic.claudecode.eclipse.activity.codeView"
+            isEqualityPattern="true"
+            pattern="com.anthropic.claudecode.eclipse/com.anthropic.claudecode.eclipse.commands.reopenClosedSession"/>
+      <activityPatternBinding
+            activityId="com.anthropic.claudecode.eclipse.activity.codeView"
+            isEqualityPattern="true"
+            pattern="com.anthropic.claudecode.eclipse/com.anthropic.claudecode.eclipse.commands.createWorktree"/>
       <activityPatternBinding
             activityId="com.anthropic.claudecode.eclipse.activity.codeView"
             isEqualityPattern="true"

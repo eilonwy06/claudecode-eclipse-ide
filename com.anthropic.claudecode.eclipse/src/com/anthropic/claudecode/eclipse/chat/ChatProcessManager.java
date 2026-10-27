@@ -191,6 +191,31 @@ public class ChatProcessManager {
                 effort == null ? "" : effort, model == null ? "" : model,
                 thinking == null ? "" : thinking, ultracode);
     }
+
+    /** Continue After Reload: starts this tab's process on {@code resumeId} so the CLI can
+     *  finish a turn Eclipse's closing cut off, when the core finds that safe. Launch
+     *  settings are gathered as {@link #ensureProcess} gathers them, so the next send reuses
+     *  the process. Synchronized for the same reason as that one.
+     *  @return what the core decided (see {@link NativeCore#chatContinueInterrupted}) */
+    public synchronized String continueInterrupted(String resumeId, String permMode, String effort,
+                                                   String model, String thinking,
+                                                   boolean ultracode) {
+        String claudeCmd = claudeCmd();
+        String workspaceRoot = workspaceRoot();
+
+        int mcpPort = 0;
+        String mcpAuthToken = "";
+        var server = Activator.getDefault().getHttpSseServer();
+        if (server != null && server.isRunning()) {
+            mcpPort = server.getPort();
+            mcpAuthToken = server.getAuthToken();
+        }
+
+        return NativeCore.chatContinueInterrupted(handle, claudeCmd, workspaceRoot, mcpPort, mcpAuthToken,
+                resumeId == null ? "" : resumeId, permMode == null ? "" : permMode,
+                effort == null ? "" : effort, model == null ? "" : model,
+                thinking == null ? "" : thinking, ultracode);
+    }
     /** Persistent mode: the decision card's answer for a permission request, as JSON. */
     public void setOnPermissionRequest(PermissionHandler cb) {
         this.onPermissionRequest = cb;
@@ -409,8 +434,11 @@ public class ChatProcessManager {
         NativeCore.chatRestartProcess(handle);
     }
 
+    /** Ends this tab's process for good. Not with {@link #cancel()} first: that is the Stop
+     *  button, and the CLI records it as the user stopping the turn, so Eclipse closing
+     *  mid-turn would never be continued after it starts again (Continue After Reload). A
+     *  tab the user closes mid-turn is stopped by the page before this is called. */
     public void stop() {
-        cancel();
         NativeCore.chatDestroy(handle);
     }
 

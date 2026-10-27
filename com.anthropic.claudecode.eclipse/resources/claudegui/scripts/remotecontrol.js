@@ -78,10 +78,8 @@ function toggleRemoteControl() {
    first message, which does name its folder, replaces it the same way. */
 function rcSend(t, enabled) {
   t.rcAckPending = true;
-  _remoteControl(t.id, enabled, t.sessionId || '', t.permMode || permMode,
-                 EFFORTS[t.effortIdx] || effort, t.model !== undefined ? t.model : curModel,
-                 (t.thinking !== undefined ? t.thinking : thinkingOn) ? '1' : '0', rootPathOf(t),
-                 t.ultracode !== undefined ? t.ultracode : ultracodeOn);
+  _remoteControl.apply(null,
+    [t.id, enabled, t.sessionId || ''].concat(tabLaunchArgs(t), [rootPathOf(t), tabUltracode(t)]));
 }
 
 /* How long to wait for a bridge before giving up.
@@ -440,6 +438,8 @@ function remoteControlOnStartupEnabled() {
    tab creation and on view load, and must be safe to call more than once. */
 function autoEnableRemoteControl(t) {
   if (!t || t.remoteControlUrl || t.rcConnecting || t.rcDisconnecting) return;
+  // Cut off mid-turn and restored: its continue starts the process first (tabs.js continueDecided).
+  if (t.continuePending) return;
   if (!window._remoteControl) return;
   if (!remoteControlOnStartupEnabled() || remoteControlLock(t)) return;
   beginConnecting(t);

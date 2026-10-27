@@ -219,6 +219,16 @@ public final class Constants {
      *  and it applies the moment a compaction finishes as well as on reopening. */
     public static final String PREF_HIDE_BEFORE_COMPACTION = "hideMessagesBeforeCompaction";
 
+    /** Continue After Reload: a conversation restored when Eclipse starts again finishes the
+     *  step Eclipse's closing cut off — the CLI re-runs that turn when it was interrupted, and
+     *  nothing happens when it had finished or the user had stopped it. On by default. */
+    public static final String PREF_CONTINUE_AFTER_RELOAD = "continueAfterReload";
+    /** Per conversation, how many times its turn has been re-run since the user last sent in
+     *  it (the key ends in the session id). Two, and it is not re-run again: a turn that takes
+     *  Eclipse down each time must not do so forever. */
+    public static final String PREF_CONTINUE_RERUNS_PREFIX = "continueAfterReload.reruns.";
+    public static final int CONTINUE_MAX_RERUNS = 2;
+
     // ── Spinner verbs ───────────────────────────────────────────────────────
     // Which optional slices of the working-indicator gerund list are in rotation.
     // Each names a membership set over the single master list in working.js

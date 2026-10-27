@@ -17,6 +17,7 @@ mod plugins;
 mod mentions;
 mod npm_update;
 mod promptcache;
+mod resume_turn;
 mod server;
 mod session;
 mod shell_env;
@@ -29,6 +30,7 @@ mod teleport;
 mod test_support;
 mod user_settings;
 mod web_history;
+mod worktree;
 
 use chat::ChatManager;
 use jni::objects::{JClass, JObject, JString};
@@ -723,6 +725,63 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatEnsu
         ) as jboolean
     }));
     finish_export(&mut env, "chatEnsureProcess", result, jni::sys::JNI_FALSE)
+}
+
+/// Continue After Reload, asked without starting anything: whether the conversation
+/// `resume_id` of `workspace_root` is recent, held by no other process, and cut off
+/// mid-turn — one a continue will start. The page holds Remote Control back for it.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatContinueCandidate(
+    mut env: JNIEnv,
+    _class: JClass,
+    workspace_root: JString,
+    resume_id: JString,
+) -> jboolean {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut text = |s: JString| jstr(&mut env, &s);
+        let (workspace_root, resume_id) = (text(workspace_root), text(resume_id));
+        resume_turn::candidate_in(&workspace_root, &resume_id) as jboolean
+    }));
+    finish_export(&mut env, "chatContinueCandidate", result, jni::sys::JNI_FALSE)
+}
+
+/// Continue After Reload: starts the tab's process on `resume_id` asking the CLI to
+/// re-run a turn Eclipse's closing cut off, when that is safe (chat.rs
+/// `continue_interrupted`). Returns what was decided: `continued`, `live`, `failed`,
+/// `no-session`, `no-transcript`, `too-old` or `held-elsewhere`.
+///
+/// **Blocking** — may spawn a child process. Off the UI thread.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_chatContinueInterrupted(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    claude_cmd: JString,
+    workspace_root: JString,
+    mcp_port: jint,
+    mcp_auth_token: JString,
+    resume_id: JString,
+    perm_mode: JString,
+    effort: JString,
+    model: JString,
+    thinking: JString,
+    ultracode: jboolean,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if handle == 0 {
+            return jout(&mut env, "failed", "");
+        }
+        let manager = unsafe { &*(handle as *const ChatManager) };
+        let mut text = |s: JString| jstr(&mut env, &s);
+        let (claude_cmd, workspace_root, mcp_auth_token, resume_id) =
+            (text(claude_cmd), text(workspace_root), text(mcp_auth_token), text(resume_id));
+        let (perm_mode, effort, model, thinking) = (text(perm_mode), text(effort), text(model), text(thinking));
+        let said = manager.continue_interrupted(claude_cmd, workspace_root, mcp_port as u16, mcp_auth_token,
+                                                resume_id, perm_mode, effort, model, thinking, ultracode != 0);
+        jout(&mut env, said, "")
+    }));
+    finish_export(&mut env, "chatContinueInterrupted", result, std::ptr::null_mut())
 }
 
 /// Turns Remote Control on or off for this tab's live process.
@@ -1733,6 +1792,41 @@ pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_cliFetch
         jout(&mut env, json, "")
     }));
     finish_export(&mut env, "cliFetchCommands", result, std::ptr::null_mut())
+}
+
+/// Create Worktree: makes `.claude/worktrees/<name>` on branch `worktree-<name>` for
+/// the repository `start_dir` is in. Returns `{"ok":true,"path"}` or `{"ok":false,"error"}`.
+///
+/// **Blocking** — runs git, and `git fetch` can take up to a minute. Off the UI thread.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_worktreeCreate(
+    mut env: JNIEnv,
+    _class: JClass,
+    start_dir: JString,
+    name: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut text = |s: JString| jstr(&mut env, &s);
+        let (start_dir, name) = (text(start_dir), text(name));
+        let json = worktree::create_json(&start_dir, &name);
+        jout(&mut env, json, "")
+    }));
+    finish_export(&mut env, "worktreeCreate", result, std::ptr::null_mut())
+}
+
+/// Why `name` cannot name a worktree, or `""` when it can. Checked as it is typed.
+#[no_mangle]
+pub extern "system" fn Java_com_anthropic_claudecode_eclipse_NativeCore_worktreeNameError(
+    mut env: JNIEnv,
+    _class: JClass,
+    name: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let name = jstr(&mut env, &name);
+        let said = worktree::name_error(&name).unwrap_or("").to_string();
+        jout(&mut env, said, "")
+    }));
+    finish_export(&mut env, "worktreeNameError", result, std::ptr::null_mut())
 }
 
 /// Saves one change a dialog made, by running the CLI's own edit subcommand

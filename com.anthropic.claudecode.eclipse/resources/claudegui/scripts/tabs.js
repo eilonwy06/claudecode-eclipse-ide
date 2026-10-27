@@ -194,6 +194,9 @@ function createTab(opts) {
   const setting = (key, fallback) =>
     opts[key] !== undefined ? opts[key] : (stored[key] !== undefined ? stored[key] : fallback);
   tabs.push({ id, title: opts.title || 'Claude Code', sessionId: opts.sessionId || '', pane, titled: !!opts.titled, draft: '',
+    // Restored cut off mid-turn: Remote Control waits until its continue has started its
+    // process (continueInterruptedTurn), so the two start the same one.
+    continuePending: !!opts.continuePending,
     // Conversations belong to a working root; #tabs shows only the active root's.
     rootId: opts.rootId || activeRootId,
     model: setting('model', defaultModel()),
@@ -299,9 +302,34 @@ function switchTab(id) {
     // session since (refreshStaleTitles), and the stored one would put "Claude Code" back.
     // The place is put back once the whole conversation is drawn: it is a distance from
     // the top, and the older messages come in after the newest (history.js).
-    loadHistory(rs.sessionId, t.title || rs.title, t, { then: readerMoved => placeRestoredTab(t, rs, readerMoved) });
+    loadHistory(rs.sessionId, t.title || rs.title, t, { then: readerMoved => {
+      placeRestoredTab(t, rs, readerMoved);
+      if (rs.continueTurn) continueInterruptedTurn(t);
+    } });
   }
 }
+/* Continue After Reload: asks Java to start this conversation's process so the CLI can
+   finish a turn that Eclipse's closing cut off — after the transcript is drawn, so what it
+   runs lands below it. Java and the core decide whether it is safe (the preference, the
+   transcript's age, another process holding the conversation); the CLI decides whether
+   there was anything to finish. A turn it re-runs streams in like a queued message's. */
+function continueInterruptedTurn(t) {
+  // A message sent before it was drawn has started its process and carries it on.
+  if (!t.sessionId || !window._continueInterrupted || t.streaming) { continueDecided(t); return; }
+  try {
+    window._continueInterrupted.apply(null,
+      [t.id, t.sessionId].concat(tabLaunchArgs(t), [rootPathOf(t), tabUltracode(t)]));
+  } catch (e) { continueDecided(t); }
+}
+/* The continue has been decided — its process started, or not to be: Remote Control,
+   held back for a cut-off conversation, can now go on, reusing that process. */
+function continueDecided(t) {
+  if (!t || !t.continuePending) return;
+  t.continuePending = false;
+  if (typeof autoEnableRemoteControl === 'function') autoEnableRemoteControl(t);
+}
+/** Java's answer to _continueInterrupted, sent on every way out of it. */
+window.onContinueDecided = function(tabId, outcome) { continueDecided(tabById(tabId)); };
 /* How near its end a restored conversation has to have been left to count as left AT
    its end, where it then stays, following. The page is not to the pixel the one the
    distance was taken in: the note a reopened conversation may end with is new in it. */
@@ -371,6 +399,63 @@ function applyTabSettings(t) {
  * @param {{keepRoot?: boolean}} [opts] keepRoot: the caller is tearing the whole root
  *   down (closeRoot), so skip the refill that would otherwise resurrect a tab in it.
  */
+/* A conversation that exists on disk, opened as a tab that reads it back the first time
+   it is shown (switchTab's _restore branch) — how the conversations of the last Eclipse
+   session come back (viewstate.js), and how a closed one is reopened. */
+function openStoredConversation(rootId, sessionId, title, scrollTop, continueTurn) {
+  // Asked before the tab exists: createTab switches Remote Control on at once when "for all
+  // sessions" is set, and a conversation that was cut off has to start its process with the
+  // continue first (Continue After Reload).
+  let pending = false;
+  if (continueTurn && window._continueCandidate) {
+    const r = rootById(rootId);
+    try { pending = !!_continueCandidate(sessionId, r ? r.path : ''); } catch (e) {}
+  }
+  const t = createTab({ rootId: rootId, sessionId: sessionId, title: title || 'Claude Code', titled: true,
+                        continuePending: pending });
+  t._restore = { sessionId: sessionId, title: title || '', scrollTop: scrollTop || 0, continueTurn: !!continueTurn };
+  return t;
+}
+/* The settings a tab's process is launched with, the same whichever path starts it — a
+   send, Remote Control, a continue. The core reuses a process only when they match, so
+   two paths that worked them out differently would replace each other's process. */
+function tabLaunchArgs(t) {
+  return [t.permMode || permMode, EFFORTS[t.effortIdx] || effort,
+          t.model !== undefined ? t.model : curModel,
+          (t.thinking !== undefined ? t.thinking : thinkingOn) ? '1' : '0'];
+}
+function tabUltracode(t) { return t.ultracode !== undefined ? t.ultracode : ultracodeOn; }
+/* Reopen Closed Session: the conversations closed in this view, most recent last. Only
+   what the view has open is remembered, and only while it stays open. A conversation put
+   away on purpose — archived, deleted, moved to the Terminal — is closed with `forget`
+   and never lands here. */
+const closedSessions = [];
+const CLOSED_SESSIONS_MAX = 25;
+/** Drops a conversation from the reopen list: it was archived or deleted after it closed. */
+function forgetClosedSession(sessionId) {
+  for (let i = closedSessions.length - 1; i >= 0; i--) {
+    if (closedSessions[i].sessionId === sessionId) closedSessions.splice(i, 1);
+  }
+}
+/**
+ * Reopens the conversation closed most recently, in the folder it was closed from — the
+ * folder too, when that has been closed since. One already open again by other means is
+ * passed over.
+ * @returns {boolean} true when a conversation was reopened; false when none is left
+ */
+window.reopenClosedSession = function() {
+  while (closedSessions.length) {
+    const c = closedSessions.pop();
+    if (tabs.some(t => t.sessionId === c.sessionId)) continue;
+    const r = (c.root && (rootByPath(c.root) || addRoot(c.root, { select: false }))) || roots[0];
+    const t = openStoredConversation(r.id, c.sessionId, c.title, 0);
+    // Closed before its title was ever read from the session: named once it is shown.
+    if (!c.title || c.title === 'Claude Code') t.titleStale = true;
+    switchTab(t.id);   // the switch that reads it back (createTab's own ran before _restore was set)
+    return true;
+  }
+  return false;
+};
 function closeTab(id, opts) {
   opts = opts || {};
   const idx = tabs.findIndex(t => t.id === id);
@@ -383,6 +468,10 @@ function closeTab(id, opts) {
   // a cancel has to find this tab still whole.
   if (!opts.keepRoot && tabs.filter(x => x.rootId === t.rootId).length === 1) {
     closeRoot(t.rootId, 'session'); return;
+  }
+  if (t.sessionId && !opts.forget) {
+    closedSessions.push({ root: opts.rootPath || rootPathOf(t), sessionId: t.sessionId, title: t.title || '' });
+    if (closedSessions.length > CLOSED_SESSIONS_MAX) closedSessions.shift();
   }
   if (t.streaming && window._cancelRequest) window._cancelRequest(id);   // stop its stream
   if (window._disposeTab) window._disposeTab(id);                         // free its process
@@ -437,7 +526,7 @@ function openTabInTerminal(t) {
 window.releaseTabForTerminal = function(tabId, sessionId) {
   const t = tabById(tabId);
   if (!t || !t.sessionId || t.sessionId !== sessionId) return '';
-  if (!isLastTabOfView(t)) { closeTab(tabId); return 'closed'; }
+  if (!isLastTabOfView(t)) { closeTab(tabId, { forget: true }); return 'closed'; }
   if (t.streaming && window._cancelRequest) window._cancelRequest(tabId);
   if (window._disposeTab) window._disposeTab(tabId);
   t.sessionId = ''; t._restore = null; t.opening = null; t.earlier = null;
