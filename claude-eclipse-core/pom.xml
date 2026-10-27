@@ -4,6 +4,6 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>com.anthropic.claudecode.eclipse</groupId>
 	<artifactId>claude-eclipse-core</artifactId>
-	<version>3.2.25-SNAPSHOT</version>
+	<version>3.2.26-SNAPSHOT</version>
 	<packaging>pom</packaging>
 </project>

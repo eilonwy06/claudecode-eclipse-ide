@@ -110,7 +110,7 @@ public class ClaudeCodeView extends ViewPart {
         // Not live yet: Debug-mode lines wait in PENDING until the banner below is all in,
         // last line included (logEnvironmentThenHint), so the banner always comes first.
 
-        appendLog("Claude Code for Eclipse IDE (Unofficial) v3.2.25\n");
+        appendLog("Claude Code for Eclipse IDE (Unofficial) v3.2.26\n");
         appendLog("──────────────────────────────────────────────────\n\n");
 
         if (!Activator.getDefault().isServerRunning()) {

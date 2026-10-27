@@ -4,7 +4,26 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.2.25] — 2026-10-25 *(current)*
+## [3.2.26] — 2026-10-27 *(current)*
+
+### Added
+- **Reopen Closed Session** (Ctrl+Alt+Shift+R): brings back the conversation you closed most recently, in its folder.
+- **Create Worktree** in the command menu: makes a git worktree for the folder and opens it as a folder of its own.
+- **Continue after reload**: a step that closing Eclipse cut off finishes by itself when Eclipse starts again (Preferences › Claude Code).
+
+### Changed
+- Closing Eclipse while Claude is working no longer records that reply as stopped by you.
+- The native core carries the plugin's version number ([@LalaLolLucky](https://github.com/LalaLolLucky), PR #228).
+
+### Fixed
+- Minor UI fixes.
+
+### Security
+- The plugin is signed: installing it asks you once to trust its key, instead of warning about unsigned content ([@LalaLolLucky](https://github.com/LalaLolLucky), issue #229).
+
+---
+
+## [3.2.25] — 2026-10-25
 
 ### Changed
 - Build and release maintenance.
