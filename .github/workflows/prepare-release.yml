@@ -65,6 +65,16 @@ jobs:
             com.anthropic.claudecode.eclipse.site/pom.xml \
             claude-eclipse-core/pom.xml
 
+          # The native library's own version: Cargo.toml's package version and the
+          # matching Cargo.lock entry (CI builds with --locked, so the two must
+          # agree). The grep fails the job if either line has drifted from the
+          # old version, rather than releasing a library that reports a stale one.
+          sed -i "0,/^version = \"${OLD}\"/s//version = \"${VERSION}\"/" claude-eclipse-core/Cargo.toml
+          sed -i "/^name = \"claude-eclipse-core\"\$/{n;s/^version = \".*\"/version = \"${VERSION}\"/}" \
+            claude-eclipse-core/Cargo.lock
+          grep -qxF "version = \"${VERSION}\"" claude-eclipse-core/Cargo.toml
+          grep -A1 -xF 'name = "claude-eclipse-core"' claude-eclipse-core/Cargo.lock | grep -qxF "version = \"${VERSION}\""
+
           # The version banner the plugin itself prints on startup -- every
           # past manual release commit has bumped this same line by hand
           # (grep the source for other hardcoded "(Unofficial) v" strings if
