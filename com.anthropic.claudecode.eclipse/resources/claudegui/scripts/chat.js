@@ -362,8 +362,9 @@ function addUserMessage(text, ctx, images, id, ts, pane, ctxTarget) {
   }
   if (text) {
     const body = document.createElement('div');
-    // Bare slash commands ("/compact") render mono inside the bubble (VSCode look).
-    body.className = 'body' + (/^\/\S+$/.test(text.trim()) ? ' mono-cmd' : '');
+    // Slash commands ("/compact", "/resume 31312") render mono inside the bubble, what is
+    // typed after them included (VSCode look).
+    body.className = 'body' + (text.trim().startsWith('/') ? ' mono-cmd' : '');
     if (typeof appendMentionText === 'function') appendMentionText(body, text);
     else body.textContent = text;
     box.appendChild(body);

@@ -38,6 +38,10 @@ const SLASH_COMMANDS = [
 /* The menu these are listed in, and the keys that drive it, are cmdmenu.js: one menu for
    the / button and for a / typed in the composer. */
 
+/* The commands the view answers only when typed bare; what is typed after one goes to the
+   CLI with it (`/context all`, `/mcp reconnect all`, `/resume <term>`…). */
+const BARE_ONLY_COMMANDS = ['/context', '/rewind', '/remote-control', '/resume', '/mcp', '/plugins', '/help'];
+
 /* Runs a command picked from a menu. The composer draft is PRESERVED — picking
    "/clear" while half-way through a message must not throw that message away.
    The one exception is a command being typed ("/rew…"), where the draft IS the
@@ -85,8 +89,11 @@ function handleSlashCommand(text) {
   if (cmd === '/plan') { handlePlanCommand(text.trim().replace(/^\S+\s*/, '')); return true; }
   // The Agent map is where what runs in the background is listed and stopped.
   if (cmd === '/tasks') { openAgentsPanel(); return true; }
+  const bare = text.trim().split(/\s+/).length === 1;
+  // With anything typed after them these are the CLI's, as in the extension.
+  if (!bare && BARE_ONLY_COMMANDS.includes(cmd)) return false;
   // A dialog opens for the bare command only; with arguments the command is the CLI's.
-  if (text.trim().split(/\s+/).length === 1) {
+  if (bare) {
     const dialogs = { '/status': openStatusDialog, '/memory': () => openMemoryDialog('memory'),
       '/permissions': openPermissionsDialog, '/hooks': openHooksDialog, '/export': openExportDialog,
       '/skills': openSlashCommandsDialog, '/sandbox': openSandboxDialog, '/chrome': openChromeDialog,
@@ -98,7 +105,7 @@ function handleSlashCommand(text) {
   // the only message left in the fresh session (joebiden7). Deliberately not
   // newSession() — VSCode stays on the tab /clear was invoked from.
   if (cmd === '/clear') { clearSession(); addUserMessage(text, null, null, null, nowIso()); return true; }
-  if (cmd === '/compact') { sendCompact(); return true; }          // echoes itself
+  if (cmd === '/compact') { sendCompact(text.trim().replace(/^\S+\s*/, '')); return true; }   // echoes itself
   // Echo is deferred to the card's confirm() — cancel/Esc adds nothing.
   if (cmd === '/advisor') { openAdvisorCard(text); return true; }
   if (cmd === '/model') { handleModelCommand(text); return true; }
@@ -296,18 +303,26 @@ function sendSlashToCli(text, asMessage) {
 /* /compact goes to the CLI like a normal send (same persistent process), but with
    the working gerund pinned to "Compacting…" and no tab titling — the CLI answers
    with system compact events (window.onCompact) or, on failure, a plain text turn
-   ("Not enough messages to compact."). */
-function sendCompact() {
+   ("Not enough messages to compact."). instructions: what was typed after the command,
+   the CLI's custom summarization instructions; none from the context ring. */
+function sendCompact(instructions) {
   const t = activeTab(); if (!t) return;
   t.cancelled = false;
   loadRender(t);
   const queueing = !!t.streaming;
-  addUserMessage('/compact', null, null, null, nowIso());
+  const text = compactCommand(instructions);
+  addUserMessage(text, null, null, null, nowIso());
   input.value = ''; input.style.height = 'auto'; t.draft = ''; closeSlash();
   t.compacting = true;
   if (!queueing) { setStreaming(true); showWorking(); }
   else if (!workingEl) showWorking();
-  if (window._sendToJava) window._sendToJava('/compact', false, t.sessionId || '', t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', t.id, '', rootPathOf(t), ultracodeOn);
+  if (window._sendToJava) window._sendToJava(text, false, t.sessionId || '', t.permMode || permMode, effort, curModel, thinkingOn ? '1' : '0', t.id, '', rootPathOf(t), ultracodeOn);
   persistTabPrefs(t);
+}
+
+/** The /compact sent to the CLI: the bare command, or the command and its instructions. */
+function compactCommand(instructions) {
+  const extra = typeof instructions === 'string' ? instructions.trim() : '';
+  return extra ? '/compact ' + extra : '/compact';
 }
 

@@ -833,7 +833,7 @@ function drawHistoryPart(t, id, items, parts, from, to, foldAt, modelBefore) {
       if (tm) { if (renderedModel !== null && tm !== renderedModel) box.appendChild(makeSwitchDivider(tm)); renderedModel = tm; }
       aTurn = null;
       const p = parseUserContent(it.content || '');
-      const isCompactCmd = p.text.trim() === '/compact';
+      const isCompactCmd = /^\/compact(\s|$)/.test(p.text.trim());   // with or without its instructions
       // A line that paints nothing (e.g. the <local-command-caveat> the CLI
       // inserts between the summary and the "/compact" echo) can't be the
       // bubble the pending compact marker is waiting to render after.

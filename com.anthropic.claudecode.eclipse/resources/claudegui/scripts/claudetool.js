@@ -359,10 +359,10 @@
      settings and its draft. What a command prints into the conversation there comes back
      in the result here. (t, argument, the command as given) -> what to add to the result. */
   const VIEW_COMMANDS = {
-    '/compact': function (t) {
+    '/compact': function (t, arg) {
       requireSendable(t);
       t.compacting = true;             // pins the tab's gerund to "Compacting", as sendCompact does
-      return { queued: send(t, '/compact') };
+      return { queued: send(t, compactCommand(arg)) };
     },
     '/clear': function (t, arg, text) {
       refuseWhileSwitching(t);
@@ -542,12 +542,15 @@
       }
       // Read as the composer reads one (handleSlashCommand): the first word names it.
       const name = text.split(/\s+/)[0].toLowerCase();
-      if (DESK_ONLY.hasOwnProperty(name)) {
+      const arg = text.slice(name.length).trim();
+      // A bare-only command with arguments is Claude's, as in the composer (BARE_ONLY_COMMANDS).
+      const toClaude = !!arg && BARE_ONLY_COMMANDS.includes(name);
+      if (DESK_ONLY.hasOwnProperty(name) && !toClaude) {
         refuse("'" + name + "' " + DESK_ONLY[name] + ' in the Claude Code view and waits for an answer there, so it is not run from here.');
       }
       let out;
-      if (VIEW_COMMANDS.hasOwnProperty(name)) {
-        out = VIEW_COMMANDS[name](t, text.slice(name.length).trim(), text);
+      if (VIEW_COMMANDS.hasOwnProperty(name) && !toClaude) {
+        out = VIEW_COMMANDS[name](t, arg, text);
       } else {
         // Not one of the view's: Claude's own, a custom command or a skill. Passed on as
         // the composer passes on any command it does not know.
