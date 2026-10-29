@@ -4,7 +4,18 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.2.26] — 2026-10-27 *(current)*
+## [3.2.27] — 2026-10-29 *(current)*
+
+### Changed
+- A slash command typed with something after it, such as `/context all` or `/mcp reconnect all`, goes to Claude Code instead of opening the view's own window.
+- Slash commands show in the command font with what was typed after them.
+
+### Fixed
+- `/compact` keeps the instructions typed after it.
+
+---
+
+## [3.2.26] — 2026-10-27
 
 ### Added
 - **Reopen Closed Session** (Ctrl+Alt+Shift+R): brings back the conversation you closed most recently, in its folder.
