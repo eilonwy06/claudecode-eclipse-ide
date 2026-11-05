@@ -4,7 +4,14 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.2.27] — 2026-10-29 *(current)*
+## [3.2.28] — 2026-11-05 *(current)*
+
+### Fixed
+- `eclipseCustomizePerspective` hides a whole main-toolbar group when asked, instead of reporting it hidden while it stays on screen.
+
+---
+
+## [3.2.27] — 2026-10-29
 
 ### Changed
 - A slash command typed with something after it, such as `/context all` or `/mcp reconnect all`, goes to Claude Code instead of opening the view's own window.
