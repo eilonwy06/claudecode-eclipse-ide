@@ -67,9 +67,10 @@ import com.google.gson.JsonObject;
  * ({@link CustomizePerspectiveDialog#getIDFromIContributionItem}).
  *
  * <p>The main toolbar goes further than the dialog's Tool Bar Visibility tab: groups the
- * coolbar manager builds (action sets, the workbench's own) and their buttons are hidden
- * through the perspective's hidden items, which that manager applies each time it refills
- * them; anything else in the toolbar (the launch bar, a model-contributed toolbar) is hidden
+ * coolbar manager builds (action sets, the workbench's own) are hidden through the
+ * perspective's hidden items button by button, which that manager applies each time it
+ * refills them ({@code CoolBarToTrimManager.fill} checks each button, never a group's own
+ * id, so a group is hidden by hiding all its buttons); anything else in the toolbar (the launch bar, a model-contributed toolbar) is hidden
  * on the window model's element itself, for the whole window and saved with it (the launch
  * bar's installer only re-adds the element when it is missing); and the whole toolbar goes as
  * Window &gt; Appearance &gt; Hide Toolbar does ({@code WorkbenchWindow.toggleToolbarVisibility}).
@@ -118,7 +119,8 @@ public class EclipseCustomizePerspectiveTool implements McpTool {
                 + "actionSet, menu, toolbar, mainToolbar. kind='toolbar' covers every part of the "
                 + "main toolbar, whichever plug-in put it there: its toolbar groups, the controls "
                 + "in it (such as the launch bar) and the buttons inside each group; each entry "
-                + "says whether it is kept per perspective or for the whole window. "
+                + "says whether it is kept per perspective or for the whole window. Hiding or "
+                + "showing a group hides or shows every button in it. "
                 + "kind='mainToolbar' with action 'hide' or 'show' (no ids) hides or shows the "
                 + "whole main toolbar and the perspective switcher for the window, as Window > "
                 + "Appearance > Hide Toolbar does.";
@@ -301,13 +303,23 @@ public class EclipseCustomizePerspectiveTool implements McpTool {
                 for (String id : changed) setHidden(page, HIDDEN_ACTION_SET + id, !show);
             }
             case "toolbar" -> {
-                // Groups the coolbar manager builds, and the buttons in them, are rebuilt from
-                // the perspective's hidden items each time it refills them, so they are hidden
-                // there, as the dialog does; anything else (the launch bar, a model toolbar)
-                // is hidden on the window's own element, which the coolbar manager leaves alone.
+                // The buttons of the groups the coolbar manager builds are checked against the
+                // perspective's hidden items each time it refills them, one by one: a group is
+                // hidden or shown through all its buttons. Anything else (the launch bar, a
+                // model toolbar) is hidden on the window's own element, which the coolbar
+                // manager leaves alone.
                 WorkbenchWindow window = (WorkbenchWindow) page.getWorkbenchWindow();
                 java.util.Map<String, String> scopes = new java.util.HashMap<>();
-                for (JsonObject e : toolbarEntries(page)) scopes.put(text(e, "id"), text(e, "scope"));
+                java.util.Map<String, List<String>> buttonsByGroup = new java.util.HashMap<>();
+                for (JsonObject e : toolbarEntries(page)) {
+                    String id = text(e, "id");
+                    scopes.put(id, text(e, "scope"));
+                    String group = text(e, "group");
+                    if (group != null) buttonsByGroup.computeIfAbsent(group, g -> new ArrayList<>()).add(id);
+                    else if ("group".equals(text(e, "type")) && SCOPE_PERSPECTIVE.equals(text(e, "scope"))) {
+                        buttonsByGroup.putIfAbsent(id, new ArrayList<>());
+                    }
+                }
                 for (String id : ids) {
                     if (SCOPE_WINDOW.equals(scopes.get(id))) {
                         MUIElement element = findToolbarElement(window, id);
@@ -316,9 +328,15 @@ public class EclipseCustomizePerspectiveTool implements McpTool {
                             changed.add(id);
                             inWindow.add(id);
                         }
-                    } else if (setHidden(page, HIDDEN_TOOLBAR + id, !show)) {
-                        changed.add(id);
+                        continue;
                     }
+                    // A group's own id among the hidden items hides nothing; drop one left there.
+                    if (buttonsByGroup.containsKey(id)) setHidden(page, HIDDEN_TOOLBAR + id, false);
+                    boolean any = false;
+                    for (String item : itemsToStore(id, buttonsByGroup)) {
+                        any |= setHidden(page, HIDDEN_TOOLBAR + item, !show);
+                    }
+                    if (any) changed.add(id);
                 }
             }
             default -> {   // menu
@@ -462,16 +480,22 @@ public class EclipseCustomizePerspectiveTool implements McpTool {
             JsonObject e = entry(id, name);
             e.addProperty("type", element instanceof MToolControl ? "control" : "group");
             e.addProperty("scope", group != null ? SCOPE_PERSPECTIVE : SCOPE_WINDOW);
-            out.add(withState(e, "hidden", group != null ? hidden.contains(id) : !element.isVisible()));
+            out.add(withState(e, "hidden", !element.isVisible()));
             String path = name != null ? cleanLabel(name) : id;
 
-            if (group != null && group.getToolBarManager() != null) {
+            if (group != null) {
+                // The workbench hides a group's buttons one by one, never the group: it is
+                // hidden when they all are.
+                List<String> buttons = new ArrayList<>();
                 int from = out.size();
                 addItems(group.getToolBarManager(), path, hidden, out, seen);
                 for (int i = from; i < out.size(); i++) {
                     out.get(i).addProperty("type", "button");
                     out.get(i).addProperty("scope", SCOPE_PERSPECTIVE);
+                    out.get(i).addProperty("group", id);
+                    buttons.add(text(out.get(i), "id"));
                 }
+                e.addProperty("hidden", groupHidden(id, buttons, hidden));
             } else if (element instanceof MToolBar toolbar) {
                 for (MToolBarElement child : toolbar.getChildren()) {
                     String cid = child.getElementId();
@@ -599,6 +623,19 @@ public class EclipseCustomizePerspectiveTool implements McpTool {
             }
         }
         return out;
+    }
+
+    /** The ids to store in the hidden items so the toolbar entry `id` is hidden or shown: a
+     *  group's buttons (the workbench checks each button, never the group), a button itself. */
+    static List<String> itemsToStore(String id, java.util.Map<String, List<String>> buttonsByGroup) {
+        List<String> buttons = buttonsByGroup.get(id);
+        return buttons != null ? buttons : List.of(id);
+    }
+
+    /** Whether the toolbar group is hidden on screen: when every button in it is (one with no
+     *  buttons shows nothing). Its own id among the hidden items hides nothing. */
+    static boolean groupHidden(String group, List<String> buttons, Set<String> hidden) {
+        return hidden.containsAll(buttons);
     }
 
     /** The shortcut list after showing or hiding `ids`, in the order it had, new ones last. */

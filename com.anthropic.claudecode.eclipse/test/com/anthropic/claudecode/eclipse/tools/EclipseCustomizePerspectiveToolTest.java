@@ -1,10 +1,13 @@
 package com.anthropic.claudecode.eclipse.tools;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -104,5 +107,33 @@ class EclipseCustomizePerspectiveToolTest {
         assertNull(EclipseCustomizePerspectiveTool.argumentError("hide", "mainToolbar", none));
         assertNull(EclipseCustomizePerspectiveTool.argumentError("show", "MainToolbar", none));
         assertTrue(EclipseCustomizePerspectiveTool.argumentError("hide", "toolbar", none).contains("'ids' is required"));
+    }
+
+    // The workbench checks the hidden items for each button inside a toolbar group, never for
+    // the group itself (CoolBarToTrimManager.fill → isChildVisible per child item): a stored
+    // group id hides nothing.
+
+    @Test
+    void hidingAToolbarGroupStoresItsButtons() {
+        Map<String, List<String>> groups = Map.of(
+                "org.eclipse.debug.ui.launchActionSet", List.of("debug", "run", "coverage"),
+                "org.eclipse.ui.workbench.help", List.of());
+        assertEquals(List.of("debug", "run", "coverage"),
+                EclipseCustomizePerspectiveTool.itemsToStore("org.eclipse.debug.ui.launchActionSet", groups));
+        // A button is stored as itself.
+        assertEquals(List.of("run"), EclipseCustomizePerspectiveTool.itemsToStore("run", groups));
+        // A group with no buttons has nothing to hide.
+        assertTrue(EclipseCustomizePerspectiveTool.itemsToStore("org.eclipse.ui.workbench.help", groups).isEmpty());
+    }
+
+    @Test
+    void aToolbarGroupIsHiddenOnlyWhenAllItsButtonsAre() {
+        List<String> buttons = List.of("debug", "run");
+        // Its own id stored (what the old tool wrote) hides nothing on screen.
+        assertFalse(EclipseCustomizePerspectiveTool.groupHidden("launch", buttons, Set.of("launch")));
+        assertFalse(EclipseCustomizePerspectiveTool.groupHidden("launch", buttons, Set.of("debug")));
+        assertTrue(EclipseCustomizePerspectiveTool.groupHidden("launch", buttons, Set.of("debug", "run")));
+        // A group with no buttons shows nothing.
+        assertTrue(EclipseCustomizePerspectiveTool.groupHidden("help", List.of(), Set.of()));
     }
 }
