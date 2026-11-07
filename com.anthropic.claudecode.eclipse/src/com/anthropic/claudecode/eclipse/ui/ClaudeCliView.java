@@ -246,6 +246,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         showCtrlClickHintIfNeeded(container);
 
         configureActionBars();
+        ViewToolbarFit.install(this, container);
 
         tabFolder.addCTabFolder2Listener(new CTabFolder2Adapter() {
             @Override
