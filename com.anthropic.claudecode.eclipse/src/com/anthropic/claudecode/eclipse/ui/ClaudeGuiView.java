@@ -1905,7 +1905,9 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             return new Gson().toJson(batch);
         });
         clipSetFn = new SimpleFunction(browser, "_clipSet", a -> {
-            if (a.length > 0 && a[0] instanceof String s) setClipboardText(s);
+            if (a.length > 0 && a[0] instanceof String s) {
+                setClipboardText(s, a.length > 1 && a[1] instanceof String html ? html : "");
+            }
             return null;
         });
         // The page reports that its editing entry points are defined. Until it does, the
@@ -2993,11 +2995,19 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     private void doSelectAll() { executeJS("window.__ccSelectAll && __ccSelectAll()"); }
     private void doDelete()    { executeJS("window.__ccDelete && __ccDelete()"); }
 
-    private void setClipboardText(String txt) {
+    /** The text, and with it the same content as HTML when there is some, so a target that
+     *  takes HTML (a word processor, a mail composer) gets the formatting and one that takes
+     *  only text (the composer) gets the text. */
+    private void setClipboardText(String txt, String html) {
         if (txt == null || txt.isEmpty() || browser == null || browser.isDisposed()) return;
         Clipboard cb = new Clipboard(browser.getDisplay());
         try {
-            cb.setContents(new Object[] { txt }, new Transfer[] { TextTransfer.getInstance() });
+            if (html == null || html.isEmpty()) {
+                cb.setContents(new Object[] { txt }, new Transfer[] { TextTransfer.getInstance() });
+            } else {
+                cb.setContents(new Object[] { txt, html },
+                        new Transfer[] { TextTransfer.getInstance(), HTMLTransfer.getInstance() });
+            }
         } finally {
             cb.dispose();
         }

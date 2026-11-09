@@ -77,6 +77,29 @@ function ccSelectAll(el) {
   const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
 }
 
+/* What a page selection is made of besides its text, for a target that takes more than
+   text (a word processor, a mail composer): the selected markup, with what Selection's own
+   text leaves out left out here too — what is not drawn (a collapsed card, rows held back
+   in a result list) and the controls on the content. Marked on the live page first, so the
+   clone can drop them: the clone has no layout to ask. '' when nothing is selected. */
+const CC_COPY_CHROME = 'button, .copy-btn, .card-bar, .card-chev, .msg-actions, .clamp-toggle, .more-hint, .dot, [data-cc-hidden]';
+function ccSelectionHtml() {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || sel.isCollapsed) return '';
+  const box = document.createElement('div');
+  const undrawn = [];
+  for (let i = 0; i < sel.rangeCount; i++) {
+    const r = sel.getRangeAt(i), root = r.commonAncestorContainer;
+    const scope = root.nodeType === 1 ? root : root.parentElement;
+    scope.querySelectorAll('*').forEach(e => { if (r.intersectsNode(e) && !e.getClientRects().length) undrawn.push(e); });
+    undrawn.forEach(e => e.setAttribute('data-cc-hidden', ''));
+    box.appendChild(r.cloneContents());
+    undrawn.forEach(e => e.removeAttribute('data-cc-hidden'));
+  }
+  box.querySelectorAll(CC_COPY_CHROME).forEach(e => e.remove());
+  return box.innerHTML ? '<meta charset="utf-8">' + box.innerHTML : '';
+}
+
 /* Clipboard writes/reads go through the host (_clipSet/_clipGet → SWT Clipboard) so
    the menu and the key bindings share one clipboard with the rest of Eclipse. The
    navigator.clipboard path stays as the fallback for a page opened without the
@@ -85,7 +108,7 @@ function ccSelectAll(el) {
 function ccCopy(el) {
   const txt = ccSelectionText(el);
   if (!txt) return;
-  if (window._clipSet) _clipSet(txt);
+  if (window._clipSet) _clipSet(txt, ccField(el) ? '' : ccSelectionHtml());
   else if (navigator.clipboard) navigator.clipboard.writeText(txt).catch(() => document.execCommand('copy'));
   else document.execCommand('copy');
 }
