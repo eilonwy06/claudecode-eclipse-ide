@@ -436,6 +436,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         registerBindingListener();
         registerEditHandlers();
         createToolBar();
+        ViewToolbarFit.install(this, parent);
 
         active = this;
         // Persistent protocol, ONE manager per tab (created on first send) so
