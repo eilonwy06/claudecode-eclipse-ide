@@ -727,6 +727,10 @@ function startTabEditInput(el, tt, t, resume) {
     e.stopPropagation();   // don't let Enter/Escape reach anything else while renaming
     if (e.key === 'Enter') { e.preventDefault(); finish(true); }
     else if (e.key === 'Escape') { e.preventDefault(); inp.onblur = null; finish(false); }
+    // An arrow with nowhere to go in the field scrolls the tab strip behind it.
+    else if (inp.selectionStart === inp.selectionEnd
+        && (e.key === 'ArrowLeft' ? inp.selectionStart === 0
+          : e.key === 'ArrowRight' && inp.selectionStart === inp.value.length)) e.preventDefault();
   };
   return inp;
 }
