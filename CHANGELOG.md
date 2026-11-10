@@ -4,7 +4,18 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.2.28] — 2026-11-05 *(current)*
+## [3.2.29] — 2026-11-10 *(current)*
+
+### Changed
+- Text copied from the conversation keeps its formatting when pasted into a word processor or mail composer ([@jmoraleda](https://github.com/jmoraleda), PR #237).
+
+### Fixed
+- Left and Right stay inside a tab title while it is being renamed ([@jmoraleda](https://github.com/jmoraleda), PR #238).
+- The view toolbar stays on the tab row after switching perspectives ([@jmoraleda](https://github.com/jmoraleda), PR #239).
+
+---
+
+## [3.2.28] — 2026-11-05
 
 ### Fixed
 - `eclipseCustomizePerspective` hides a whole main-toolbar group when asked, instead of reporting it hidden while it stays on screen.
