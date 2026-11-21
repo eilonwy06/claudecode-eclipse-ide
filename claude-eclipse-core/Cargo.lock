@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "claude-eclipse-core"
-version = "3.2.29"
+version = "3.2.30"
 dependencies = [
  "axum",
  "base64",

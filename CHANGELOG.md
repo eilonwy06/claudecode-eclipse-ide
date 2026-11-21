@@ -4,7 +4,18 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.2.29] — 2026-11-10 *(current)*
+## [3.2.30] — 2026-11-21 *(current)*
+
+### Changed
+- Bash and PowerShell permission cards show Claude's one-line summary of the command under it ([@Rinzler86](https://github.com/Rinzler86), PR #245).
+
+### Fixed
+- With the Claude Code view open, the first click elsewhere in Eclipse does what it should, instead of only moving focus ([@pijulius](https://github.com/pijulius), PR #246).
+- The Claude Terminal starts at the view's full size, instead of 80 columns by 4 lines with the prompt hidden ([@alx-glover](https://github.com/alx-glover), issue #247).
+
+---
+
+## [3.2.29] — 2026-11-10
 
 ### Changed
 - Text copied from the conversation keeps its formatting when pasted into a word processor or mail composer ([@jmoraleda](https://github.com/jmoraleda), PR #237).
