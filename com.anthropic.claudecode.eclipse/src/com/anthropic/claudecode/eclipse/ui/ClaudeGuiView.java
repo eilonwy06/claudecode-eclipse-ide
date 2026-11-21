@@ -2001,6 +2001,8 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
     private void pageReady() {
         debugPageBoot("page ready");
         pageLoaded = true;
+        lastEditKeyHintsJson = null;
+        lastCancelHint = null;
         // WebView2 init is async — retry here where the webview provably exists.
         disableDevTools();
         disableZoom();
@@ -2867,7 +2869,7 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         if (bs == null) return;
         bindingChangeListener = event -> {
             if (!event.isActiveSchemeChanged() && !event.isActiveBindingsChanged()) return;
-            Display.getDefault().asyncExec(this::pushEditKeyHints);
+            Display.getDefault().asyncExec(() -> pushEditKeyHints(false));
         };
         bs.addBindingManagerListener(bindingChangeListener);
     }
@@ -3370,7 +3372,21 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
                 + esc(new Gson().toJson(sets)) + "')");
     }
 
-    private void pushEditKeyHints() {
+    /** Last hints sent to the page; null until the current page has been sent any. */
+    private String lastEditKeyHintsJson;
+
+    private void pushEditKeyHints() { pushEditKeyHints(true); }
+
+    /**
+     * @param force false from the binding listener: skip the push when the hints are the
+     *     same as last time. The active bindings change on every part switch (an editor's
+     *     key contexts go away when another part is activated), and on GTK every
+     *     {@code Browser.execute()} spins a nested GTK main loop until the script returns.
+     *     Running that loop while the click that switched parts is still being handled
+     *     swallows that click's button-release, so e.g. a Project Explorer expander needed
+     *     a second click whenever this view existed, visible or not.
+     */
+    private void pushEditKeyHints(boolean force) {
         if (browser == null || browser.isDisposed() || !pageLoaded) return;
         org.eclipse.ui.keys.IBindingService bs =
                 getSite().getService(org.eclipse.ui.keys.IBindingService.class);
@@ -3380,8 +3396,10 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         putKeyHint(bs, hints, "copy",      "org.eclipse.ui.edit.copy");
         putKeyHint(bs, hints, "paste",     "org.eclipse.ui.edit.paste");
         putKeyHint(bs, hints, "selectAll", "org.eclipse.ui.edit.selectAll");
-        browser.execute("window.onEditKeyHints && onEditKeyHints('"
-                + esc(new Gson().toJson(hints)) + "')");
+        String json = new Gson().toJson(hints);
+        if (!force && json.equals(lastEditKeyHintsJson)) return;
+        lastEditKeyHintsJson = json;
+        browser.execute("window.onEditKeyHints && onEditKeyHints('" + esc(json) + "')");
     }
 
     /** Always writes the key — an unbound command sends "" so the menu blanks that hint
@@ -5354,11 +5372,17 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
         view.browser.execute("window.openCreateWorktree && window.openCreateWorktree()");
     }
 
+    /** Last cancel-key label sent to the page; null until the current page has one. */
+    private String lastCancelHint;
+
     /** Pushes the current cancel-key label to the page. UI thread; call before raising a card. */
     private static void pushCancelHint(ClaudeGuiView view) {
         if (view.browser == null || view.browser.isDisposed() || !view.pageLoaded) return;
+        String label = cancelKeyLabel();
+        if (label.equals(view.lastCancelHint)) return;
+        view.lastCancelHint = label;
         view.browser.execute("window.setCancelHint && window.setCancelHint('"
-                + esc(cancelKeyLabel()) + "')");
+                + esc(label) + "')");
     }
 
     /**
@@ -5382,7 +5406,10 @@ public class ClaudeGuiView extends ViewPart implements IShowInTarget {
             bindingListener = event -> {
                 if (!event.isActiveSchemeChanged() && !event.isActiveBindingsChanged()) return;
                 if (browser == null || browser.isDisposed() || !pageLoaded) return;
-                pushCancelHint(this);
+                // Deferred: this event fires synchronously during part activation, i.e. in
+                // the middle of the mouse click that activated the other part. See
+                // pushEditKeyHints(boolean) for why a GTK execute() there eats the click.
+                Display.getDefault().asyncExec(() -> pushCancelHint(this));
             };
             bs.addBindingManagerListener(bindingListener);
         } catch (Exception e) {
