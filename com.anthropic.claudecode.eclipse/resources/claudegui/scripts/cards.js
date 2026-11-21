@@ -154,17 +154,18 @@ function permissionPrompt(toolName, input, t) {
     case 'bash': case 'powershell': {
       // Editable only with PREF_EDITABLE_PERMISSION_CARDS (window.__editablePermissionCards, pushed by
       // ClaudeGuiView). Off, the card asks as it did before: the command read-only, in the question.
+      // Either way Claude's one-line summary of the command (the tool's `description`) goes under it.
       if (!window.__editablePermissionCards) {
         const cmd = input.command || '';
         if (cmd) { const c = document.createElement('code'); c.textContent = cmd; ask('Allow ' + toolName + ' ', c, '?'); }
         else ask('Allow ' + toolName + '?');
-        break;
+      } else {
+        ask('Allow this ' + (key === 'bash' ? 'bash' : 'PowerShell') + ' command?');
+        const ed = document.createElement('textarea');
+        ed.className = 'dec-cmd'; ed.spellcheck = false; ed.rows = 1; ed.value = input.command || '';
+        ed.setAttribute('aria-label', 'Command to run (editable)');
+        out.editor = ed; out.body.push(ed);
       }
-      ask('Allow this ' + (key === 'bash' ? 'bash' : 'PowerShell') + ' command?');
-      const ed = document.createElement('textarea');
-      ed.className = 'dec-cmd'; ed.spellcheck = false; ed.rows = 1; ed.value = input.command || '';
-      ed.setAttribute('aria-label', 'Command to run (editable)');
-      out.editor = ed; out.body.push(ed);
       if (input.description) out.body.push(line('dec-desc', input.description));
       break;
     }
