@@ -91,6 +91,7 @@ import org.eclipse.terminal.control.ITerminalViewControl;
 import org.eclipse.terminal.control.TerminalTitleRequestor;
 import org.eclipse.terminal.internal.emulator.VT100TerminalControl;
 import org.eclipse.terminal.internal.preferences.ITerminalConstants;
+import org.eclipse.terminal.internal.textcanvas.GridCanvas;
 import org.eclipse.terminal.model.ITerminalTextDataReadOnly;
 import org.eclipse.terminal.model.TerminalColor;
 
@@ -1250,6 +1251,8 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         private volatile ProcessHandle cli;
         /** FreeBSD: when the current launch started. */
         private volatile long launchedAt;
+        /** Text sent while claude waits for the tab to get a size; null when not waiting. */
+        private List<String> textBeforeConnect;
         /** FreeBSD: restarts after a freeze in a row that got nowhere. */
         private int hangStreak = 0;
 
@@ -1292,7 +1295,14 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
         /** Pastes text into the terminal (lands at Claude's prompt). False if not live. */
         boolean sendText(String text) {
             if (disposed || termControl == null || termControl.isDisposed()) return false;
-            termControl.pasteString(text);
+            if (textBeforeConnect != null) {
+                // Still waiting for a size to start claude in (connectWhenSized): an
+                // unconnected terminal drops a paste, so it is pasted once connected.
+                textBeforeConnect.add(text);
+                ClaudeCodeView.debug("[terminal] text held until claude starts (" + text.length() + " chars)");
+            } else {
+                termControl.pasteString(text);
+            }
             focus();
             return true;
         }
@@ -1305,7 +1315,7 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
          *  at the prompt when this runs gets submitted right along with it — same as a user
          *  manually pasting a slash command over unrelated text, not a new risk this adds. */
         boolean sendCommand(String text) {
-            if (!sendText(text)) return false;
+            if (textBeforeConnect != null || !sendText(text)) return false;
             termControl.sendKey('\r');
             return true;
         }
@@ -1594,7 +1604,12 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
             termControl.setCharset(java.nio.charset.StandardCharsets.UTF_8);
             applyControlFont();
             termControl.setConnector(connector);
-            termControl.connectTerminal();
+            // Lay out BEFORE connecting (issue #247). Connecting copies the terminal's current
+            // grid onto the new console just before claude starts, and an unlaid-out terminal
+            // reports its 80x4 minimum. The real size then only arrives as a resize claude can
+            // miss, and the connector never re-sends a size it already sent.
+            content.layout(true, true);
+            connectWhenSized(thisLaunch);
             installCopyPaste();
             OpenEntityHandler openEntityHandler = new OpenEntityHandler(
                     termControl, entitiesRegistry,
@@ -1616,6 +1631,64 @@ public class ClaudeCliView extends ViewPart implements IShowInTarget {
                     hangWatch.start();
                 }
             }
+        }
+
+        /**
+         * Connects the terminal, which starts claude, once the terminal has a real size. A tab
+         * with no area yet (a minimized stack, a view not shown yet) would start claude at
+         * the 80x4 minimum, so it waits for the first resize that gives it one (issue #247).
+         */
+        private void connectWhenSized(int launch) {
+            textBeforeConnect = null;
+            Control canvas = termControl.getControl();
+            if (canvas == null || canvas.isDisposed() || hasArea(canvas)) {
+                ClaudeCodeView.debug("[terminal] connecting at " + sizeOf(canvas));
+                termControl.connectTerminal();
+                return;
+            }
+            ClaudeCodeView.debug("[terminal] no area yet (" + sizeOf(canvas)
+                    + "); connecting on the first real size");
+            List<String> held = new ArrayList<>();
+            textBeforeConnect = held;
+            Listener[] onResize = new Listener[1];
+            onResize[0] = e -> {
+                if (!hasArea(canvas)) return;
+                canvas.removeListener(SWT.Resize, onResize[0]);
+                // After this resize has gone through, so the terminal's own resize handling
+                // has updated its grid before connecting copies it.
+                Display.getCurrent().asyncExec(() -> {
+                    if (textBeforeConnect == held) textBeforeConnect = null;
+                    if (disposed || viewDisposed || launch != launches
+                            || termControl == null || canvas.isDisposed()) {
+                        ClaudeCodeView.debug("[terminal] sized after the launch was replaced; not connecting");
+                        return;
+                    }
+                    ClaudeCodeView.debug("[terminal] connecting at " + sizeOf(canvas) + " after waiting for a size");
+                    termControl.connectTerminal();
+                    for (String text : held) termControl.pasteString(text);
+                });
+            };
+            canvas.addListener(SWT.Resize, onResize[0]);
+        }
+
+        /**
+         * At least one character cell each way. Below that the terminal does not take the
+         * new size at all and keeps its 80x4 minimum, which connecting would hand to claude.
+         */
+        private static boolean hasArea(Control c) {
+            Rectangle r = c instanceof Scrollable s ? s.getClientArea() : c.getBounds();
+            int cellW = 1, cellH = 1;
+            if (c instanceof GridCanvas grid) {
+                cellW = Math.max(1, grid.getCellWidth());
+                cellH = Math.max(1, grid.getCellHeight());
+            }
+            return r.width >= cellW && r.height >= cellH;
+        }
+
+        private static String sizeOf(Control c) {
+            if (c == null || c.isDisposed()) return "no canvas";
+            Rectangle r = c instanceof Scrollable s ? s.getClientArea() : c.getBounds();
+            return r.width + "x" + r.height + "px";
         }
 
         /**
