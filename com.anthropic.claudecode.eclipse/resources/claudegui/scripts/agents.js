@@ -1,6 +1,7 @@
 /* agents.js — "Agent map" popup: three views in one modal.
-     list      — every Agent tool call in the CURRENT tab's own transcript, most recent
-                 first (collectAgents scans the rendered DOM — same reasoning as before:
+     list      — the map itself: the CURRENT tab's conversation at the root of a tree, every
+                 Agent tool call in its own transcript branching off it (most recent first)
+                 and the agents those started off them (collectAgents scans the rendered DOM — same reasoning as before:
                  survives restart/reload/per-tab scoping without a separate registry that
                  could drift out of sync or go empty on its own).
      detail    — click a card: status/type/model/mode, "Spawned by the main agent",
@@ -13,7 +14,7 @@
    session.rs's reconstructed agentLog field for a reloaded one, so both look the same
    here regardless of which populated them. Same modal-overlay idiom as
    #rewind-overlay/#account-overlay (scrim + centered card) — opened via the /agents slash
-   command (slash.js); no toolbar entry point yet.
+   command (slash.js) or the composer bar's "● N agents" pill (claudegui.html's #agents-btn).
    Below the agents, the tab's background tasks (shells above all), from the CLI's own list
    (chat.rs relays system/background_tasks_changed); click one for its view:
      task       — how long it has run, what it has written so far (a shell's output, asked
@@ -214,13 +215,6 @@ function addNestedAgents(parent, agents, seen) {
     addNestedAgents(nested, agents, seen);
   });
 }
-/** The agents in the order the list shows them: the newest of those the conversation started
- *  first, each followed by the ones it started in turn. */
-function agentsInListOrder(agents) {
-  const groups = [];
-  agents.forEach(a => { if (a.depth === 0) groups.push([a]); else if (groups.length) groups[groups.length - 1].push(a); });
-  return groups.reverse().reduce((all, g) => all.concat(g), []);
-}
 
 function renderAgentsWin() {
   if (agentsView === 'task') {
@@ -230,14 +224,18 @@ function renderAgentsWin() {
       // Brought up to date where it stands while it is already showing, so the output
       // keeps its scroll position and the Stop button its state between the ticks.
       if (bgView && bgView.taskId === task.taskId && agentsWinEl.contains(bgView.meta)) updateTaskDetail(t, task);
-      else { agentsWinEl.classList.remove('ap-transcript-mode'); agentsWinEl.innerHTML = ''; renderTaskDetail(t, task); }
+      else { agentsWinEl.classList.remove('ap-transcript-mode', 'ap-map-mode'); agentsWinEl.innerHTML = ''; renderTaskDetail(t, task); }
       return;
     }
     agentsView = 'list';       // a task this tab no longer knows — back to the map
   }
   stopTaskOutputPoll();
   bgView = null;
-  agentsWinEl.classList.remove('ap-transcript-mode');
+  // The map is drawn again every second while something runs (startAgentsTicker); without
+  // this, a map taller than the window would jump back to its top on each tick.
+  const keptScroll = agentsView === 'list'
+      ? [...agentsWinEl.querySelectorAll('.ap-list')].map(el => [el.scrollTop, el.scrollLeft]) : null;
+  agentsWinEl.classList.remove('ap-transcript-mode', 'ap-map-mode');
   agentsWinEl.innerHTML = '';
   const agents = collectAgents();
   if (agentsView !== 'list') {
@@ -251,6 +249,11 @@ function renderAgentsWin() {
     }
   }
   renderAgentsList(agents);
+  if (keptScroll && agentsView === 'list') {
+    agentsWinEl.querySelectorAll('.ap-list').forEach((el, i) => {
+      if (keptScroll[i]) { el.scrollTop = keptScroll[i][0]; el.scrollLeft = keptScroll[i][1]; }
+    });
+  }
 }
 
 function renderAgentsList(agents) {
@@ -268,30 +271,80 @@ function renderAgentsList(agents) {
   agentsWinEl.appendChild(sub);
 
   if (!agents.length) { renderBackgroundTasks(); return; }
-  const list = document.createElement('div'); list.className = 'ap-list';
-  // Most recent first — the one just kicked off is what you're watching.
-  agentsInListOrder(agents).forEach(a => {
-    const row = document.createElement('div'); row.className = 'ap-row';
-    if (a.depth) row.style.marginLeft = (a.depth * 16) + 'px';   // under the agent that started it
-    row.dataset.agentStatus = agentStatus(a);
-    row.onclick = () => { agentsView = 'detail'; agentsSelectedId = a.id; renderAgentsWin(); };
-    const dot = document.createElement('span');
-    dot.className = 'dot ' + agentDotClass(a);
-    const body = document.createElement('div'); body.className = 'ap-body';
-    const label = document.createElement('span'); label.className = 'ap-label';
-    label.textContent = a.description;
-    body.appendChild(label);
-    const metaText = agentMeta(a);
-    if (metaText) {
-      const meta = document.createElement('span'); meta.className = 'ap-step';
-      meta.textContent = metaText;
-      body.appendChild(meta);
-    }
-    row.appendChild(dot); row.appendChild(body);
-    list.appendChild(row);
-  });
+  // A tree, as the extension's map draws it: the conversation itself on the left, the agents
+  // it started to its right, each joined to it by a line, and any an agent started in turn to
+  // the right of that one. The newest of the conversation's own come first — the one just
+  // kicked off is what you're watching. On a narrow view the same tree stacks downwards
+  // (panels.css), since side by side would leave each card too little room to say anything.
+  agentsWinEl.classList.add('ap-map-mode');   // two columns of cards need more than the list's width
+  const list = document.createElement('div'); list.className = 'ap-list ap-map';
+  const root = makeApNode(makeApRootRow());
+  root.appendChild(makeApChildren(agents.filter(a => a.depth === 0).reverse(), agents));
+  list.appendChild(root);
   agentsWinEl.appendChild(list);
   renderBackgroundTasks();
+}
+/** One box of the map, with the boxes of what it started beside it. */
+function makeApNode(row) {
+  const node = document.createElement('div'); node.className = 'ap-node';
+  node.appendChild(row);
+  return node;
+}
+function makeApChildren(children, agents) {
+  const col = document.createElement('div'); col.className = 'ap-children';
+  children.forEach(a => {
+    const node = makeApNode(makeApAgentRow(a));
+    const own = agents.filter(c => c.parentId === a.id);
+    if (own.length) node.appendChild(makeApChildren(own, agents));
+    col.appendChild(node);
+  });
+  return col;
+}
+function makeApRow(dotClass, labelText, metaText) {
+  const row = document.createElement('div'); row.className = 'ap-row';
+  row.title = labelText;   // the label is cut short with an ellipsis; this is the whole of it
+  const dot = document.createElement('span'); dot.className = 'dot ' + dotClass;
+  const body = document.createElement('div'); body.className = 'ap-body';
+  const label = document.createElement('span'); label.className = 'ap-label';
+  label.textContent = labelText;
+  body.appendChild(label);
+  if (metaText) {
+    const meta = document.createElement('span'); meta.className = 'ap-step';
+    meta.textContent = metaText;
+    body.appendChild(meta);
+  }
+  row.appendChild(dot); row.appendChild(body);
+  return row;
+}
+function makeApAgentRow(a) {
+  const row = makeApRow(agentDotClass(a), a.description, agentMeta(a));
+  row.dataset.agentStatus = agentStatus(a);
+  row.onclick = () => { agentsView = 'detail'; agentsSelectedId = a.id; renderAgentsWin(); };
+  return row;
+}
+/** The conversation the agents belong to, at the root of the map: its title, and the model it
+ *  runs on with what its context holds, as the extension's says "Opus 5.5 · 178.8k tokens in
+ *  context". Only the agents open a view of their own, so it is not a button. */
+function makeApRootRow() {
+  const t = activeTab();
+  const row = makeApRow(t && t.streaming ? 'spin' : 'done', (t && t.title) || 'Claude Code', apRootMeta(t));
+  row.classList.add('ap-root');
+  return row;
+}
+function apRootMeta(t) {
+  if (!t) return '';
+  const parts = [modelLabelFor(t.model !== undefined ? t.model : curModel)];
+  const tokens = apContextTokens(t);
+  if (tokens > 0) parts.push(formatAgentTokens(tokens) + ' in context');
+  return parts.join(' · ');
+}
+/** What the conversation's context held at its last finished turn: the prompt the CLI sent,
+ *  counting what was read from or written to the cache — the same status the context ring
+ *  (controls.js) is drawn from. 0 until a turn of this tab has finished. */
+function apContextTokens(t) {
+  const s = ctxRingByTab[t.id];
+  if (!s) return 0;
+  return (s.inputTokens || 0) + (s.cacheReadTokens || 0) + (s.cacheCreationTokens || 0);
 }
 
 /* ===================== Background tasks ===================== */

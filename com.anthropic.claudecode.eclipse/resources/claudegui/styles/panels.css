@@ -612,6 +612,53 @@ body.teleporting #composer { display: none; }
 #agents-win .ap-row:last-child { margin-bottom: 0; }
 #agents-win .ap-row:hover { background: var(--bg-hover); border-color: var(--border); }
 #agents-win .ap-row:active { background: var(--bg-chip); }
+/* The map (agents.js renderAgentsList) — a tree, as the extension's Agent map draws it: the
+   conversation's own card on the left, the agents it started in a column to its right, an
+   agent's own agents in a column to the right of it. Each .ap-node is a card (.ap-row) with
+   its .ap-children beside it; the lines between them are borders on pseudo-elements: a stub
+   from the parent card to the column's spine, the spine itself drawn a piece per child (from
+   the first child's middle to the last one's), and a stub from the spine into each card.
+   Two columns of cards need more room than the list did, hence the wider (and taller) window. */
+#agents-win.ap-map-mode { max-width: 860px; max-height: 84vh; margin-top: 6vh; }
+#agents-win .ap-map { overflow: auto; padding-bottom: 1px; }
+#agents-win .ap-map::-webkit-scrollbar { height: 9px; }
+#agents-win .ap-node { display: flex; align-items: center; }
+#agents-win .ap-map .ap-row { margin: 0; flex: 1 1 0; min-width: 160px; max-width: 380px; }
+#agents-win .ap-children { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+  position: relative; padding-left: 16px; }
+#agents-win .ap-children::before,
+#agents-win .ap-children > .ap-node::before,
+#agents-win .ap-children > .ap-node > .ap-row::before { content: ''; position: absolute;
+  pointer-events: none; border: 0 solid var(--border); }
+#agents-win .ap-children::before { left: 0; top: 50%; width: 16px; border-top-width: 1px; }
+#agents-win .ap-children > .ap-node { position: relative; padding: 3px 0 3px 16px; }
+#agents-win .ap-children > .ap-node::before { left: 0; top: 0; bottom: 0; border-left-width: 1px; }
+#agents-win .ap-children > .ap-node:first-child::before { top: 50%; }
+#agents-win .ap-children > .ap-node:last-child::before { bottom: 50%; }
+#agents-win .ap-children > .ap-node > .ap-row { position: relative; }
+/* -17px: from the card's padding box (inside its 1px border) back to the spine. */
+#agents-win .ap-children > .ap-node > .ap-row::before { left: -17px; top: 50%; width: 16px;
+  border-top-width: 1px; }
+/* The conversation's card: only the agents open a view of their own, so it is no button. */
+#agents-win .ap-map .ap-root { cursor: default; }
+#agents-win .ap-map .ap-root:hover, #agents-win .ap-map .ap-root:active {
+  background: var(--bg-soft); border-color: var(--border-soft); }
+#agents-win .ap-root .ap-label { font-weight: 600; color: var(--fg); }
+/* A narrow view has no room for cards side by side: the tree stacks downwards instead, each
+   column under the card it belongs to and stepped in from it, its spine running down from
+   that card and turning into the last child's card. */
+@media (max-width: 560px) {
+  #agents-win .ap-node { flex-direction: column; align-items: stretch; }
+  #agents-win .ap-map .ap-row { flex: 0 0 auto; min-width: 0; max-width: none; }
+  #agents-win .ap-children { flex: 0 0 auto; padding-left: 0; margin-left: 12px; }
+  #agents-win .ap-children::before { display: none; }
+  #agents-win .ap-children > .ap-node { padding: 6px 0 0 16px; }
+  #agents-win .ap-children > .ap-node:first-child::before { top: 0; }
+  #agents-win .ap-children > .ap-node:last-child::before { display: none; }
+  /* -7px: up through the 6px gap above the card and its 1px border, to where the spine ends. */
+  #agents-win .ap-children > .ap-node:last-child > .ap-row::before { top: -7px;
+    height: calc(50% + 7px); border-top-width: 0; border-left-width: 1px; border-bottom-width: 1px; }
+}
 /* Tool-call rows in the detail view's fold are plain sub-items, not clickable agent
    cards — cancels the .ap-row card look above rather than needing a separate class. */
 #agents-win .ap-toolrow { cursor: default; padding: 5px 4px; border: none; background: none; margin-bottom: 0; }
