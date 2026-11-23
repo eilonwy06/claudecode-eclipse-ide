@@ -644,6 +644,24 @@ body.teleporting #composer { display: none; }
 #agents-win .ap-map .ap-root:hover, #agents-win .ap-map .ap-root:active {
   background: var(--bg-soft); border-color: var(--border-soft); }
 #agents-win .ap-root .ap-label { font-weight: 600; color: var(--fg); }
+/* A card's own button (agents.js makeApAgentRow): Stop while the agent runs, × to take it off
+   the map once it is over. Out of the way until the card is pointed at — except while a stop
+   is under way, when it stays up, disabled, to say so. */
+#agents-win .ap-row-act { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; margin: -4px -4px -4px 0; border: none; border-radius: 5px;
+  background: none; color: var(--fg-dim); cursor: pointer; opacity: 0;
+  transition: opacity .1s, background-color .1s, color .1s; }
+#agents-win .ap-row-act svg { width: 12px; height: 12px; }
+#agents-win .ap-row:hover .ap-row-act, #agents-win .ap-row-act:focus-visible,
+#agents-win .ap-row.ap-stopping .ap-row-act { opacity: 1; }
+#agents-win .ap-row-act:hover { background: var(--bg-chip); color: var(--fg); }
+#agents-win .ap-row-act.ap-act-stop:hover { color: var(--red); }
+#agents-win .ap-row-act:disabled { cursor: default; background: none; color: var(--fg-faint); }
+/* The map's subtitle with its "Clear finished" / "Show N removed" on the right of it. */
+#agents-win .ap-sub { display: flex; align-items: baseline; gap: 12px; }
+#agents-win .ap-sub-text { flex: 1; min-width: 0; }
+#agents-win .ap-sub-link { flex: 0 0 auto; color: var(--link); cursor: pointer; }
+#agents-win .ap-sub-link:hover { text-decoration: underline; }
 /* A narrow view has no room for cards side by side: the tree stacks downwards instead, each
    column under the card it belongs to and stepped in from it, its spine running down from
    that card and turning into the last child's card. */
