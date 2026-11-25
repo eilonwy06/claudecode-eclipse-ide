@@ -1,6 +1,7 @@
 /* agents.js — "Agent map" popup: three views in one modal.
-     list      — every Agent tool call in the CURRENT tab's own transcript, most recent
-                 first (collectAgents scans the rendered DOM — same reasoning as before:
+     list      — the map itself: the CURRENT tab's conversation at the root of a tree, every
+                 Agent tool call in its own transcript branching off it (most recent first)
+                 and the agents those started off them (collectAgents scans the rendered DOM — same reasoning as before:
                  survives restart/reload/per-tab scoping without a separate registry that
                  could drift out of sync or go empty on its own).
      detail    — click a card: status/type/model/mode, "Spawned by the main agent",
@@ -13,7 +14,7 @@
    session.rs's reconstructed agentLog field for a reloaded one, so both look the same
    here regardless of which populated them. Same modal-overlay idiom as
    #rewind-overlay/#account-overlay (scrim + centered card) — opened via the /agents slash
-   command (slash.js); no toolbar entry point yet.
+   command (slash.js) or the composer bar's "● N agents" pill (claudegui.html's #agents-btn).
    Below the agents, the tab's background tasks (shells above all), from the CLI's own list
    (chat.rs relays system/background_tasks_changed); click one for its view:
      task       — how long it has run, what it has written so far (a shell's output, asked
@@ -214,12 +215,76 @@ function addNestedAgents(parent, agents, seen) {
     addNestedAgents(nested, agents, seen);
   });
 }
-/** The agents in the order the list shows them: the newest of those the conversation started
- *  first, each followed by the ones it started in turn. */
-function agentsInListOrder(agents) {
-  const groups = [];
-  agents.forEach(a => { if (a.depth === 0) groups.push([a]); else if (groups.length) groups[groups.length - 1].push(a); });
-  return groups.reverse().reduce((all, g) => all.concat(g), []);
+
+/* ===================== Stopping and removing agents ===================== */
+
+/** How long a card says "Stopping…" after Stop, waiting for the CLI to say the agent ended:
+ *  past this, Stop is offered again rather than leaving a stop that never took stuck. */
+const AGENT_STOP_WAIT_MS = 10000;
+/** Only an agent the CLI has given a task id can be stopped: stop_task names it by that id
+ *  (chat.rs's task_started — it comes shortly after the agent's own line does). */
+function agentStoppable(agent) { return agentIsActive(agent) && !!agent.log.taskId; }
+function agentStopping(agent) {
+  return agentIsActive(agent) && agent.log.stopRequestedAt > 0
+      && Date.now() - agent.log.stopRequestedAt < AGENT_STOP_WAIT_MS;
+}
+function stopAgent(agent) {
+  const t = activeTab();
+  if (!t || !window._stopAgentTask || !agent.log.taskId) return;
+  agent.log.userStopped = true;   // what its hand-back says, once it is over (applyAgentActivity)
+  agent.log.stopRequestedAt = Date.now();
+  window._stopAgentTask(t.id, agent.log.taskId);
+  renderAgentsPanel();
+}
+
+/* An agent taken off the map, once it is over and its work has been looked at, stays off it:
+   its tool_use id (unique to it, whichever conversation or tab shows it) is remembered in
+   localStorage, as a per-machine nicety like the changelog's "seen" mark — losing it only
+   puts the agent back on the map. Nothing is removed from the conversation itself. */
+const AGENTS_REMOVED_KEY = 'claude.agentMap.removed';
+const AGENTS_REMOVED_KEPT = 2000;   // the newest this many; an old conversation's are let go
+let agentsRemoved = null;           // Set of tool_use ids, oldest first; read on first use
+function removedAgentIds() {
+  if (!agentsRemoved) {
+    let ids = [];
+    try { ids = JSON.parse(localStorage.getItem(AGENTS_REMOVED_KEY) || '[]'); } catch (e) {}
+    agentsRemoved = new Set(Array.isArray(ids) ? ids.filter(id => typeof id === 'string' && id) : []);
+  }
+  return agentsRemoved;
+}
+function saveRemovedAgents() {
+  const ids = [...removedAgentIds()].slice(-AGENTS_REMOVED_KEPT);
+  agentsRemoved = new Set(ids);
+  try { localStorage.setItem(AGENTS_REMOVED_KEY, JSON.stringify(ids)); } catch (e) {}
+}
+/** The agent and every agent it started, at any depth. */
+function agentSubtree(agent, agents) {
+  const out = [agent];
+  for (let i = 0; i < out.length; i++) agents.forEach(a => { if (a.parentId && a.parentId === out[i].id) out.push(a); });
+  return out;
+}
+/** Whether it can come off the map: it and everything it started are over. */
+function agentDismissable(agent, agents) {
+  return !!agent.id && agentSubtree(agent, agents).every(a => !agentIsActive(a));
+}
+function dismissAgents(list) {
+  const removed = removedAgentIds();
+  list.forEach(a => { if (a.id) removed.add(a.id); });
+  saveRemovedAgents();
+  renderAgentsPanel();
+}
+function undismissAgents(list) {
+  const removed = removedAgentIds();
+  list.forEach(a => removed.delete(a.id));
+  saveRemovedAgents();
+  renderAgentsPanel();
+}
+/** The agents the map and its pill show: all but those taken off it, and what they started. */
+function shownAgents(agents) {
+  const removed = removedAgentIds();
+  const hidden = new Set();
+  agents.forEach(a => { if (a.id && (removed.has(a.id) || (a.parentId && hidden.has(a.parentId)))) hidden.add(a.id); });
+  return agents.filter(a => !hidden.has(a.id));
 }
 
 function renderAgentsWin() {
@@ -230,14 +295,18 @@ function renderAgentsWin() {
       // Brought up to date where it stands while it is already showing, so the output
       // keeps its scroll position and the Stop button its state between the ticks.
       if (bgView && bgView.taskId === task.taskId && agentsWinEl.contains(bgView.meta)) updateTaskDetail(t, task);
-      else { agentsWinEl.classList.remove('ap-transcript-mode'); agentsWinEl.innerHTML = ''; renderTaskDetail(t, task); }
+      else { agentsWinEl.classList.remove('ap-transcript-mode', 'ap-map-mode'); agentsWinEl.innerHTML = ''; renderTaskDetail(t, task); }
       return;
     }
     agentsView = 'list';       // a task this tab no longer knows — back to the map
   }
   stopTaskOutputPoll();
   bgView = null;
-  agentsWinEl.classList.remove('ap-transcript-mode');
+  // The map is drawn again every second while something runs (startAgentsTicker); without
+  // this, a map taller than the window would jump back to its top on each tick.
+  const keptScroll = agentsView === 'list'
+      ? [...agentsWinEl.querySelectorAll('.ap-list')].map(el => [el.scrollTop, el.scrollLeft]) : null;
+  agentsWinEl.classList.remove('ap-transcript-mode', 'ap-map-mode');
   agentsWinEl.innerHTML = '';
   const agents = collectAgents();
   if (agentsView !== 'list') {
@@ -251,9 +320,14 @@ function renderAgentsWin() {
     }
   }
   renderAgentsList(agents);
+  if (keptScroll && agentsView === 'list') {
+    agentsWinEl.querySelectorAll('.ap-list').forEach((el, i) => {
+      if (keptScroll[i]) { el.scrollTop = keptScroll[i][0]; el.scrollLeft = keptScroll[i][1]; }
+    });
+  }
 }
 
-function renderAgentsList(agents) {
+function renderAgentsList(all) {
   const head = document.createElement('div'); head.className = 'ap-head';
   const title = document.createElement('span'); title.className = 'ap-title'; title.textContent = 'Agent map';
   const x = document.createElement('span'); x.className = 'ap-x'; x.innerHTML = ICONS.X;
@@ -261,37 +335,127 @@ function renderAgentsList(agents) {
   head.appendChild(title); head.appendChild(x);
   agentsWinEl.appendChild(head);
 
+  // The map leaves out the agents the user has taken off it (and what they started).
+  const agents = shownAgents(all);
+  const removed = all.length - agents.length;
   const sub = document.createElement('div'); sub.className = 'ap-sub';
-  sub.textContent = agents.length
+  const subText = document.createElement('span'); subText.className = 'ap-sub-text';
+  subText.textContent = agents.length
       ? agents.length + ' agent' + (agents.length === 1 ? '' : 's') + ' · click an agent for details'
+      : removed ? 'Every agent of this conversation has been removed from the map.'
       : 'No agents in this conversation yet.';
+  sub.appendChild(subText);
+  // Every finished one at once — the agents that ran before the ones just started, say.
+  const finished = agents.filter(a => a.depth === 0 && agentDismissable(a, all));
+  if (finished.length) {
+    sub.appendChild(makeApSubLink('Clear finished', 'Remove the ' + finished.length + ' finished agent'
+        + (finished.length === 1 ? '' : 's') + ' from the map',
+        () => dismissAgents(finished.reduce((out, a) => out.concat(agentSubtree(a, all)), []))));
+  }
+  if (removed) {
+    sub.appendChild(makeApSubLink('Show ' + removed + ' removed', 'Put the agents removed from the map back on it',
+        () => undismissAgents(all)));
+  }
   agentsWinEl.appendChild(sub);
 
   if (!agents.length) { renderBackgroundTasks(); return; }
-  const list = document.createElement('div'); list.className = 'ap-list';
-  // Most recent first — the one just kicked off is what you're watching.
-  agentsInListOrder(agents).forEach(a => {
-    const row = document.createElement('div'); row.className = 'ap-row';
-    if (a.depth) row.style.marginLeft = (a.depth * 16) + 'px';   // under the agent that started it
-    row.dataset.agentStatus = agentStatus(a);
-    row.onclick = () => { agentsView = 'detail'; agentsSelectedId = a.id; renderAgentsWin(); };
-    const dot = document.createElement('span');
-    dot.className = 'dot ' + agentDotClass(a);
-    const body = document.createElement('div'); body.className = 'ap-body';
-    const label = document.createElement('span'); label.className = 'ap-label';
-    label.textContent = a.description;
-    body.appendChild(label);
-    const metaText = agentMeta(a);
-    if (metaText) {
-      const meta = document.createElement('span'); meta.className = 'ap-step';
-      meta.textContent = metaText;
-      body.appendChild(meta);
-    }
-    row.appendChild(dot); row.appendChild(body);
-    list.appendChild(row);
-  });
+  // A tree, as the extension's map draws it: the conversation itself on the left, the agents
+  // it started to its right, each joined to it by a line, and any an agent started in turn to
+  // the right of that one. The newest of the conversation's own come first — the one just
+  // kicked off is what you're watching. On a narrow view the same tree stacks downwards
+  // (panels.css), since side by side would leave each card too little room to say anything.
+  agentsWinEl.classList.add('ap-map-mode');   // two columns of cards need more than the list's width
+  const list = document.createElement('div'); list.className = 'ap-list ap-map';
+  const root = makeApNode(makeApRootRow());
+  root.appendChild(makeApChildren(agents.filter(a => a.depth === 0).reverse(), agents));
+  list.appendChild(root);
   agentsWinEl.appendChild(list);
   renderBackgroundTasks();
+}
+/** One box of the map, with the boxes of what it started beside it. */
+function makeApNode(row) {
+  const node = document.createElement('div'); node.className = 'ap-node';
+  node.appendChild(row);
+  return node;
+}
+function makeApChildren(children, agents) {
+  const col = document.createElement('div'); col.className = 'ap-children';
+  children.forEach(a => {
+    const node = makeApNode(makeApAgentRow(a, agents));
+    const own = agents.filter(c => c.parentId === a.id);
+    if (own.length) node.appendChild(makeApChildren(own, agents));
+    col.appendChild(node);
+  });
+  return col;
+}
+function makeApRow(dotClass, labelText, metaText) {
+  const row = document.createElement('div'); row.className = 'ap-row';
+  row.title = labelText;   // the label is cut short with an ellipsis; this is the whole of it
+  const dot = document.createElement('span'); dot.className = 'dot ' + dotClass;
+  const body = document.createElement('div'); body.className = 'ap-body';
+  const label = document.createElement('span'); label.className = 'ap-label';
+  label.textContent = labelText;
+  body.appendChild(label);
+  if (metaText) {
+    const meta = document.createElement('span'); meta.className = 'ap-step';
+    meta.textContent = metaText;
+    body.appendChild(meta);
+  }
+  row.appendChild(dot); row.appendChild(body);
+  return row;
+}
+function makeApAgentRow(a, agents) {
+  const row = makeApRow(agentDotClass(a), a.description, agentMeta(a));
+  row.dataset.agentStatus = agentStatus(a);
+  row.onclick = () => { agentsView = 'detail'; agentsSelectedId = a.id; renderAgentsWin(); };
+  // Its own button, on the right of the card: Stop while it runs, and once it and every
+  // agent it started are over, remove it from the map.
+  if (agentStoppable(a)) {
+    const stopping = agentStopping(a);
+    const stop = makeApRowAction(ICONS.STOP, stopping ? 'Stopping…' : 'Stop agent', () => stopAgent(a));
+    stop.classList.add('ap-act-stop');
+    stop.disabled = stopping;
+    if (stopping) row.classList.add('ap-stopping');
+    row.appendChild(stop);
+  } else if (agentDismissable(a, agents)) {
+    row.appendChild(makeApRowAction(ICONS.X, 'Remove from the map', () => dismissAgents(agentSubtree(a, agents))));
+  }
+  return row;
+}
+function makeApRowAction(icon, label, onClick) {
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'ap-row-act';
+  b.innerHTML = icon; b.title = label; b.setAttribute('aria-label', label);
+  b.onclick = (e) => { e.stopPropagation(); onClick(); };   // not the card's own click as well
+  return b;
+}
+function makeApSubLink(text, tip, onClick) {
+  const l = document.createElement('span'); l.className = 'ap-sub-link';
+  l.textContent = text; l.title = tip; l.onclick = onClick;
+  return l;
+}
+/** The conversation the agents belong to, at the root of the map: its title, and the model it
+ *  runs on with what its context holds, as the extension's says "Opus 5.5 · 178.8k tokens in
+ *  context". Only the agents open a view of their own, so it is not a button. */
+function makeApRootRow() {
+  const t = activeTab();
+  const row = makeApRow(t && t.streaming ? 'spin' : 'done', (t && t.title) || 'Claude Code', apRootMeta(t));
+  row.classList.add('ap-root');
+  return row;
+}
+function apRootMeta(t) {
+  if (!t) return '';
+  const parts = [modelLabelFor(t.model !== undefined ? t.model : curModel)];
+  const tokens = apContextTokens(t);
+  if (tokens > 0) parts.push(formatAgentTokens(tokens) + ' in context');
+  return parts.join(' · ');
+}
+/** What the conversation's context held at its last finished turn: the prompt the CLI sent,
+ *  counting what was read from or written to the cache — the same status the context ring
+ *  (controls.js) is drawn from. 0 until a turn of this tab has finished. */
+function apContextTokens(t) {
+  const s = ctxRingByTab[t.id];
+  if (!s) return 0;
+  return (s.inputTokens || 0) + (s.cacheReadTokens || 0) + (s.cacheCreationTokens || 0);
 }
 
 /* ===================== Background tasks ===================== */
@@ -769,20 +933,25 @@ function renderAgentDetail(agent) {
   openBtn.onclick = () => { agentsView = 'transcript'; renderAgentsWin(); };
   btnRow.appendChild(openBtn);
 
-  // Only while genuinely running, and only once taskId has actually arrived
-  // (chat.rs's task_started — captured shortly after the agent starts, not
-  // necessarily the exact same instant its tool line appears): nothing to send a
-  // stop_task control_request against otherwise.
-  if (agentIsActive(agent) && agent.log.taskId) {
+  // Stop while it runs (agentStoppable: only once the CLI has given it the task id stop_task
+  // names it by). The view is drawn again each second while it runs, so whether a stop was
+  // asked for is read from its log (agentStopping), not kept on the button.
+  const all = collectAgents();
+  if (agentStoppable(agent)) {
+    const stopping = agentStopping(agent);
     const stopBtn = document.createElement('button'); stopBtn.type = 'button'; stopBtn.className = 'ap-stop-btn';
-    stopBtn.textContent = 'Stop agent';
-    stopBtn.onclick = () => {
-      stopBtn.disabled = true; stopBtn.textContent = 'Stopping…';
-      agent.log.userStopped = true;   // what its hand-back says, once it is over (applyAgentActivity)
-      const t = activeTab();
-      if (window._stopAgentTask && t) window._stopAgentTask(t.id, agent.log.taskId);
-    };
+    stopBtn.textContent = stopping ? 'Stopping…' : 'Stop agent';
+    stopBtn.disabled = stopping;
+    stopBtn.onclick = () => stopAgent(agent);
     btnRow.appendChild(stopBtn);
+  } else if (agentDismissable(agent, all)) {
+    // Over, and looked at: off the map, back to it.
+    const rmBtn = document.createElement('button'); rmBtn.type = 'button'; rmBtn.className = 'ap-open-btn';
+    rmBtn.textContent = 'Remove from map';
+    rmBtn.title = 'Take this agent' + (agentSubtree(agent, all).length > 1 ? ' and the agents it started' : '')
+        + ' off the map. The conversation keeps it.';
+    rmBtn.onclick = () => { agentsView = 'list'; agentsSelectedId = null; dismissAgents(agentSubtree(agent, all)); };
+    btnRow.appendChild(rmBtn);
   }
   body.appendChild(btnRow);
 }
@@ -834,7 +1003,9 @@ function renderAgentsPanel() {
 function updateAgentsBtn() {
   const btn = document.getElementById('agents-btn');
   if (!btn) return;
-  const agents = collectAgents();
+  // As many as the map shows: the ones taken off it no longer count, and with all of them
+  // gone the pill goes too (the map stays open to /agents, which can put them back).
+  const agents = shownAgents(collectAgents());
   const count = document.getElementById('agents-count');
   const text = agents.length ? agents.length + ' agent' + (agents.length === 1 ? '' : 's') : '';
   // The pill coming, going or changing width is a control more or fewer in the composer
