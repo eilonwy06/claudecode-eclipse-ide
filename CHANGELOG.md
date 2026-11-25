@@ -4,7 +4,17 @@ All notable changes to Claude Code for Eclipse are documented here.
 
 ---
 
-## [3.2.30] — 2026-11-21 *(current)*
+## [3.2.31] — 2026-11-25 *(current)*
+
+### Added
+- Agents can be stopped from their card on the Agent map, and finished ones taken off it one by one or all at once with Clear finished ([@Rinzler86](https://github.com/Rinzler86), PR #254).
+
+### Changed
+- The Agent map is drawn as a tree, with the conversation at its root and the agents it started branching off it ([@Rinzler86](https://github.com/Rinzler86), PR #254).
+
+---
+
+## [3.2.30] — 2026-11-21
 
 ### Changed
 - Bash and PowerShell permission cards show Claude's one-line summary of the command under it ([@Rinzler86](https://github.com/Rinzler86), PR #245).
