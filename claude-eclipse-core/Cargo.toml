@@ -23,7 +23,7 @@ base64         = "0.23"
 ring           = "0.17"
 vt100          = "0.18"
 ureq           = { version = "3", features = ["json"] }
-qrcode = { version = "0.14.1", default-features = false }
+qrcode = { version = "0.15.0", default-features = false }
 # The composer's @-mention file list: ripgrep's own gitignore-aware walker.
 ignore          = "0.4"
 
